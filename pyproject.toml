@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xcpc-vp-helper"
-version = "0.3.0"
-description = "Ubuntu QOJ/Gym virtual contests and Codeforces/CWNUOJ live contest terminal"
+version = "0.4.0"
+description = "Ubuntu QOJ/Gym virtual contests and Codeforces/CWNUOJ/Nowcoder live contest terminal"
 requires-python = ">=3.12"
 dependencies = ["requests>=2.31,<3", "beautifulsoup4>=4.12,<5", "rich>=13.7,<15", "curl_cffi>=0.16,<1"]
 
@@ -14,6 +14,7 @@ vp = "vp_helper.cli:main"
 live = "vp_helper.live:main"
 vp-cf-submit = "vp_helper.live_submit:main"
 vp-hydro-submit = "vp_helper.hydro_submit:main"
+vp-nowcoder-submit = "vp_helper.nowcoder_submit:main"
 
 [tool.setuptools.packages.find]
 include = ["vp_helper*"]

@@ -12,6 +12,12 @@
     "cookie": "",
     "submit_script": "/usr/local/bin/submit"
   },
+  "nowcoder": {
+    "handle": "",
+    "cookie_source": "firefox",
+    "cookie": "",
+    "submit_script": "/usr/local/bin/submit"
+  },
   "gym": {
     "handle": "",
     "cookie_source": "firefox",

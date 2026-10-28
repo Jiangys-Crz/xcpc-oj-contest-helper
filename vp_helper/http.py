@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 from bs4 import BeautifulSoup
 
 from .models import VPError
-from .parsing import CWNUOJ_HOST
+from .parsing import CWNUOJ_HOST, NOWCODER_HOST
 
 # ---------------------------------------------------------------------------
 # Transport selection.
@@ -69,7 +69,7 @@ class WebSession:
         self.account = account
         self._browser_checked = False
         self._auto_refresh = (auto_refresh and bool(account.get("handle"))
-                              and urlsplit(self.origin).hostname in ("qoj.ac", "codeforces.com", CWNUOJ_HOST))
+                              and urlsplit(self.origin).hostname in ("qoj.ac", "codeforces.com", CWNUOJ_HOST, NOWCODER_HOST))
         if _IMPERSONATE:
             # curl_cffi supplies the browser headers that match the impersonated
             # fingerprint.  Do not override them with the config's user_agent --
@@ -99,7 +99,7 @@ class WebSession:
         if not self._auto_refresh:
             return False
         from .browser_login import refresh_browser_account
-        platform = {"qoj.ac": "qoj", CWNUOJ_HOST: "cwnuoj"}.get(urlsplit(self.origin).hostname, "gym")
+        platform = {"qoj.ac": "qoj", CWNUOJ_HOST: "cwnuoj", NOWCODER_HOST: "nowcoder"}.get(urlsplit(self.origin).hostname, "gym")
         if not refresh_browser_account(platform, self.account, force=force):
             return False
         self.session.cookies.clear()

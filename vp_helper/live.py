@@ -1,4 +1,4 @@
-"""Lifecycle of existing Codeforces and CWNUOJ participations."""
+"""Lifecycle of existing Codeforces, CWNUOJ and Nowcoder participations."""
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
@@ -22,7 +22,8 @@ from .tui import LiveDashboard, TerminalDashboard
 
 HISTORY_FIELDS = ["start_time", "contest", "url", "handle", "scoring", "points", "penalty", "rank", "phase", "frozen"]
 PLATFORMS = {"cf": ("Codeforces", "vp-cf-submit", "cf_live_history.csv"),
-             "cwnuoj": ("CWNUOJ", "vp-hydro-submit", "cwnuoj_live_history.csv")}
+             "cwnuoj": ("CWNUOJ", "vp-hydro-submit", "cwnuoj_live_history.csv"),
+             "nowcoder": ("Nowcoder", "vp-nowcoder-submit", "nowcoder_live_history.csv")}
 
 
 def account_for(config: dict, platform: str) -> dict:
@@ -36,7 +37,10 @@ def live_adapter(url: str, config: dict):
     if platform == "cwnuoj":
         from .hydro import HydroLive
         return HydroLive(canonical, account_for(config, platform))
-    raise VPError("Live mode supports regular Codeforces and CWNUOJ contests.")
+    if platform == "nowcoder":
+        from .nowcoder import NowcoderLive
+        return NowcoderLive(canonical, account_for(config, platform))
+    raise VPError("Live mode supports regular Codeforces, CWNUOJ and Nowcoder contests.")
 
 
 def configure_submission(api, contest: Contest, directory: Path) -> None:
@@ -52,7 +56,7 @@ def configure_submission(api, contest: Contest, directory: Path) -> None:
         "platform": contest.platform, "mode": "live", "name": contest.name, "base_url": contest.url,
         "contest_id": int(contest.contest_id) if contest.platform == "cf" else contest.contest_id,
         "problems": list(contest.problems), "problem_ids": contest.problems,
-        **({"uid": contest.extra["uid"]} if contest.platform == "cwnuoj" else {}),
+        **({"uid": contest.extra["uid"]} if contest.platform in ("cwnuoj", "nowcoder") else {}),
         "handle": api.handle, "cookie": api.account["cookie"],
         "user_agent": api.web.session.headers["User-Agent"], **browser_fields(api.account),
     })
@@ -67,7 +71,7 @@ def prepare_live(url: str) -> tuple[Path, dict]:
     cli.check_terminal()
     platform, _, canonical = contest_url(url)
     if platform not in PLATFORMS:
-        raise VPError("Live mode supports regular Codeforces and CWNUOJ contests only.")
+        raise VPError("Live mode supports regular Codeforces, CWNUOJ and Nowcoder contests only.")
     root = state_directory()
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     with file_lock(root / "start.lock"):
@@ -83,11 +87,12 @@ def prepare_live(url: str) -> tuple[Path, dict]:
             raise VPError("The configured account changed; restore this contest's account before resuming it.")
         cli.console.print(f"Checking {PLATFORMS[platform][0]} login, existing registration and official schedule…", markup=False)
         contest, snapshot = api.prepare()
-        if (platform == "cwnuoj" and old.get("url") == canonical and old.get("mode") == "live"
+        if (platform in ("cwnuoj", "nowcoder") and old.get("url") == canonical and old.get("mode") == "live"
                 and old.get("contest", {}).get("extra", {}).get("uid") != contest.extra["uid"]):
-            raise VPError("The CWNUOJ user ID changed; restore this contest's account before resuming it.")
+            raise VPError("The user ID changed; restore this contest's account before resuming it.")
         name = (f"live-cf-{contest.contest_id}-{api.handle.lower()}" if platform == "cf" else
-                f"live-cwnuoj-{contest.extra['domain']}-{contest.contest_id}-{contest.extra['uid']}")
+                f"live-cwnuoj-{contest.extra['domain']}-{contest.contest_id}-{contest.extra['uid']}" if platform == "cwnuoj" else
+                f"live-nowcoder-{contest.contest_id}-{contest.extra['uid']}")
         path = root / (name + ".json")
         saved = read_json(path)
         if saved and (saved.get("mode") != "live" or saved.get("handle", "").lower() != api.handle.lower()):
@@ -252,8 +257,8 @@ def history() -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Attach to an existing Codeforces or CWNUOJ contest registration")
-    parser.add_argument("url", help="Codeforces or https://oj.cwnupaa.com/contest/ID contest URL")
+    parser = argparse.ArgumentParser(description="Attach to an existing Codeforces, CWNUOJ or Nowcoder contest registration")
+    parser.add_argument("url", help="Codeforces, CWNUOJ or https://ac.nowcoder.com/acm/contest/ID contest URL")
     args = parser.parse_args()
     from . import cli
     try:

@@ -207,7 +207,7 @@ class LiveDashboard:
                           *([""] * (len(columns) - 2)), *(str(stats[key][p]) if key in stats and p in stats[key] else "—"
                                               for p in self.contest.problems))
         note = ("Official public standings · scored = positive points · * preliminary" if self.contest.platform == "cf"
-                else "CWNUOJ scoreboard · original scores, ranks and public statistics")
+                else f"{'Nowcoder' if self.contest.platform == 'nowcoder' else 'CWNUOJ'} scoreboard · original scores, ranks and public statistics")
         if own is None:
             note = "Your participation is absent from the public official standings; points and rank unavailable."
         labels = self._record_table()

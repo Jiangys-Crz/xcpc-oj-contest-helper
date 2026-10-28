@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from .models import Medals, VPError
 
 CWNUOJ_HOST = "oj.cwnupaa.com"
+NOWCODER_HOST = "ac.nowcoder.com"
 
 
 def contest_id_url(platform: str, ident: str) -> str:
@@ -40,10 +41,16 @@ def contest_url(url: str) -> tuple[str, str, str]:
             prefix = f"/d/{domain}" if domain and domain != "system" else ""
             return "cwnuoj", ident, f"https://{CWNUOJ_HOST}{prefix}/contest/{ident}"
         match = None
+    elif p.hostname == NOWCODER_HOST:
+        match = re.fullmatch(r"/acm/contest/([0-9]+)/?", p.path)
+        if match and int(match[1]) > 0:
+            ident = str(int(match[1]))
+            return "nowcoder", ident, f"https://{NOWCODER_HOST}/acm/contest/{ident}"
+        match = None
     else:
         match = None
     if not match:
-        raise VPError("Use a QOJ, Codeforces contest/Gym, or CWNUOJ contest link.")
+        raise VPError("Use a QOJ, Codeforces contest/Gym, CWNUOJ or Nowcoder contest link.")
     return platform, match[1], f"https://{p.hostname}{p.path.rstrip('/')}"
 
 

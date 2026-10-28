@@ -1,8 +1,8 @@
 # VP Helper
 
-Ubuntu 上的比赛终端助手，支持 QOJ、Codeforces ICPC 虚拟参赛、Codeforces Gym，以及 Codeforces、CWNUOJ 正式比赛实时接入。上方显示成绩与完整提交记录，下方保留比赛目录中的普通 shell。
+Ubuntu 上的比赛终端助手，支持 QOJ、Codeforces ICPC 虚拟参赛、Codeforces Gym，以及 Codeforces、CWNUOJ、牛客正式比赛实时接入。上方显示成绩与完整提交记录，下方保留比赛目录中的普通 shell。
 
-当前版本：0.3.0。
+当前版本：0.4.0。
 
 ## 安装
 
@@ -114,6 +114,34 @@ submit A.py --lang py.pypy3
 编译器从本题的 `langRange` 读取，未提供的语言会拒绝。发送前核对当前账号、UID、报名、比赛、题号映射及剩余时间；只向当前比赛对应题目的提交入口发送一次请求，不自动重发 POST，不转为赛后练习。收到原站 24 位提交编号后，再核对记录所属用户、题目及比赛，通知面板显示 `PENDING`。OI 场次可能只确认收件而不公开记录编号，此时保留原站的隐藏结果；请先检查原站记录再决定是否重试。
 
 本站记录列表带有定制的分页和搜索行为。客户端按原站可见权限读取分页列表，以数字 UID 精确筛选本人记录，忽略他人、其他比赛和其他域的提交；用原站 ObjectId 的创建时间计时，重新查询旧提交以同步重测。实时历史保存到 `cwnuoj_live_history.csv`，`vp history --live` 可同时查看 Codeforces 与 CWNUOJ 的历史。原有 VP 历史文件保持独立。
+
+## 牛客实时比赛
+
+安装本版本，在 Ubuntu 的 Firefox 登录 [牛客竞赛](https://ac.nowcoder.com)，并在网站完成比赛报名，然后执行：
+
+```bash
+live https://ac.nowcoder.com/acm/contest/比赛编号
+```
+
+登录沿用本项目的 Firefox Cookie 读取与验证流程，同时读取适用于竞赛站的 `.nowcoder.com` Cookie；配置单独保存在 `nowcoder` 项。程序根据原站登录上下文核对数字 UID，自动填写 `handle` 和 `uid`。无需填写手机号、密码或 API key。手动 Cookie 配置仍可用，此时 `handle` 填写数字 UID，而不是昵称或手机号。
+
+支持已报名的个人 ACM、OI、IOI、周赛，按原站起止时间计时；允许开赛前等待及中途接入。不会自动报名或解锁比赛；团队赛、重现赛暂未支持。重新执行同一链接会复用目录、代码和本地提交记录。题面作为可选 HTML 下载，失败时仍可看榜和提交。
+
+分数、排名、罚时和单题成绩来自原站榜单，OI 隐藏成绩及封榜按网站权限显示。分页读取题目与本人提交记录，使用 UID 精确筛选、持续同步重测，赛后提交标记为补题。解封后的最终榜单必须由原站确认已启用 `onlyContestRank`，避免把补题成绩当作正式比赛成绩；无法核实时显示未知。牛客历史保存为桌面的 `nowcoder_live_history.csv`，统一通过 `vp history --live` 查看。
+
+比赛目录中提交：
+
+```bash
+submit A.cpp
+submit A.cpp --lang 38     # C++ g++ 13；默认 2：clang++18
+submit B.py               # Python3
+submit B.py --lang 25      # PyPy3
+submit solution.cpp --problem A
+```
+
+提交请求参考 [vscode-nowcoderac](https://github.com/Handy2233/vscode-nowcoderac/blob/master/src/services/nowcoderService.ts) 并与牛客当前页面核对：从题目页面读取 `questionId`、`tagId`、`subTagId`、`doneQuestionId`，以 URL 编码表单向 `/nccommon/submit_cd` 发送代码、语言 ID 和语言名，原站返回提交 ID 后通知面板。登录不采用参考项目的账号密码流程，继续使用 Firefox Cookie。支持普通标准输入输出题的 C/C++、Java、Python3/PyPy3、Go、Rust、Kotlin；需要特殊模板的题目提示转到网站提交。验证码、会话过期、网络超时或未返回提交 ID 时不自动重发，请先在 Firefox 完成验证并检查原站记录。
+
+测试覆盖分页、计分与封榜、正式榜/补题区分、Firefox 父域 Cookie 与身份验证、目录恢复、表单字段/编译器和单次提交行为。公开接口已联网核对；登录后的完整比赛流程及真实代码提交仍需在已登录 Firefox、已有参赛资格的比赛中验证。
 
 先在 Ubuntu 的 Firefox 登录 QOJ 或 Codeforces，再运行比赛命令。`vp` 和内置 `submit` 自动读取 Firefox 的登录状态，并通过网站导航中的登录用户核对账号；未填写 handle 时也可以从已验证的浏览器登录自动取得。Codeforces / Gym 的 API key 与 API secret 仍在首次使用时配置。配置保存在 `~/.config/vp/config.json`，权限为 600；也可以参考 `config.example.json` 填写。`cf` 与 `gym` 默认共用 Codeforces 配置。
 

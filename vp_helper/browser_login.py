@@ -17,16 +17,17 @@ from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup
 
-from .parsing import CWNUOJ_HOST
+from .parsing import CWNUOJ_HOST, NOWCODER_HOST
 
 
 def platform_host(platform: str) -> str:
-    return {"qoj": "qoj.ac", "cwnuoj": CWNUOJ_HOST}.get(platform, "codeforces.com")
+    return {"qoj": "qoj.ac", "cwnuoj": CWNUOJ_HOST, "nowcoder": NOWCODER_HOST}.get(platform, "codeforces.com")
 
 
 def cookie_hosts(host: str) -> tuple[str, ...]:
     hosts = (host, "." + host)
-    return (*hosts, "cwnupaa.com", ".cwnupaa.com") if host == CWNUOJ_HOST else hosts
+    parent = {CWNUOJ_HOST: "cwnupaa.com", NOWCODER_HOST: "nowcoder.com"}.get(host)
+    return (*hosts, parent, "." + parent) if parent else hosts
 
 _MAX_SESSION_SIZE = 16 * 1024 * 1024
 _cache: dict = {}
@@ -198,8 +199,11 @@ def _verify(platform: str, candidate: BrowserCookies, expected: str) -> dict | N
         if urlsplit(response.url).hostname != host:
             return None
         identity = {}
-        if platform == "cwnuoj":
-            from .hydro import identity_from_html
+        if platform in ("cwnuoj", "nowcoder"):
+            if platform == "cwnuoj":
+                from .hydro import identity_from_html
+            else:
+                from .nowcoder import identity_from_html
             identity = identity_from_html(response.text)
             handles = {identity["handle"]}
         else:
