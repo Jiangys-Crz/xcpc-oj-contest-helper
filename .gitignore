@@ -1,0 +1,28 @@
+# macOS and Python-generated files
+.DS_Store
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# Local installations and environments
+/.vp-install/
+/bin/
+/.venv/
+/venv/
+
+# Local validation files (excluded according to README.md)
+/outputs/
+/tests/
+
+# Personal account and contest configuration
+/config.json
+.env
+.env.*
+!.env.example
+contest.json
+cookies.sqlite*

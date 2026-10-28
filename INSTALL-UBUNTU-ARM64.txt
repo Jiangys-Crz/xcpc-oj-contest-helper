@@ -1,0 +1,58 @@
+VP Helper · Ubuntu 26.04 ARM64 安装说明
+
+此目录已包含适配后的源代码及 Python 3.14 / ARM64 依赖 wheels。
+当前电脑处于 macOS，不能替尚未启动的另一套 Ubuntu 安装系统软件。
+
+已安装 0.1.15、只需修复当前比赛时，无需重新安装。以原虚拟环境路径为例，
+在 Ubuntu 用原参赛用户执行：
+
+   ~/Program/VP/VP/bin/python ~/Program/VP/tools/repair-vp.py
+   vp qoj 4538
+
+请先将更新后的 tools/repair-vp.py 复制到上面的位置。
+该脚本自动定位安装文件，检查兼容性并备份后再修复：
+- tmux 会话丢失时重建比赛面板，保留原开始时间和本地比赛记录，不重新申请 VP。
+- CCPC 新赛制的匿名 ? 列显示提交次数、尝试队伍数和通过队伍数，只隐藏题号。
+如果实际虚拟环境位于其他路径，请使用那里的 bin/python。
+
+1. 将本文件夹复制到 Ubuntu 能访问的位置，或将 outputs/ 下的
+   vp-helper-ubuntu-arm64.tar.gz 放到共享分区/U盘，进入 Ubuntu 后解压。
+   不要假定 Ubuntu 一定能直接读取 macOS 的 APFS 分区。
+
+2. 重启进入 Ubuntu，在终端进入解压后的 VP 文件夹，运行：
+
+   bash install.sh --local --offline
+   export PATH="$PWD/bin:$PATH"
+   vp --help
+   submit --help
+
+   请使用日常 Linux 用户运行，不要在安装命令前加 sudo。
+   缺少 tmux、python3.14-venv 或系统证书时，安装器会自动调用 sudo apt。
+   --offline 仅表示 Python 依赖使用随附 wheels；安装系统包仍需要网络。
+   如果改用其他 Python 版本，缺少相应 wheel 时去掉 --offline 后重试。
+
+3. 将安装完成时显示的 export PATH=... 行添加到 ~/.bashrc，
+   这样新开的终端也能找到 vp 和 submit。使用 zsh 时添加到 ~/.zshrc。
+   程序保存在此目录的 .vp-install/，命令入口在 bin/。
+   安装完成后不要移动目录；如果移动，请重新运行安装器。
+
+4. 在 Ubuntu 的 Firefox 登录 QOJ 或 Codeforces，然后运行：
+
+   vp qoj 比赛编号
+   vp cf 比赛编号
+   vp gym 比赛编号
+
+   CF / Gym 首次运行还需要填写 Codeforces API key 和 secret。
+   比赛目录内使用 submit A.cpp 提交；vp history 查看本地历史。
+   比赛命令会在原平台启动真实虚拟参赛，请在准备好比赛后使用。
+
+适配说明：
+- 优先使用原生 Python 3.12+，兼容 Ubuntu 26.04 自带的 Python 3.14。
+- Python 使用独立虚拟环境，不替换系统 Python，不修改 GCC。
+- ARM64 原生二进制依赖已准备；原始 x86_64 运行时在 ARM64 上不会使用。
+- 提交器通过所在安装目录查找解释器，支持路径中含空格。
+- 重新安装会先验证新版本，再切换到新版本；旧版保留在 releases/。
+
+本机 Docker 验证环境：Ubuntu 26.04.1 LTS / aarch64 / Python 3.14.4。
+验证记录位于原工作目录 outputs/；尚未验证双系统 Ubuntu 的图形桌面、
+实际 Firefox 登录、真实比赛启动和真实代码提交。

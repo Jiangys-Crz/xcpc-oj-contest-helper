@@ -1,0 +1,616 @@
+--- upstream/cf.py
++++ installed/submit
+@@ -1,7 +1,9 @@
+-#!/usr/bin/env python3
++#!/opt/vp-helper/current/venv/bin/python
+ 
+ import sys
+ import os
++import json
++from pathlib import Path
+ import argparse
+ import re
+ from robobrowser import RoboBrowser
+@@ -10,7 +12,6 @@
+ import cf_problems
+ import cf_standings
+ import cf_submit
+-import cf_test
+ import colours
+ 
+ """ print standings """
+@@ -19,10 +20,10 @@
+     browser = cf_login.login()
+     if len(str(contest)) >= 6:
+         """ gym contest """
+-        url = "http://codeforces.com/gym/"+contest+"/standings"
++        url = "https://codeforces.com/gym/"+contest+"/standings"
+     else:
+         """ codeforces round """
+-        url = "http://codeforces.com/contest/"+contest+"/standings"
++        url = "https://codeforces.com/contest/"+contest+"/standings"
+     """ check if friends """
+     if showall is False:
+         url += "/friends/true"
+@@ -35,9 +36,9 @@
+ def print_problems(contest, verbose, sort):
+     browser = cf_login.login()
+     if len(str(contest)) >= 6:
+-        url = "http://codeforces.com/gym/"+contest
+-    else:
+-        url = "http://codeforces.com/contest/"+contest
++        url = "https://codeforces.com/gym/"+contest
++    else:
++        url = "https://codeforces.com/contest/"+contest
+     browser.open(url);
+     if sort is None:
+         sort = "solves"
+@@ -47,9 +48,9 @@
+ def print_time(contest):
+     browser = cf_login.login()
+     if len(str(contest)) >= 6:
+-        url = "http://codeforces.com/gym/"+contest+"/submit"
+-    else:
+-        url = "http://codeforces.com/contest/"+contest+"/submit"
++        url = "https://codeforces.com/gym/"+contest+"/submit"
++    else:
++        url = "https://codeforces.com/contest/"+contest+"/submit"
+     browser.open(url)
+     countdown_timer = browser.parsed.find_all("span", class_="contest-state-regular countdown before-contest-"+contest+"-finish")
+     if len(countdown_timer) == 0:
+@@ -67,6 +68,15 @@
+         contestfile = open(contest_loc, "r")
+         defaultcontest = contestfile.read().rstrip('\n')
+         contestfile.close()
++
++    local_contest = Path('contest.json')
++    if local_contest.is_file():
++        context = json.loads(local_contest.read_text())
++        if context.get('platform') != 'gym':
++            raise SystemExit('This directory is not configured for Gym submissions.')
++        defaultcontest = str(context['contest_id'])
++    if Path(sys.argv[0]).name == 'submit':
++        sys.argv.insert(1, 'submit')
+ 
+     """ ------------------- argparse -------------------- """
+     parser = argparse.ArgumentParser(description="Command line tool to submit to codeforces", formatter_class=argparse.RawTextHelpFormatter)
+@@ -80,7 +90,6 @@
+             "standings -- show standings of friends in default contest, or specify contest with -p\n" +
+             "submit -- submit code to problem\n" +
+             "time -- shows time left in contest\n" +
+-            "test -- tests a problem by running the code on .in and comparing with .ans\n" +
+             "watch -- watch last submission\n" +
+             "coach -- toggle coach mode\n"
+     )
+@@ -241,9 +250,6 @@
+                     args.lang, args.option, args.watch, args.guru
+             )
+ 
+-    elif args.command == "test":
+-        cf_test.test(args.option, args.verbose)
+-
+     else:
+         print("UNKNOWN COMMAND")
+ 
+--- upstream/cf_coach.py
++++ installed/cf_coach.py
+@@ -6,7 +6,7 @@
+ 
+ def coach_mode(coach_on):
+ 	browser = cf_login.login()
+-	browser.open("http://codeforces.com/gyms")
++	browser.open("https://codeforces.com/gyms")
+ 	raw_html = str(browser.parsed)
+ 	if coach_on:
+ 		if raw_html.find("Enable coach mode") != -1:
+--- upstream/cf_login.py
++++ installed/cf_login.py
+@@ -2,97 +2,211 @@
+ import random
+ import getpass
+ from robobrowser import RoboBrowser
++import json
++from pathlib import Path
++from http.cookies import SimpleCookie
++import requests
++from vp_helper.browser_login import refresh_submission_login
++
++# codeforces.com sits behind Cloudflare, which fingerprints the TLS handshake:
++# a plain requests session is answered with "HTTP 403 / Just a moment...".
++# curl_cffi reproduces a real browser's TLS and HTTP/2 fingerprint.  RoboBrowser
++# accepts a replacement session because it only calls session.request/get/post
++# and reads session.cookies.
++try:
++    from curl_cffi import requests as _requests
++
++    _IMPERSONATE = 'firefox147'
++except ImportError:  # pragma: no cover - curl_cffi not installed
++    _requests = requests
++
++    _IMPERSONATE = None
++
++
++def _mime_from(data, files):
++    """Express requests' data=/files= pair as a curl_cffi CurlMime.
++
++    RoboBrowser serializes <input type="file"> fields into files= -- its
++    FileInput.payload_key is 'files' -- and requests accepts (name, file object)
++    pairs there.  curl_cffi has no equivalent, so those parts have to be read and
++    rebuilt as CurlMime parts.
++    """
++    from curl_cffi import CurlMime
++
++    mime = CurlMime()
++    for name, value in (data or []):
++        if isinstance(value, (list, tuple)):
++            value = value[0] if value else ''
++        mime.addpart(name=name,
++                     data=value if isinstance(value, bytes) else str(value).encode())
++    for name, item in (files or []):
++        filename = content_type = None
++        if isinstance(item, (list, tuple)):
++            if len(item) >= 3:
++                filename, body, content_type = item[0], item[1], item[2]
++            elif len(item) == 2:
++                filename, body = item
++            else:
++                body = item[0]
++        else:
++            body = item
++        if hasattr(body, 'read'):
++            if not filename:
++                filename = os.path.basename(getattr(body, 'name', '') or '') or None
++            try:
++                body.seek(0)
++            except (OSError, ValueError):
++                pass
++            payload = body.read()
++        else:
++            payload = body
++        if isinstance(payload, str):
++            payload = payload.encode()
++        if filename is None and content_type is None:
++            mime.addpart(name=name, data=payload)
++        else:
++            # requests sends no Content-Type for a file object handed to it
++            # without an explicit type, so this must not invent one either.
++            mime.addpart(name=name, data=payload, filename=filename, content_type=content_type)
++    return mime
++
++
++if _IMPERSONATE:
++    class _FormSession(_requests.Session):
++        """A curl_cffi session that also understands requests' files= spelling.
++
++        RoboBrowser builds file inputs as files=, which curl_cffi rejects with
++        "files is not supported, use `multipart`".  Without this translation the
++        Codeforces source upload never leaves the client.
++        """
++
++        def request(self, method, url, *args, **kwargs):
++            files = kwargs.pop('files', None)
++            if files:
++                kwargs['multipart'] = _mime_from(kwargs.pop('data', None), files)
++            return super().request(method, url, *args, **kwargs)
++
++
++def make_session(user_agent=None):
++    """A browser session that can pass Cloudflare and accept RoboBrowser's forms."""
++    if _IMPERSONATE:
++        return _FormSession(impersonate=_IMPERSONATE)
++    session = _requests.Session()
++    if user_agent:
++        session.headers['User-Agent'] = user_agent
++    return session
+ 
+ root = '7'
+ """ converter """
+ def decode(s):
+-	global root
+-	res = ""
+-	length = len(s)
+-	i = 0
+-	while i < length:
+-		rng = ord(s[i])-ord(root)
+-		jump = ord(s[i+1])-ord(root)
+-		temp = 0
+-		for j in range (0, rng):
+-			temp += ord(s[i+j+2]) - ord(root) - jump
+-		res += str(chr(temp))
+-		i += rng + 2
+-	return res
++    global root
++    res = ""
++    length = len(s)
++    i = 0
++    while i < length:
++        rng = ord(s[i])-ord(root)
++        jump = ord(s[i+1])-ord(root)
++        temp = 0
++        for j in range (0, rng):
++            temp += ord(s[i+j+2]) - ord(root) - jump
++        res += str(chr(temp))
++        i += rng + 2
++    return res
+ 
+ def encode(s):
+-	global root
+-	res = ""
+-	length = len(s)
+-	for i in range (0, length):
+-		rng = random.randint(1, 20)
+-		res += str(chr(rng + ord(root)))
+-		jump = random.randint(1,10)
+-		res += str(chr(jump + ord(root)))
+-		curr = ord(s[i])
+-		for j in range (0, rng-1):
+-			temp = random.randint(0, min(curr, 2+int(curr/(rng-j))))
+-			res += str(chr(temp + ord(root) + jump))
+-			curr -= temp
+-		res += str(chr(curr + ord(root) + jump))
+-	return res
++    global root
++    res = ""
++    length = len(s)
++    for i in range (0, length):
++        rng = random.randint(1, 20)
++        res += str(chr(rng + ord(root)))
++        jump = random.randint(1,10)
++        res += str(chr(jump + ord(root)))
++        curr = ord(s[i])
++        for j in range (0, rng-1):
++            temp = random.randint(0, min(curr, 2+int(curr/(rng-j))))
++            res += str(chr(temp + ord(root) + jump))
++            curr -= temp
++        res += str(chr(curr + ord(root) + jump))
++    return res
+ 
+ def get_secret(inclupass):
+-	handle = None
+-	password = None
+-	secret_loc = os.path.join(os.path.dirname(__file__), "secret")
+-	if os.path.isfile(secret_loc):
+-		secretfile = open(secret_loc, "r")
+-		rawdata = secretfile.read().rstrip('\n').split()
+-		handle = decode(rawdata[0])
+-		if inclupass:
+-			password = decode(rawdata[1])
+-		secretfile.close()
+-	if inclupass:
+-		return handle, password
+-	else:
+-		return handle
++    context = Path('contest.json')
++    if context.is_file():
++        account = json.loads(context.read_text())
++        if account.get('platform') == 'gym' and account.get('handle'):
++            return (account['handle'], None) if inclupass else account['handle']
++    handle = None
++    password = None
++    secret_loc = os.path.join(os.path.dirname(__file__), "secret")
++    if os.path.isfile(secret_loc):
++        secretfile = open(secret_loc, "r")
++        rawdata = secretfile.read().rstrip('\n').split()
++        handle = decode(rawdata[0])
++        if inclupass:
++            password = decode(rawdata[1])
++        secretfile.close()
++    if inclupass:
++        return handle, password
++    else:
++        return handle
+ 
+ """ set login """
+ def set_login(handle=None):
+-	if handle is None:
+-		handle = input("Handle: ")
+-	password = getpass.getpass("Password: ")
+-
+-	browser = RoboBrowser(parser = "lxml")
+-	browser.open("http://codeforces.com/enter")
+-	enter_form = browser.get_form("enterForm")
+-	enter_form["handleOrEmail"] = handle
+-	enter_form["password"] = password
+-	browser.submit_form(enter_form)
+-
+-	checks = list(map(lambda x: x.getText()[1:].strip(),
+-		browser.select("div.caption.titled")))
+-	if handle not in checks:
+-		print("Login Failed.")
+-		return
+-	else:
+-		secret_loc = os.path.join(os.path.dirname(__file__), "secret")
+-		secretfile = open(secret_loc, "w")
+-		secretfile.write(encode(handle) + " " + encode(password))
+-		secretfile.close()
+-		print("Successfully logged in as " + handle)
++    if handle is None:
++        handle = input("Handle: ")
++    password = getpass.getpass("Password: ")
++
++    browser = RoboBrowser(parser = "lxml", session = make_session())
++    browser.open("https://codeforces.com/enter")
++    enter_form = browser.get_form("enterForm")
++    enter_form["handleOrEmail"] = handle
++    enter_form["password"] = password
++    browser.submit_form(enter_form)
++
++    checks = list(map(lambda x: x.getText()[1:].strip(),
++        browser.select("div.caption.titled")))
++    if handle not in checks:
++        print("Login Failed.")
++        return
++    else:
++        secret_loc = os.path.join(os.path.dirname(__file__), "secret")
++        secretfile = open(secret_loc, "w")
++        secretfile.write(encode(handle) + " " + encode(password))
++        secretfile.close()
++        print("Successfully logged in as " + handle)
+ 
+ """ login """
+ def login():
+-	handle, password = get_secret(True)
+-
+-	browser = RoboBrowser(parser = "lxml")
+-	browser.open("http://codeforces.com/enter")
+-	enter_form = browser.get_form("enterForm")
+-	enter_form["handleOrEmail"] = handle
+-	enter_form["password"] = password
+-	browser.submit_form(enter_form)
+-
+-	checks = list(map(lambda x: x.getText()[1:].strip(), browser.select("div.caption.titled")))
+-	if handle not in checks:
+-		print("Login Corrupted.")
+-		return None
+-	else:
+-		return browser
+-
++    context = Path('contest.json')
++    if context.is_file():
++        account = json.loads(context.read_text())
++        if account.get('platform') == 'gym':
++            refresh_submission_login(context, account, 'gym')
++            session = make_session(account['user_agent'])
++            jar = SimpleCookie()
++            jar.load(account['cookie'])
++            for item in jar.values():
++                session.cookies.set(item.key, item.value, domain='codeforces.com', path='/')
++            browser = RoboBrowser(parser='lxml', session=session)
++            browser.open('https://codeforces.com/')
++            logged_in = any(a.get('href', '').lower() == '/profile/' + account['handle'].lower()
++                            for a in browser.select('#header a'))
++            if not logged_in:
++                raise SystemExit('Codeforces login expired or belongs to another account. Log in to the configured account in Firefox, then run submit again.')
++            return browser
++    handle, password = get_secret(True)
++
++    browser = RoboBrowser(parser = "lxml", session = make_session())
++    browser.open("https://codeforces.com/enter")
++    enter_form = browser.get_form("enterForm")
++    enter_form["handleOrEmail"] = handle
++    enter_form["password"] = password
++    browser.submit_form(enter_form)
++
++    checks = list(map(lambda x: x.getText()[1:].strip(), browser.select("div.caption.titled")))
++    if handle not in checks:
++        print("Login Corrupted.")
++        return None
++    else:
++        return browser
+--- upstream/cf_problems.py
++++ installed/cf_problems.py
+@@ -8,7 +8,7 @@
+ 	""" header """
+ 	header = ["#", "Name", "Solves"]
+ 	stats.field_names = header
+-	
++
+ 	""" get problems table """
+ 	probraw = raw_html.find_all("table", class_="problems")[0].find_all("tr")
+ 	for row in probraw[1:]:
+@@ -41,4 +41,3 @@
+ 	countdown_timer = raw_html.find_all("span", class_=countdown_id)
+ 	if len(countdown_timer) > 0:
+ 		print(colours.bold() + "TIME LEFT: " + str(countdown_timer[0].get_text(strip=True)) + colours.reset())
+-
+--- upstream/cf_standings.py
++++ installed/cf_standings.py
+@@ -16,19 +16,19 @@
+ def print_st(raw_html, verbose, top, sort):
+ 	""" get standings table """
+ 	mellon = raw_html.find_all("table", class_="standings")[0].find_all("tr")
+-	
++
+ 	standings = PrettyTable()
+ 
+ 	""" get header """
+ 	firstpart = len(mellon[0].find_all("th")) - len(mellon[0].find_all("a"))
+ 	header = []
+-	if verbose: 
++	if verbose:
+ 		for hcell in mellon[0].find_all("th")[:firstpart]:
+ 			hcellstr = str(hcell.get_text(strip=True))
+ 			if hcellstr == "*":
+ 				hcellstr = "Hacks"
+ 			header.append(hcellstr)
+-	else: 
++	else:
+ 		for hcell in mellon[0].find_all("th")[1:3]:
+ 			header.append(str(hcell.get_text(strip=True)))
+ 	for hcell in mellon[0].find_all("a"):
+@@ -102,7 +102,7 @@
+ 				if party[-1] == '#':
+ 					tail = "#"
+ 					party = party[:-1]
+-				""" split """ 
++				""" split """
+ 				party = party.split(':')
+ 				""" get first part (team name) """
+ 				teamname = party[0]
+@@ -172,7 +172,7 @@
+ 			if party not in handledict:
+ 				handledict[party] = tablerow
+ 			else:
+-				""" update """ 
++				""" update """
+ 				for i in range (problemstart, len(header)-1):
+ 					""" update if empty or wa """
+ 					if len(handledict[party][i]) == 0:
+@@ -213,7 +213,7 @@
+ 	elif sort == "solves":
+ 		""" add rowinfo to standings """
+ 		for key, rowinfo in handledict.items():
+-			""" append the sorter """ 
++			""" append the sorter """
+ 			sortvalue = rowinfo[fields["="]]
+ 			if "Penalty" in fields:
+ 				if len(rowinfo[fields["Penalty"]]) == 0:
+@@ -222,14 +222,14 @@
+ 					sortvalue = 100000*sortvalue - int(rowinfo[fields["Penalty"]])
+ 			rowinfo.append(sortvalue)
+ 			standings.add_row(rowinfo)
+-		""" print """ 
++		""" print """
+ 		print(standings.get_string(
+-				sortby="sorter", 
++				sortby="sorter",
+ 				reversesort=True,
+ 				fields=header[:-1]
+ 		))
+ 
+-	elif sort == "index": 
++	elif sort == "index":
+ 		print("sort == index : nothing here")
+ 
+ 	else:
+@@ -241,4 +241,3 @@
+ 	countdown_timer = raw_html.find_all("span", class_="countdown")
+ 	if len(countdown_timer) > 0:
+ 		print(colours.bold() + "TIME LEFT: " + str(countdown_timer[0].get_text(strip=True)) + colours.reset())
+-
+--- upstream/cf_submit.py
++++ installed/cf_submit.py
+@@ -3,11 +3,21 @@
+ import json
+ import re
+ import requests
++
++# cf_login.make_session may hand RoboBrowser a curl_cffi session instead of a
++# requests one, so the session's own exception type must be caught too.
++try:
++    from curl_cffi.requests.errors import RequestsError as _CurlCffiError
++except ImportError:  # pragma: no cover - curl_cffi not installed
++    _CurlCffiError = requests.RequestException
++
++_SESSION_ERRORS = (requests.RequestException, _CurlCffiError)
++
+ import colours
+ 
+ """ submissions """
+ def get_submission_data(handle):
+-    req = requests.get("http://codeforces.com/api/user.status?handle={}&from=1&count=1".format(handle))
++    req = requests.get("https://codeforces.com/api/user.status?handle={}&from=1&count=1".format(handle))
+     content = req.content.decode()
+     js = json.loads(content)
+     if "status" not in js or js["status"] != "OK":
+@@ -115,6 +125,15 @@
+     else:
+         print("Unknown Language")
+         return False
++    field = submission["programTypeId"]
++    available = {str(value): str(label) for value, label in zip(field.options, field.labels)}
++    preferred = ("GNU G++20", "GNU G++23", "GNU G++17") if lang == "cpp" else ("PyPy 3", "Python 3") if lang == "py" else ()
++    if langcode not in available or lang == "py":
++        langcode = next((value for prefix in preferred for value, label in available.items()
++                         if label.startswith(prefix)), None)
++    if langcode is None:
++        print("No compatible compiler is offered by this contest")
++        return False
+     submission["programTypeId"] = langcode
+ 
+     # check acmsguru
+@@ -140,6 +159,19 @@
+ 
+ """ submit problem """
+ def submit(browser, handle, contest, problem, lang, source, show, guru):
++    from pathlib import Path
++    import json
++    from vp_helper.receipts import cf_submission_id, cf_submission_ids, record_receipt
++    from vp_helper.models import VPError
++    previous = None
++    if not guru:
++        prefix = 'gym' if len(contest) >= 6 else 'contest'
++        try:
++            response = browser.session.get('https://codeforces.com/' + prefix + '/' + contest + '/my', timeout=(10, 40))
++            if response.status_code == 200 and response.url.split('?')[0].endswith('/' + contest + '/my'):
++                previous = cf_submission_ids(response.text)
++        except _SESSION_ERRORS:
++            pass
+     if guru:
+         print("Submitting to acmsguru " + problem + " as " + handle)
+     else:
+@@ -147,16 +179,28 @@
+ 
+     pid = -1
+     if guru:
+-        browser.open("http://codeforces.com/problemsets/acmsguru/submit")
++        browser.open("https://codeforces.com/problemsets/acmsguru/submit")
+         pid = problem
+     elif len(contest) >= 6:
+-        browser.open("http://codeforces.com/gym/" + contest + "/submit/" + problem.upper())
+-    else:
+-        browser.open("http://codeforces.com/contest/" + contest + "/submit/" + problem.upper())
++        browser.open("https://codeforces.com/gym/" + contest + "/submit/" + problem.upper())
++    else:
++        browser.open("https://codeforces.com/contest/" + contest + "/submit/" + problem.upper())
+ 
+     """ show submission """
+-    if submit_problem(browser, contest, lang, source, pid) and show:
+-        watch(handle)
++    submitted_at = time.time()
++    if submit_problem(browser, contest, lang, source, pid):
++        if previous is not None:
++            sid = cf_submission_id(browser.parsed, previous, contest, problem, handle)
++            if sid is not None:
++                print('Submission #' + sid + ': PENDING', flush=True)
++                config = Path('contest.json')
++                if config.is_file():
++                    try:
++                        record_receipt(json.loads(config.read_text()), sid, problem.upper(), submitted_at)
++                    except (VPError, OSError) as exc:
++                        print('Submitted, but the monitor notification failed: ' + str(exc))
++        if show:
++            watch(handle)
+ 
+ """ submit, possibly len(args) > 1 """
+ def submit_files(browser, defaulthandle, defaultcontest, defaultprob, defext, defaultlang, args, show, guru):
+@@ -186,7 +230,7 @@
+                 submit(browser, defaulthandle, defaultcontest, defaultprob, info[-1], source, show, guru)
+             else:
+                 """  parse string """
+-                splitted = re.split('(\D+)', defaultprob)
++                splitted = re.split(r'(\D+)', defaultprob)
+                 if len(splitted) == 3 and len(splitted[1]) == 1 and len(splitted[2]) == 0:
+                     """ probably a good string """
+                     submit(browser, defaulthandle, splitted[0], splitted[1], info[-1], source, show, guru)
+@@ -208,7 +252,7 @@
+                     submit(browser, defaulthandle, defaultcontest, info[0], info[1], source, show, guru)
+                 else:
+                     """ contest is included, so parse """
+-                    splitted = re.split('(\D+)', info[0])
++                    splitted = re.split(r'(\D+)', info[0])
+                     if len(splitted) == 3 and len(splitted[1]) == 1 and len(splitted[2]) == 0:
+                         """ probably good string ? """
+                         submit(browser, defaulthandle, splitted[0], splitted[1], info[1], source, show, guru)
+@@ -217,4 +261,3 @@
+ 
+         else:
+             print("cannot parse filename, specify problem with -p or --prob")
+-
+--- upstream/colours.py
++++ installed/colours.py
+@@ -4,4 +4,3 @@
+ 
+ def bold():
+ 	return "\033[1m"
+-

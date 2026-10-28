@@ -1,0 +1,48 @@
+{
+  "target": {
+    "os": "Ubuntu 26.04",
+    "architecture": "aarch64",
+    "python": "3.14.4"
+  },
+  "prepared_date": "2026-10-28",
+  "source": "https://pypi.org/",
+  "description": "Additional official PyPI wheels used for the validated Ubuntu 26.04 ARM64 installation; original upstream wheels remain available.",
+  "wheels": [
+    {
+      "filename": "certifi-2026.10.23-py3-none-any.whl",
+      "sha256": "e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1"
+    },
+    {
+      "filename": "cffi-2.1.1-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+      "sha256": "58acb8ab8e295e6c5ea12f888cbb13cf21511ef2a3303a23f4325c29d17fe5c1"
+    },
+    {
+      "filename": "charset_normalizer-3.5.2-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+      "sha256": "8d86d6fc60743dc916eb79e2eb1ec4818e21e427731543af40a3021851174a13"
+    },
+    {
+      "filename": "curl_cffi-0.17.0-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+      "sha256": "aa91d26234516ddb9eb97310d5fe1705aa6f677f101d57ffdb76d5f75439506e"
+    },
+    {
+      "filename": "lxml-6.1.3-cp314-cp314-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl",
+      "sha256": "2221e88679d1351e9a40aaee54bc65679b9795bbd0160bc3d5e36b163344eb75"
+    },
+    {
+      "filename": "pycparser-3.12-py3-none-any.whl",
+      "sha256": "a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e"
+    },
+    {
+      "filename": "selectolax-1.0.2-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+      "sha256": "337aad091f5c152477061c5597191233a3d059ac955048fef3d87ca3ebca2c79"
+    },
+    {
+      "filename": "soupsieve-3.0.4-py3-none-any.whl",
+      "sha256": "8412826614f9c632227067d0985aeb9f584bd15efc852955430e097a9fe7afbf"
+    },
+    {
+      "filename": "wcwidth-0.9.4-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+      "sha256": "093469e01d881bff3db93ff3f56c364dc87c441ea01f9f41c22de0c0bdf5c6ef"
+    }
+  ]
+}
