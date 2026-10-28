@@ -8,6 +8,8 @@ from zoneinfo import ZoneInfo
 
 from .models import Medals, VPError
 
+CWNUOJ_HOST = "oj.cwnupaa.com"
+
 
 def contest_id_url(platform: str, ident: str) -> str:
     paths = {"cf": "https://codeforces.com/contest/", "qoj": "https://qoj.ac/contest/",
@@ -31,10 +33,17 @@ def contest_url(url: str) -> tuple[str, str, str]:
     elif p.hostname == "codeforces.com":
         match = re.fullmatch(r"/(?:contest|gym)/(\d+)/?", p.path)
         platform = "gym" if p.path.startswith("/gym/") else "cf"
+    elif p.hostname == CWNUOJ_HOST:
+        match = re.fullmatch(r"(?:/d/([A-Za-z0-9_.-]+))?/contest/([a-fA-F0-9]{24})/?", p.path)
+        if match and match[1] not in (".", ".."):
+            domain, ident = match[1], match[2].lower()
+            prefix = f"/d/{domain}" if domain and domain != "system" else ""
+            return "cwnuoj", ident, f"https://{CWNUOJ_HOST}{prefix}/contest/{ident}"
+        match = None
     else:
         match = None
     if not match:
-        raise VPError("Only QOJ contest, Codeforces contest and Codeforces Gym links are supported.")
+        raise VPError("Use a QOJ, Codeforces contest/Gym, or CWNUOJ contest link.")
     return platform, match[1], f"https://{p.hostname}{p.path.rstrip('/')}"
 
 

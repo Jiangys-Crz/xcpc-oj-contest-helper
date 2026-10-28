@@ -183,7 +183,7 @@ class CodeforcesLive:
 
 def submission_records(events: list[dict], phase: str) -> list[dict]:
     records = []
-    for event in sorted(events, key=lambda s: (s["time"], int(s["id"])), reverse=True):
+    for event in sorted(events, key=lambda s: (s["time"], str(s["id"]).zfill(24)), reverse=True):
         item = dict(event)
         if item["verdict"] == "CORRECT" and item.get("testset") == "PRETESTS" and phase != "FINISHED":
             item["verdict"] = "PRETESTS-PASSED"

@@ -16,12 +16,16 @@ def receipt_directory(state_path: Path) -> Path:
     return state_path.with_suffix(".receipts")
 
 
+def valid_submission_id(value: str, platform: str) -> bool:
+    return bool(re.fullmatch(r"[a-f0-9]{24}" if platform == "cwnuoj" else r"[0-9]+", value))
+
+
 def record_receipt(config: dict, submission_id: str, problem: str, submitted_at: float) -> bool:
     context = config.get("vp_context")
     if not isinstance(context, dict):
         return False  # A standalone upstream submit need not be attached to a VP.
     sid = str(submission_id)
-    if not re.fullmatch(r"[0-9]+", sid) or not math.isfinite(submitted_at):
+    if not valid_submission_id(sid, config.get("platform", "")) or not math.isfinite(submitted_at):
         raise VPError("The server did not assign a valid submission ID or time.")
     path = Path(context["state_path"])
     if path.resolve().parent != state_directory().resolve():
@@ -48,6 +52,7 @@ class ReceiptReader:
         self.start_time = state["start_time"]
         self.url = state["url"]
         self.problems = state["contest"]["problems"]
+        self.platform = state["contest"].get("platform", "")
         self.stamp = None
 
     def read(self) -> list[Submission]:
@@ -62,7 +67,7 @@ class ReceiptReader:
             data = read_json(path)
             if (data.get("start_time") == self.start_time and data.get("url") == self.url
                     and data.get("problem") in self.problems and data.get("verdict") == "PENDING"
-                    and re.fullmatch(r"[0-9]+", str(data.get("id", "")))
+                    and valid_submission_id(str(data.get("id", "")), self.platform)
                     and isinstance(data.get("time"), (int, float)) and math.isfinite(data["time"])
                     and data["time"] >= 0):
                 result.append(Submission(**{key: data[key] for key in ("id", "team", "problem", "time", "verdict")}))

@@ -45,7 +45,9 @@ VP Helper · Ubuntu 26.04 ARM64 安装说明
 
    Codeforces 已报名的正式比赛使用：
    live https://codeforces.com/contest/比赛编号
+   live https://oj.cwnupaa.com/contest/比赛ID
    实时模式按官方赛程计时，不启动 VP，不需要 API key/secret。
+   CWNUOJ 请先在 Ubuntu Firefox 登录并在网站报名，配置使用 cwnuoj 项。
    比赛目录内 submit A.cpp 提交，vp history --live 查看实时比赛历史。
    PDF 或 HTML 题面下载失败时仍可使用比赛面板和提交。
 

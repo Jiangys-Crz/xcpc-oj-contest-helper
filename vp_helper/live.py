@@ -1,4 +1,4 @@
-"""Lifecycle of an existing, official Codeforces participation."""
+"""Lifecycle of existing Codeforces and CWNUOJ participations."""
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
@@ -21,20 +21,38 @@ from .storage import desktop, file_lock, read_history, read_json, state_director
 from .tui import LiveDashboard, TerminalDashboard
 
 HISTORY_FIELDS = ["start_time", "contest", "url", "handle", "scoring", "points", "penalty", "rank", "phase", "frozen"]
+PLATFORMS = {"cf": ("Codeforces", "vp-cf-submit", "cf_live_history.csv"),
+             "cwnuoj": ("CWNUOJ", "vp-hydro-submit", "cwnuoj_live_history.csv")}
 
 
-def configure_submission(api: CodeforcesLive, contest: Contest, directory: Path) -> None:
+def account_for(config: dict, platform: str) -> dict:
+    return config.get(platform, config.get("gym", {}) if platform == "cf" else {})
+
+
+def live_adapter(url: str, config: dict):
+    platform, _, canonical = contest_url(url)
+    if platform == "cf":
+        return CodeforcesLive(canonical, account_for(config, platform))
+    if platform == "cwnuoj":
+        from .hydro import HydroLive
+        return HydroLive(canonical, account_for(config, platform))
+    raise VPError("Live mode supports regular Codeforces and CWNUOJ contests.")
+
+
+def configure_submission(api, contest: Contest, directory: Path) -> None:
     from .browser_login import browser_fields
     selected = state_directory() / "submit"
     script = api.account.get("submit_script") or shutil.which("submit")
-    native = Path(sys.prefix) / "bin/vp-cf-submit"
+    native = Path(sys.prefix) / "bin" / PLATFORMS[contest.platform][1]
     if not native.is_file() or not os.access(native, os.X_OK):
         raise VPError("The live submit command is missing. Install this version with bash install.sh, then retry.")
     if not script or not Path(script).is_symlink() or Path(os.readlink(script)) != selected:
         raise VPError("Live contests require the bundled submit entry. Use the submit installed by bash install.sh.")
     write_json(directory / "contest.json", {
-        "platform": "cf", "mode": "live", "name": contest.name, "base_url": contest.url,
-        "contest_id": int(contest.contest_id), "problems": list(contest.problems),
+        "platform": contest.platform, "mode": "live", "name": contest.name, "base_url": contest.url,
+        "contest_id": int(contest.contest_id) if contest.platform == "cf" else contest.contest_id,
+        "problems": list(contest.problems), "problem_ids": contest.problems,
+        **({"uid": contest.extra["uid"]} if contest.platform == "cwnuoj" else {}),
         "handle": api.handle, "cookie": api.account["cookie"],
         "user_agent": api.web.session.headers["User-Agent"], **browser_fields(api.account),
     })
@@ -48,8 +66,8 @@ def prepare_live(url: str) -> tuple[Path, dict]:
     from . import cli
     cli.check_terminal()
     platform, _, canonical = contest_url(url)
-    if platform != "cf":
-        raise VPError("Live mode currently supports regular Codeforces contests only.")
+    if platform not in PLATFORMS:
+        raise VPError("Live mode supports regular Codeforces and CWNUOJ contests only.")
     root = state_directory()
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     with file_lock(root / "start.lock"):
@@ -59,13 +77,17 @@ def prepare_live(url: str) -> tuple[Path, dict]:
                 and old.get("status") != "complete"
                 and time.time() < old.get("start_time", 0) + old.get("contest", {}).get("rules", {}).get("duration", 0)):
             raise VPError(f"Another contest is still active: {old.get('url')}. Resume it before switching contests.")
-        config = cli.load_account("cf", live=True)
-        api = CodeforcesLive(canonical, config.get("cf", config.get("gym", {})))
+        config = cli.load_account(platform, live=True)
+        api = live_adapter(canonical, config)
         if old.get("url") == canonical and old.get("mode") == "live" and api.handle.lower() != old.get("handle", "").lower():
             raise VPError("The configured account changed; restore this contest's account before resuming it.")
-        cli.console.print("Checking Codeforces login, existing registration and official schedule…", markup=False)
+        cli.console.print(f"Checking {PLATFORMS[platform][0]} login, existing registration and official schedule…", markup=False)
         contest, snapshot = api.prepare()
-        name = f"live-cf-{contest.contest_id}-{api.handle.lower()}"
+        if (platform == "cwnuoj" and old.get("url") == canonical and old.get("mode") == "live"
+                and old.get("contest", {}).get("extra", {}).get("uid") != contest.extra["uid"]):
+            raise VPError("The CWNUOJ user ID changed; restore this contest's account before resuming it.")
+        name = (f"live-cf-{contest.contest_id}-{api.handle.lower()}" if platform == "cf" else
+                f"live-cwnuoj-{contest.extra['domain']}-{contest.contest_id}-{contest.extra['uid']}")
         path = root / (name + ".json")
         saved = read_json(path)
         if saved and (saved.get("mode") != "live" or saved.get("handle", "").lower() != api.handle.lower()):
@@ -76,7 +98,7 @@ def prepare_live(url: str) -> tuple[Path, dict]:
         state = {**saved, "mode": "live", "contest": contest.to_dict(), "url": canonical,
                  "start_time": contest.original_start, "handle": api.handle, "directory": str(directory),
                  "tmux_session": name, "status": "running", "submissions": saved.get("submissions", []),
-                 "snapshot": snapshot, "history_path": str(desktop() / "cf_live_history.csv")}
+                 "snapshot": snapshot, "history_path": str(desktop() / PLATFORMS[platform][2])}
         write_json(path, state)
         cli.bind_submit_context(directory, path, state)
         write_json(root / "current.json", {"state_path": str(path)})
@@ -84,7 +106,7 @@ def prepare_live(url: str) -> tuple[Path, dict]:
         return path, state
 
 
-def fetch(api: CodeforcesLive, saved_contest: dict, directory: Path | None = None):
+def fetch(api, saved_contest: dict, directory: Path | None = None):
     try:
         contest = Contest.from_dict(saved_contest)
         if directory is None:
@@ -95,7 +117,7 @@ def fetch(api: CodeforcesLive, saved_contest: dict, directory: Path | None = Non
         return None, str(exc)
 
 
-def fetch_statements(api: CodeforcesLive, saved_contest: dict, directory: Path) -> str:
+def fetch_statements(api, saved_contest: dict, directory: Path) -> str:
     try:
         api.save_statements(Contest.from_dict(saved_contest), directory)
         return ""
@@ -108,7 +130,7 @@ def save_progress(path: Path, state: dict, contest: Contest, snapshot: dict,
     own = snapshot.get("own")
     final = (snapshot.get("phase") == "FINISHED" and not snapshot.get("frozen") and own is not None
              and submissions_at >= snapshot.get("at", float("inf"))
-             and not any(e["verdict"] in ("PENDING", "UNAVAILABLE") for e in events.values() if not e.get("practice")))
+             and not any(e["verdict"] in ("PENDING", "UNAVAILABLE", "HIDDEN", "SYSTEM-ERROR") for e in events.values() if not e.get("practice")))
     state.update(contest=contest.to_dict(), start_time=contest.original_start, snapshot=snapshot,
                  submissions=list(events.values()), status="complete" if final else "running",
                  last_sync_time=submissions_at)
@@ -129,10 +151,10 @@ def monitor_live(path: Path) -> None:
         state = read_json(path)
         contest = Contest.from_dict(state["contest"])
         config = read_json(cli.config_directory() / "config.json")
-        account = config.get("cf", config.get("gym", {}))
+        account = account_for(config, contest.platform)
         if account.get("handle", "").lower() != state["handle"].lower():
             raise VPError("The configured account changed; restore this contest's account before resuming it.")
-        api, reference_api = CodeforcesLive(contest.url, account), CodeforcesLive(contest.url, account)
+        api, reference_api = live_adapter(contest.url, config), live_adapter(contest.url, config)
         events = {s["id"]: s for s in state.get("submissions", [])}
         snapshot = state.get("snapshot", {})
         receipts = ReceiptReader(path, state)
@@ -198,10 +220,11 @@ def monitor_live(path: Path) -> None:
                     config_path = Path(state["directory"]) / "contest.json"
                     submission_config = read_json(config_path)
                     submission_config["problems"] = list(contest.problems)
+                    submission_config["problem_ids"] = contest.problems
                     write_json(config_path, submission_config)
                 phase = snapshot.get("phase", contest.extra["phase"])
                 age = time.time() - snapshot.get("at", 0)
-                message = submission_error or reference_error or statement_error
+                message = submission_error or reference_error or snapshot.get("message", "") or statement_error
                 if age > 45 and phase != "BEFORE":
                     message = "Standings stale · " + (message or "reconnecting")
                 if submissions_at and time.time() - submissions_at > 15:
@@ -217,8 +240,9 @@ def monitor_live(path: Path) -> None:
 
 def history() -> None:
     from .cli import console
-    rows = read_history(desktop() / "cf_live_history.csv", fields=HISTORY_FIELDS)
-    table = Table(title="Codeforces live contests")
+    rows = [row for _, _, filename in PLATFORMS.values()
+            for row in read_history(desktop() / filename, fields=HISTORY_FIELDS)]
+    table = Table(title="Live contests")
     columns = ("start_time", "contest", "scoring", "points", "penalty", "rank", "phase", "frozen")
     for key in columns:
         table.add_column(key)
@@ -228,8 +252,8 @@ def history() -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Attach to an existing Codeforces live contest registration")
-    parser.add_argument("url", help="Codeforces contest URL, e.g. https://codeforces.com/contest/1234")
+    parser = argparse.ArgumentParser(description="Attach to an existing Codeforces or CWNUOJ contest registration")
+    parser.add_argument("url", help="Codeforces or https://oj.cwnupaa.com/contest/ID contest URL")
     args = parser.parse_args()
     from . import cli
     try:

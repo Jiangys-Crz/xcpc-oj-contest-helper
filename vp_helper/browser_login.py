@@ -17,6 +17,17 @@ from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup
 
+from .parsing import CWNUOJ_HOST
+
+
+def platform_host(platform: str) -> str:
+    return {"qoj": "qoj.ac", "cwnuoj": CWNUOJ_HOST}.get(platform, "codeforces.com")
+
+
+def cookie_hosts(host: str) -> tuple[str, ...]:
+    hosts = (host, "." + host)
+    return (*hosts, "cwnupaa.com", ".cwnupaa.com") if host == CWNUOJ_HOST else hosts
+
 _MAX_SESSION_SIZE = 16 * 1024 * 1024
 _cache: dict = {}
 _lock = threading.Lock()
@@ -134,7 +145,7 @@ def _session_cookies(profile: Path, host: str) -> dict:
             if not window.get("isPrivate"):
                 cookies.extend(window.get("cookies", []))
         return {c["name"]: c["value"] for c in cookies
-                if c.get("host", "").lstrip(".") == host and c.get("path", "/") == "/"
+                if c.get("host", "") in cookie_hosts(host) and c.get("path", "/") == "/"
                 and _ordinary(c.get("originAttributes")) and c.get("expiry", float("inf")) > time.time()
                 and isinstance(c.get("name"), str) and isinstance(c.get("value"), str)}
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
@@ -151,7 +162,7 @@ def _header(values: dict) -> str:
 
 
 def browser_cookies(platform: str, account: dict) -> list[BrowserCookies]:
-    host = "qoj.ac" if platform == "qoj" else "codeforces.com"
+    host = platform_host(platform)
     candidates = []
     for profile in firefox_profiles(account):
         persistent = {}
@@ -159,10 +170,11 @@ def browser_cookies(platform: str, account: dict) -> list[BrowserCookies]:
         try:
             if database.is_file():
                 with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=0.5)) as conn:
+                    hosts = cookie_hosts(host)
                     persistent = dict(conn.execute(
-                        "SELECT name, value FROM moz_cookies WHERE host IN (?, ?) AND path='/' "
+                        "SELECT name, value FROM moz_cookies WHERE host IN (" + ",".join("?" for _ in hosts) + ") AND path='/' "
                         "AND expiry > ? AND originAttributes='' ORDER BY lastAccessed",
-                        (host, "." + host, int(time.time()))))
+                        (*hosts, int(time.time()))))
         except (OSError, sqlite3.Error):
             pass
         combined = {**persistent, **_session_cookies(profile, host)}
@@ -177,7 +189,7 @@ def browser_cookies(platform: str, account: dict) -> list[BrowserCookies]:
 
 def _verify(platform: str, candidate: BrowserCookies, expected: str) -> dict | None:
     from .http import WebSession
-    host = "qoj.ac" if platform == "qoj" else "codeforces.com"
+    host = platform_host(platform)
     origin = "https://" + host
     web = WebSession(origin, {"cookie": candidate.cookie}, auto_refresh=False)
     try:
@@ -185,19 +197,26 @@ def _verify(platform: str, candidate: BrowserCookies, expected: str) -> dict | N
         web.check(response)
         if urlsplit(response.url).hostname != host:
             return None
-        soup = BeautifulSoup(response.text, "html.parser")
-        selector = "ul.nav-pills, .navbar, nav, header, .nav-item.dropdown .dropdown-menu" if platform == "qoj" else "#header"
-        prefix = "/user/profile/" if platform == "qoj" else "/profile/"
-        handles = {urlsplit(a.get("href", "")).path[len(prefix):].rstrip("/")
-                   for header in soup.select(selector) for a in header.select("a[href]")
-                   if urlsplit(a["href"]).path.startswith(prefix)}
+        identity = {}
+        if platform == "cwnuoj":
+            from .hydro import identity_from_html
+            identity = identity_from_html(response.text)
+            handles = {identity["handle"]}
+        else:
+            soup = BeautifulSoup(response.text, "html.parser")
+            selector = "ul.nav-pills, .navbar, nav, header, .nav-item.dropdown .dropdown-menu" if platform == "qoj" else "#header"
+            prefix = "/user/profile/" if platform == "qoj" else "/profile/"
+            handles = {urlsplit(a.get("href", "")).path[len(prefix):].rstrip("/")
+                       for header in soup.select(selector) for a in header.select("a[href]")
+                       if urlsplit(a["href"]).path.startswith(prefix)}
         if expected:
             handles = {h for h in handles if h == expected or platform != "qoj" and h.lower() == expected.lower()}
         if len(handles) != 1:
             return None
-        values = {c.name: c.value for c in web.session.cookies.jar
-                  if c.domain.lstrip(".") == host and c.path == "/"}
-        return {"cookie": _header(values), "handle": expected or handles.pop(),
+        jar = getattr(web.session.cookies, "jar", web.session.cookies)
+        values = {c.name: c.value for c in jar
+                  if c.domain in cookie_hosts(host) and c.path == "/"}
+        return {**identity, "cookie": _header(values), "handle": expected or handles.pop(),
                 "cookie_source": "firefox", "firefox_profile": str(candidate.profile)}
     except Exception:
         # Do not replace a configured session on network failure or another login.
@@ -210,7 +229,7 @@ def refresh_browser_account(platform: str, account: dict, *, force: bool = False
     if account.get("cookie_source") == "manual":
         return False
     for candidate in browser_cookies(platform, account):
-        key = ("qoj" if platform == "qoj" else "cf", str(candidate.profile), account.get("handle", ""),
+        key = (platform_host(platform), str(candidate.profile), account.get("handle", ""),
                hashlib.sha256(candidate.cookie.encode()).digest())
         with _lock:
             cached = _cache.get(key)

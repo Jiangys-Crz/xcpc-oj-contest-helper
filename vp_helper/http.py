@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 from bs4 import BeautifulSoup
 
 from .models import VPError
+from .parsing import CWNUOJ_HOST
 
 # ---------------------------------------------------------------------------
 # Transport selection.
@@ -68,7 +69,7 @@ class WebSession:
         self.account = account
         self._browser_checked = False
         self._auto_refresh = (auto_refresh and bool(account.get("handle"))
-                              and urlsplit(self.origin).hostname in ("qoj.ac", "codeforces.com"))
+                              and urlsplit(self.origin).hostname in ("qoj.ac", "codeforces.com", CWNUOJ_HOST))
         if _IMPERSONATE:
             # curl_cffi supplies the browser headers that match the impersonated
             # fingerprint.  Do not override them with the config's user_agent --
@@ -98,7 +99,7 @@ class WebSession:
         if not self._auto_refresh:
             return False
         from .browser_login import refresh_browser_account
-        platform = "qoj" if urlsplit(self.origin).hostname == "qoj.ac" else "gym"
+        platform = {"qoj.ac": "qoj", CWNUOJ_HOST: "cwnuoj"}.get(urlsplit(self.origin).hostname, "gym")
         if not refresh_browser_account(platform, self.account, force=force):
             return False
         self.session.cookies.clear()
@@ -119,7 +120,7 @@ class WebSession:
             try:
                 r = self.session.get(url, timeout=(10, 40), **kwargs)
                 if (not refreshed and r.status_code == 200
-                        and urlsplit(r.url).path in ("/login", "/enter")):
+                        and urlsplit(r.url).path in ("/login", "/user/login", "/enter")):
                     refreshed = True
                     if self._refresh_browser(force=True):
                         # Only an idempotent GET is repeated after refreshing login.
@@ -145,7 +146,7 @@ class WebSession:
     def check(self, r):
         if r.status_code != 200:
             raise VPError(f"{urlsplit(r.url).hostname} returned HTTP {r.status_code}")
-        if urlsplit(r.url).path in ("/login", "/enter"):
+        if urlsplit(r.url).path in ("/login", "/user/login", "/enter"):
             if self.account.get("cookie_source") == "manual":
                 raise VPError("Login session expired; update the account cookie in ~/.config/vp/config.json.")
             raise VPError("Login session expired. Log in to this site in Firefox, then run the command again.")

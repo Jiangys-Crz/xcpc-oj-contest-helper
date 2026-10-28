@@ -1,8 +1,8 @@
 # VP Helper
 
-Ubuntu 上的比赛终端助手，支持 QOJ、Codeforces ICPC 虚拟参赛、Codeforces Gym，以及 Codeforces 正式比赛实时接入。上方显示成绩与完整提交记录，下方保留比赛目录中的普通 shell。
+Ubuntu 上的比赛终端助手，支持 QOJ、Codeforces ICPC 虚拟参赛、Codeforces Gym，以及 Codeforces、CWNUOJ 正式比赛实时接入。上方显示成绩与完整提交记录，下方保留比赛目录中的普通 shell。
 
-当前版本：0.2.0。
+当前版本：0.3.0。
 
 ## 安装
 
@@ -58,7 +58,7 @@ vp history
 live https://codeforces.com/contest/比赛编号
 ```
 
-`live` 只接入当前账号已有的参赛资格，不报名、不取消报名、不启动虚拟参赛。支持普通 `/contest/` 比赛的 CF、ICPC、IOI 计分；Gym、私有 Group 比赛及其他平台暂不属于实时模式支持范围。可在开赛前接入等待，或比赛进行中接入；报名验证失败时会给出提示并退出。开赛前若原站尚未提供可验证的报名信息，可在开赛后再次执行同一命令。实时模式不要求 Codeforces API key/secret，现有 VP/Gym 的配置要求保持不变。
+`live` 只接入当前账号已有的参赛资格，不报名、不取消报名、不启动虚拟参赛。Codeforces 支持普通 `/contest/` 比赛的 CF、ICPC、IOI 计分；Gym 和私有 Group 比赛暂不属于实时模式支持范围。CWNUOJ 的接入方式见下一节。可在开赛前接入等待，或比赛进行中接入；报名验证失败时会给出提示并退出。开赛前若原站尚未提供可验证的报名信息，可在开赛后再次执行同一命令。实时模式不要求 Codeforces API key/secret，现有 VP/Gym 的配置要求保持不变。
 
 比赛目录位于桌面的 `CF 比赛编号 live`。面板按官方开始时间计时，中途接入、关闭终端、重启后重新执行同一条 `live URL` 命令，都保留比赛文件和已保存的提交记录。原站修改开赛时间后会重新同步计时。题面尽量保存为各题的 HTML；PDF 不作为接入前提，题面下载失败不会阻止使用面板或提交。未公布的题面在公开后再尝试获取。已有同名题面文件不会覆盖。
 
@@ -85,6 +85,35 @@ vp history --live
 ```
 
 也保留 `vp live cf ID` 和 `vp live CONTEST_URL` 作为等价入口。所有入口均使用同一个实时模式。接口依据：[Codeforces API 方法](https://codeforces.com/apiHelp/methods)、[返回对象](https://codeforces.com/apiHelp/objects)。
+
+## CWNUOJ 实时比赛（HydroOJ）
+
+支持本地部署站点 [CWNUOJ](https://oj.cwnupaa.com)，按其 Hydro 5.0.7 和定制排行榜、记录列表的实际返回适配。安装本版本，在 Ubuntu 的 Firefox 登录 CWNUOJ，先在网站报名，然后执行：
+
+```text
+live https://oj.cwnupaa.com/contest/比赛ID
+```
+
+比赛 ID 为链接中的 24 位十六进制字符串，不是题目编号。也支持域内比赛链接 `https://oj.cwnupaa.com/d/域名/contest/比赛ID`；`/d/system/contest/ID` 与默认域链接合并为同一场。其他 Hydro 站点暂不自动接入。
+
+配置保存在 `~/.config/vp/config.json` 的 `cwnuoj` 项，与 QOJ、Codeforces 分开；无需 API key 或 secret。默认自动读取 Firefox 中 `oj.cwnupaa.com` 及适用于该站的 `.cwnupaa.com` 登录 Cookie，通过原站自己的 `UserContext` 核对实际用户名和数字 UID，忽略访客身份及页面上其他用户的链接。只需在网站正常登录，不需要在配置中填写账号密码。手动 Cookie 方式仍可用，`handle` 应填写登录后的 CWNUOJ 用户名，而不是登录邮箱；`uid` 会从已验证的原站会话取得。
+
+支持个人 ACM/XCPC、OI、IOI 和 Codeforces 赛制。读取原站报名状态和比赛起止时间，未报名时拒绝接入；不会自动报名、开赛、取消报名或解封榜单。限时参赛场次必须先在 CWNUOJ 开始，再接入已存在的 `startAt`；团队场次暂未支持。重进同一链接会复用桌面比赛目录及本地提交记录，保留代码文件。
+
+排名、总分、过题数、罚时和单题成绩直接采用原站公开成绩表。CWNUOJ 的定制汇总存在时，显示原站提供的 `submitted`、`attempted`、`accepted`；否则只显示能够核实的公开统计。OI 隐藏成绩和封榜不通过管理员接口绕过，尚未开放的结果标记为 `HIDDEN` 或未知，题面下载失败不影响接入。HTML 题面保存在比赛目录，已有文件不覆盖。
+
+比赛目录内提交：
+
+```bash
+submit A.cpp
+submit solution.cpp --problem A
+submit A.cpp --lang cc.cc20o2
+submit A.py --lang py.pypy3
+```
+
+编译器从本题的 `langRange` 读取，未提供的语言会拒绝。发送前核对当前账号、UID、报名、比赛、题号映射及剩余时间；只向当前比赛对应题目的提交入口发送一次请求，不自动重发 POST，不转为赛后练习。收到原站 24 位提交编号后，再核对记录所属用户、题目及比赛，通知面板显示 `PENDING`。OI 场次可能只确认收件而不公开记录编号，此时保留原站的隐藏结果；请先检查原站记录再决定是否重试。
+
+本站记录列表带有定制的分页和搜索行为。客户端按原站可见权限读取分页列表，以数字 UID 精确筛选本人记录，忽略他人、其他比赛和其他域的提交；用原站 ObjectId 的创建时间计时，重新查询旧提交以同步重测。实时历史保存到 `cwnuoj_live_history.csv`，`vp history --live` 可同时查看 Codeforces 与 CWNUOJ 的历史。原有 VP 历史文件保持独立。
 
 先在 Ubuntu 的 Firefox 登录 QOJ 或 Codeforces，再运行比赛命令。`vp` 和内置 `submit` 自动读取 Firefox 的登录状态，并通过网站导航中的登录用户核对账号；未填写 handle 时也可以从已验证的浏览器登录自动取得。Codeforces / Gym 的 API key 与 API secret 仍在首次使用时配置。配置保存在 `~/.config/vp/config.json`，权限为 600；也可以参考 `config.example.json` 填写。`cf` 与 `gym` 默认共用 Codeforces 配置。
 

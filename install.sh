@@ -173,6 +173,7 @@ fi
 "$vp_release/venv/bin/vp" --help
 "$vp_release/venv/bin/live" --help
 "$vp_release/venv/bin/vp-cf-submit" --help
+"$vp_release/venv/bin/vp-hydro-submit" --help
 if [[ -d "$vp_release/third_party" ]]; then
     "$vp_release/third_party/qoj/submit" --help
     "$vp_release/third_party/cf_submit/submit" --help >/dev/null

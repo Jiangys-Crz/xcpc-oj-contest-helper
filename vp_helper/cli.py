@@ -34,6 +34,8 @@ def adapter(url: str, config: dict):
     if platform == "qoj":
         from .qoj import QOJ
         return QOJ(canonical, config.get("qoj", {}))
+    if platform == "cwnuoj":
+        raise VPError("CWNUOJ contests use live " + canonical)
     from .gym import Gym
     return Gym(canonical, config.get(platform, config.get("gym", {})))
 
@@ -48,10 +50,10 @@ def load_account(platform: str, *, live: bool = False) -> dict:
     if account != before:
         write_json(path, config)
     if not account.get("cookie") and account.get("cookie_source") != "manual":
-        site = "QOJ" if platform == "qoj" else "Codeforces"
+        site = {"qoj": "QOJ", "cwnuoj": "CWNUOJ"}.get(platform, "Codeforces")
         raise VPError(f"No matching Firefox login was found for {site}. "
                       "Log in to the site in Firefox, then run the same vp command again.")
-    required = ("handle", "cookie") if platform == "qoj" or live else ("handle", "cookie", "api_key", "api_secret")
+    required = ("handle", "cookie") if platform in ("qoj", "cwnuoj") or live else ("handle", "cookie", "api_key", "api_secret")
     missing = [key for key in required if not account.get(key)]
     if missing and not sys.stdin.isatty():
         raise VPError(f"Missing {platform} account fields {', '.join(missing)} in {path}")
@@ -180,6 +182,8 @@ def check_terminal() -> None:
 def prepare_start(url: str) -> tuple[Path, dict]:
     check_terminal()
     platform, _, canonical = contest_url(url)
+    if platform == "cwnuoj":
+        raise VPError("CWNUOJ contests use live " + canonical)
     state_root = state_directory()
     state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
     with file_lock(state_root / "start.lock"):
