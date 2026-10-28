@@ -87,8 +87,11 @@ class Gym:
                 pdfs["Statements.pdf"] = href
                 break
         if not pdfs:
-            soup = self.web.soup(self.url + "/attachments", params={"locale": "en"})
-            for a in soup.select("a[href]"):
+            try:
+                attachments = self.web.soup(self.url + "/attachments", params={"locale": "en"}).select("a[href]")
+            except VPError:
+                attachments = []
+            for a in attachments:
                 href = urljoin(self.url, a["href"])
                 if re.search(r"\.pdf(?:$|\?)", href, re.I) and re.search(r"statement|problem", a.get_text(" ", strip=True), re.I):
                     pdfs["Statements.pdf"] = href
@@ -96,14 +99,15 @@ class Gym:
         if not pdfs:
             for problem in data["problems"]:
                 label = problem["index"]
-                p = self.web.soup(self.url + f"/problem/{label}", params={"locale": "en"})
+                try:
+                    p = self.web.soup(self.url + f"/problem/{label}", params={"locale": "en"})
+                except VPError:
+                    continue
                 for a in p.select("a[href]"):
                     href = urljoin(self.url, a["href"])
                     if re.search(r"\.pdf(?:$|\?)", href, re.I):
                         pdfs[f"{label}.pdf"] = href
                         break
-        if not pdfs:
-            raise VPError("This Gym does not expose a PDF statement attachment.")
         duration = int(raw["durationSeconds"])
         freeze = raw.get("freezeDurationSeconds")
         medals = medals_from_html(dashboard_html, self.url)

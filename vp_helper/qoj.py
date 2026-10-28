@@ -87,12 +87,13 @@ class QOJ:
         if not pdfs:
             # A small number of contests use individual problem attachments.
             for label, pid in problem_map.items():
-                p = self._page(f"/problem/{pid}")
+                try:
+                    p = self._page(f"/problem/{pid}")
+                except VPError:
+                    continue
                 link = p.select_one('a[href$=".pdf"], iframe[src*=".pdf"], object[data*=".pdf"]')
                 if link:
                     pdfs[f"{label}.pdf"] = urljoin(self.url, link.get("href") or link.get("src") or link.get("data"))
-        if not pdfs:
-            raise VPError("QOJ did not expose a statement PDF for this contest.")
         return Contest("qoj", self.id, self.url, name, name, problem_map,
                        Rules(duration, int(penalty[1]) if penalty else 20,
                              freeze_at=seconds(freeze[1]) if freeze else None,

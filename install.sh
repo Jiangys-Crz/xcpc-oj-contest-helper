@@ -62,6 +62,12 @@ if [[ -e "$vp_bin/vp" || -L "$vp_bin/vp" ]]; then
         exit 1
     fi
 fi
+if [[ -e "$vp_bin/live" || -L "$vp_bin/live" ]]; then
+    if [[ ! -L "$vp_bin/live" || "$(readlink -- "$vp_bin/live")" != "$vp_prefix/current/venv/bin/live" ]]; then
+        printf '%s already exists and is not managed by this installation.\n' "$vp_bin/live" >&2
+        exit 1
+    fi
+fi
 if [[ -n "$vp_submit_path" && ( -e "$vp_bin/submit" || -L "$vp_bin/submit" ) ]] && \
         [[ "$(readlink -f -- "$vp_bin/submit")" != "$vp_submit_path" ]]; then
     printf '%s\n' 'A different submit already exists. It was left in place.' >&2
@@ -165,6 +171,8 @@ PY_LAUNCHER
 fi
 "${vp_pip[@]}" check
 "$vp_release/venv/bin/vp" --help
+"$vp_release/venv/bin/live" --help
+"$vp_release/venv/bin/vp-cf-submit" --help
 if [[ -d "$vp_release/third_party" ]]; then
     "$vp_release/third_party/qoj/submit" --help
     "$vp_release/third_party/cf_submit/submit" --help >/dev/null
@@ -199,6 +207,7 @@ ln -s "$vp_release" "$vp_prefix/.current-new-$$"
 mv -Tf "$vp_prefix/.current-new-$$" "$vp_prefix/current"
 vp_installed=true
 ln -sfn "$vp_prefix/current/venv/bin/vp" "$vp_bin/vp"
+ln -sfn "$vp_prefix/current/venv/bin/live" "$vp_bin/live"
 if [[ ! -e "$vp_bin/submit" && ! -L "$vp_bin/submit" ]]; then
     if [[ -n "$vp_submit_path" ]]; then
         ln -s -- "$vp_submit_path" "$vp_bin/submit"
@@ -209,7 +218,7 @@ elif [[ -z "$vp_submit_path" && "$(readlink -- "$vp_bin/submit" || true)" != "$v
     printf '%s\n' 'Preserved the previously installed submit.'
 fi
 printf 'Installed VP Helper using %s (%s).\n' "$("$vp_release/venv/bin/python" --version)" "$(uname -m)"
-printf 'Commands: %s/vp and %s/submit\n' "$vp_bin" "$vp_bin"
+printf 'Commands: %s/vp, %s/live and %s/submit\n' "$vp_bin" "$vp_bin" "$vp_bin"
 if $vp_local; then
     printf 'For commands in any directory, add this to your shell configuration:\n  export PATH=%q:"$PATH"\n' "$vp_bin"
 fi

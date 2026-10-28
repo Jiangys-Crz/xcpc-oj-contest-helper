@@ -38,7 +38,7 @@ def adapter(url: str, config: dict):
     return Gym(canonical, config.get(platform, config.get("gym", {})))
 
 
-def load_account(platform: str) -> dict:
+def load_account(platform: str, *, live: bool = False) -> dict:
     path = config_directory() / "config.json"
     config = read_json(path)
     key = "gym" if platform == "cf" and "cf" not in config else platform
@@ -51,7 +51,7 @@ def load_account(platform: str) -> dict:
         site = "QOJ" if platform == "qoj" else "Codeforces"
         raise VPError(f"No matching Firefox login was found for {site}. "
                       "Log in to the site in Firefox, then run the same vp command again.")
-    required = ("handle", "cookie") if platform == "qoj" else ("handle", "cookie", "api_key", "api_secret")
+    required = ("handle", "cookie") if platform == "qoj" or live else ("handle", "cookie", "api_key", "api_secret")
     missing = [key for key in required if not account.get(key)]
     if missing and not sys.stdin.isatty():
         raise VPError(f"Missing {platform} account fields {', '.join(missing)} in {path}")
@@ -168,13 +168,17 @@ def launch(state_path: Path, state: dict) -> None:
     attach(name)
 
 
-def prepare_start(url: str) -> tuple[Path, dict]:
+def check_terminal() -> None:
     if sys.platform != "linux":
         raise VPError("vp is supported on Ubuntu only.")
     if not sys.stdin.isatty():
         raise VPError("Run vp in an interactive Ubuntu terminal.")
     if shutil.which("tmux") is None:
         raise VPError("tmux is missing; run the installer.")
+
+
+def prepare_start(url: str) -> tuple[Path, dict]:
+    check_terminal()
     platform, _, canonical = contest_url(url)
     state_root = state_directory()
     state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -182,6 +186,8 @@ def prepare_start(url: str) -> tuple[Path, dict]:
         current = read_json(state_root / "current.json")
         if current:
             old = read_json(Path(current["state_path"]))
+            if old.get("url") == canonical and old.get("mode") == "live":
+                raise VPError("This is a live contest. Resume it with live " + canonical)
             # The saved participation outlives tmux. Let start() recreate a
             # missing session without requesting another native VP.
             if old.get("url") == canonical:
@@ -210,7 +216,10 @@ def prepare_start(url: str) -> tuple[Path, dict]:
         configure_submit(api, contest, directory)
         for name, pdf in contest.pdfs.items():
             console.print("Downloading " + name, markup=False)
-            api.web.pdf(pdf, directory / name)
+            try:
+                api.web.pdf(pdf, directory / name)
+            except (VPError, OSError) as exc:
+                console.print(f"Statement download skipped: {exc}. Use the original contest page.", markup=False)
         console.print("Starting and verifying native virtual participation…", markup=False)
         started = api.start(contest)
         name = "vp-" + platform + "-" + contest.contest_id + "-" + str(int(started))
@@ -228,9 +237,13 @@ def prepare_start(url: str) -> tuple[Path, dict]:
         return path, state
 
 
-def start(url: str) -> None:
+def start(url: str, *, live: bool = False) -> None:
     # Release the cross-shell preparation lock before entering an attached TUI.
-    path, state = prepare_start(url)
+    if live:
+        from .live import prepare_live
+        path, state = prepare_live(url)
+    else:
+        path, state = prepare_start(url)
     bind_submit_context(Path(state["directory"]), path, state)
     if tmux_exists(state["tmux_session"]):
         pane = state["tmux_session"] + ":0.0"
@@ -260,6 +273,10 @@ def monitor(path: Path) -> None:
     # supports the 256-color palette needed for orange and purple practice rows.
     if os.environ.get("TMUX") and os.environ.get("TERM") in ("screen", "tmux"):
         os.environ["TERM"] = "screen-256color"
+    if read_json(path).get("mode") == "live":
+        from .live import monitor_live
+        monitor_live(path)
+        return
     with file_lock(path.with_suffix(".monitor.lock"), nonblocking=True):
         state = read_json(path)
         contest = Contest.from_dict(state["contest"])
@@ -377,6 +394,13 @@ def main() -> None:
     try:
         if args == ["history"]:
             history()
+        elif args == ["history", "--live"]:
+            from .live import history as live_history
+            live_history()
+        elif len(args) == 3 and args[:2] == ["live", "cf"]:
+            start(contest_id_url("cf", args[2]), live=True)
+        elif len(args) == 2 and args[0] == "live":
+            start(args[1], live=True)
         elif len(args) == 2 and args[0] == "_monitor":
             monitor(Path(args[1]))
         elif len(args) == 2 and args[0] in ("cf", "qoj", "gym"):
@@ -384,9 +408,9 @@ def main() -> None:
         elif len(args) == 1 and args[0] not in ("-h", "--help"):
             start(args[0])
         elif args in ([], ["-h"], ["--help"]):
-            console.print("Usage: vp cf ID\n       vp qoj ID\n       vp gym ID\n       vp CONTEST_URL\n       vp history", markup=False)
+            console.print("Usage: vp cf ID\n       vp qoj ID\n       vp gym ID\n       vp CONTEST_URL\n       vp live cf ID\n       vp live CONTEST_URL\n       vp history [--live]", markup=False)
         else:
-            raise VPError("Usage: vp cf ID, vp qoj ID, vp gym ID or vp history")
+            raise VPError("Usage: vp cf ID, vp qoj ID, vp gym ID, vp live cf ID or vp history [--live]")
     except (VPError, OSError, subprocess.CalledProcessError) as exc:
         console.print("vp: " + str(exc), style="red", markup=False)
         raise SystemExit(1) from None

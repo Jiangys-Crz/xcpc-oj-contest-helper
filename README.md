@@ -1,8 +1,8 @@
 # VP Helper
 
-Ubuntu 上的 XCPC 虚拟参赛终端助手，支持 QOJ、Codeforces ICPC 比赛和 Codeforces Gym。上方显示成绩与完整提交记录，下方保留比赛目录中的普通 shell。
+Ubuntu 上的比赛终端助手，支持 QOJ、Codeforces ICPC 虚拟参赛、Codeforces Gym，以及 Codeforces 正式比赛实时接入。上方显示成绩与完整提交记录，下方保留比赛目录中的普通 shell。
 
-当前版本：0.1.15。
+当前版本：0.2.0。
 
 ## 安装
 
@@ -20,6 +20,7 @@ bash install.sh
 bash install.sh --local
 export PATH="$PWD/bin:$PATH"
 vp --help
+live --help
 submit --help
 ```
 
@@ -47,7 +48,43 @@ submit A.cpp
 vp history
 ```
 
-也支持 `vp CONTEST_URL`。计分范围限定为 ICPC；普通 Codeforces Round 的 CF / IOI 计分会在开赛前被拒绝。
+也支持 `vp CONTEST_URL`。上述 VP 命令的计分范围限定为 ICPC；普通 Codeforces Round 的 CF / IOI 计分请使用下面的 `live` 模式。
+
+## Codeforces 实时比赛
+
+先安装本版本，在 Ubuntu 的 Firefox 登录已经报名比赛的 Codeforces 账号，然后执行：
+
+```text
+live https://codeforces.com/contest/比赛编号
+```
+
+`live` 只接入当前账号已有的参赛资格，不报名、不取消报名、不启动虚拟参赛。支持普通 `/contest/` 比赛的 CF、ICPC、IOI 计分；Gym、私有 Group 比赛及其他平台暂不属于实时模式支持范围。可在开赛前接入等待，或比赛进行中接入；报名验证失败时会给出提示并退出。开赛前若原站尚未提供可验证的报名信息，可在开赛后再次执行同一命令。实时模式不要求 Codeforces API key/secret，现有 VP/Gym 的配置要求保持不变。
+
+比赛目录位于桌面的 `CF 比赛编号 live`。面板按官方开始时间计时，中途接入、关闭终端、重启后重新执行同一条 `live URL` 命令，都保留比赛文件和已保存的提交记录。原站修改开赛时间后会重新同步计时。题面尽量保存为各题的 HTML；PDF 不作为接入前提，题面下载失败不会阻止使用面板或提交。未公布的题面在公开后再尝试获取。已有同名题面文件不会覆盖。
+
+在比赛目录内执行：
+
+```bash
+submit A.cpp
+submit solution.cpp --problem A
+submit A.cpp --lang 73
+```
+
+默认按文件扩展名从本场实际提供的编译器中选择，可用 `--lang` 指定编译器 ID 或唯一匹配的名称。当前目录与源码目录绑定不同比赛时拒绝提交。提交前核对账号、比赛、官方时间和 `CODING` 状态；结束后不会自动当作练习提交。POST 不自动重发，超时或无法确认新提交编号时，请先检查原站 My submissions 或面板，再决定是否重试。服务器确认编号后，本地面板立即显示 `PENDING`。
+
+成绩以原站公开榜单为准：CF/IOI 显示总分与每题分数，ICPC 显示过题数与官方罚时；同时显示官方排名及 Hack 成功/失败数量。CF 预测试通过显示 `PRETESTS-PASSED`，题目暂定分以 `*` 标记；系统测试、Hack 和重测后的降分会继续同步，不按本地 ICPC 规则重算。等待系统测试和系统测试中均不视为最终完赛。封榜时明确标注，保留原站公开榜单的可见结果。
+
+`scored` 为公开正式榜单中该题得分大于 0 的队伍数；`attempted ≥` 为从可见得分和错误次数确认的尝试队伍数下界，不含无法从榜单确认的排队或隐藏尝试。完整提交次数无法由榜单推断，不显示猜测值。公开正式榜单未包含本人时，仍可同步本人提交，但排名与得分显示为未知。不使用虚拟参赛的原赛回放和金银铜线。
+
+本人提交通常约 5 秒查询一次，有待判时约 2.1 秒；公开榜单约 15 秒刷新，多个进程共享每次 API 请求至少 2.1 秒的间隔，网络错误时退避。题面单独下载，不拖延榜单和判定同步。查询会重新读取完整本人提交历史，以发现较早提交的重测结果；大量历史记录或网络延迟会延长刷新时间。原站返回比赛终结状态后，仍需确认本人提交已同步、无待判、榜单未冻结，才记录为完成。
+
+实时比赛历史单独保存到桌面的 `cf_live_history.csv`，包括官方得分、排名、赛制和比赛阶段，不写入原有 `vp_history.csv`。查看命令：
+
+```bash
+vp history --live
+```
+
+也保留 `vp live cf ID` 和 `vp live CONTEST_URL` 作为等价入口。所有入口均使用同一个实时模式。接口依据：[Codeforces API 方法](https://codeforces.com/apiHelp/methods)、[返回对象](https://codeforces.com/apiHelp/objects)。
 
 先在 Ubuntu 的 Firefox 登录 QOJ 或 Codeforces，再运行比赛命令。`vp` 和内置 `submit` 自动读取 Firefox 的登录状态，并通过网站导航中的登录用户核对账号；未填写 handle 时也可以从已验证的浏览器登录自动取得。Codeforces / Gym 的 API key 与 API secret 仍在首次使用时配置。配置保存在 `~/.config/vp/config.json`，权限为 600；也可以参考 `config.example.json` 填写。`cf` 与 `gym` 默认共用 Codeforces 配置。
 
@@ -120,4 +157,4 @@ SRK Collection 的档案按其 AGPL-3.0 许可证提供，来源和许可证保�
 
 提交器来自 [hikariyo 的 QOJ submit.py](https://gist.github.com/hikariyo/b3cec2e736d87be57d1e4faafb04f908) 与 [ehnryx/cf_submit](https://github.com/ehnryx/cf_submit)，固定版本、兼容补丁与现有许可证保存在 `third_party/`。Python 运行时的来源与校验值见 `runtimes/manifest.json`。
 
-本仓库仅包含运行程序、安装依赖和使用文档；比赛数据、测试代码、测试样例、账号配置及个人比赛文件不纳入仓库。
+本仓库包含运行程序、安装依赖、使用文档和隔离的自动化回归测试；比赛数据、账号配置、验证输出及个人比赛文件不纳入仓库。安装依赖后可运行 `python -m unittest discover -s tests -v`；真实 tmux 恢复测试需要 Ubuntu 和 tmux。测试中的账号、Cookie、题目和提交结果均为合成数据，不会发起真实比赛报名或代码提交。

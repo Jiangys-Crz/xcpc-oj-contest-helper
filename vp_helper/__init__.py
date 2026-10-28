@@ -1,3 +1,3 @@
-"""QOJ/Gym virtual contest helper."""
+"""QOJ/Gym virtual contests and Codeforces live contest helper."""
 
-__version__ = "0.1.15"
+__version__ = "0.2.0"

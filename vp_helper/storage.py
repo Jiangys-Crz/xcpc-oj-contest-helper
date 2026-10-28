@@ -70,25 +70,26 @@ def file_lock(path: Path, *, nonblocking: bool = False):
             fcntl.flock(f, fcntl.LOCK_UN)
 
 
-def update_history(path: Path, row: dict) -> None:
+def update_history(path: Path, row: dict, *, fields: list[str] = FIELDS,
+                   key_fields: tuple[str, ...] = ("start_time", "url")) -> None:
     with file_lock(path.with_name("." + path.name + ".lock")):
         path.parent.mkdir(parents=True, exist_ok=True)
         for attempt in range(5):
             stamp = _stamp(path)
-            rows = read_history(path)
-            key = str(row["start_time"]), str(row["url"])
+            rows = read_history(path, fields=fields)
+            key = tuple(str(row[field]) for field in key_fields)
             matched = False
             for old in rows:
-                if (old["start_time"], old["url"]) == key:
-                    old.update({field: str(row.get(field, "")) for field in FIELDS})
+                if tuple(old[field] for field in key_fields) == key:
+                    old.update({field: str(row.get(field, "")) for field in fields})
                     matched = True
                     break
             if not matched:
-                rows.append({field: str(row.get(field, "")) for field in FIELDS})
+                rows.append({field: str(row.get(field, "")) for field in fields})
             fd, temp = tempfile.mkstemp(prefix=".vp-history-", dir=path.parent)
             try:
                 with os.fdopen(fd, "w", encoding="utf-8-sig", newline="") as f:
-                    writer = csv.DictWriter(f, fieldnames=FIELDS)
+                    writer = csv.DictWriter(f, fieldnames=fields)
                     writer.writeheader()
                     writer.writerows(rows)
                     f.flush()
@@ -114,11 +115,11 @@ def _stamp(path: Path) -> tuple | None:
         return None
 
 
-def read_history(path: Path) -> list[dict]:
+def read_history(path: Path, *, fields: list[str] = FIELDS) -> list[dict]:
     if not path.exists():
         return []
     with path.open(encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
-        if reader.fieldnames != FIELDS:
-            raise VPError(f"Unexpected CSV columns in {path}; expected {','.join(FIELDS)}")
+        if reader.fieldnames != fields:
+            raise VPError(f"Unexpected CSV columns in {path}; expected {','.join(fields)}")
         return list(reader)

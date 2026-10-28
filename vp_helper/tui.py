@@ -125,7 +125,7 @@ class Dashboard:
                 values = [item["problem"], "#" + item["id"], clock(item["time"]), v + " · practice"]
                 results.add_row(*values, style=color)
             else:
-                color = "#008000" if v == "CORRECT" else "#808080" if v in ("PENDING", "TOO-LATE", "UNAVAILABLE") else "#ff0000"
+                color = "#008000" if v == "CORRECT" else "#b8860b" if v == "PRETESTS-PASSED" else "#808080" if v in ("PENDING", "TOO-LATE", "UNAVAILABLE") else "#ff0000"
                 results.add_row(Text(item["problem"]), Text("#" + item["id"]),
                                 Text(clock(item["time"])), Text("RESULT UNAVAILABLE" if v == "UNAVAILABLE" else v, style=color))
         if not self.submissions:
@@ -139,6 +139,73 @@ class Dashboard:
 def display(contest: Contest, elapsed: float, me: TeamScore, rank: str,
             prize: str, stats: dict | None, submissions: list[dict], message: str = "") -> Dashboard:
     return Dashboard(contest, elapsed, me, rank, prize, stats, submissions, message)
+
+
+@dataclass
+class LiveDashboard:
+    contest: Contest
+    elapsed: float
+    snapshot: dict
+    submissions: list[dict]
+    message: str = ""
+    handle: str = ""
+
+    _record_table = staticmethod(Dashboard._record_table)
+    records = Dashboard.records
+    __rich_console__ = Dashboard.__rich_console__
+
+    def fixed(self, width: int):
+        phase = self.snapshot.get("phase", self.contest.extra["phase"])
+        frozen = self.snapshot.get("frozen", False)
+        title = Text(self.contest.name + " · LIVE", style="bold")
+        timing = ("Starts in " + clock(-self.elapsed) if self.elapsed < 0 else
+                  clock(min(self.elapsed, self.contest.rules.duration)) + " / " + clock(self.contest.rules.duration))
+        phase_text = {"BEFORE": "Waiting for start", "CODING": "Coding",
+                      "PENDING_SYSTEM_TEST": "Waiting for system tests",
+                      "SYSTEM_TEST": "System testing", "FINISHED": "Finished"}.get(phase, phase)
+        heading = Text(timing + " · " + phase_text + (" · Scoreboard frozen" if frozen else ""))
+        scoring = self.contest.extra["scoring"]
+        own = self.snapshot.get("own")
+        table = Table(box=SCORE_BOX, padding=(0, 1), expand=True, show_edge=False)
+        columns = ["rank", "team", "solved" if scoring == "ICPC" else "points"]
+        if scoring == "ICPC":
+            columns.append("penalty")
+        else:
+            columns.append("hacks +/−")
+        for label in [*columns, *self.contest.problems]:
+            table.add_column(label, justify="left" if label == "team" else "center")
+        results = own["problemResults"] if own else []
+        cells = []
+        for result in results:
+            points = result.get("points", 0)
+            rejected = result.get("rejectedAttemptCount", 0)
+            preliminary = result.get("type") == "PRELIMINARY"
+            value = (f"+{rejected}" if rejected else "+") if scoring == "ICPC" and points else f"{points:g}"
+            if not points:
+                value = f"−{rejected}" if rejected else "—"
+            if preliminary and points:
+                value += "*"
+            when = result.get("bestSubmissionTimeSeconds")
+            if when is not None:
+                value += "\n" + clock(when)
+            color = "#b8860b" if preliminary and points else "#008000" if points else "#ff0000" if rejected else "default"
+            cells.append(Text(value, style=color))
+        cells.extend(Text("—") for _ in range(max(0, len(self.contest.problems) - len(cells))))
+        name = (own["party"].get("teamName") or ";".join(m["handle"] for m in own["party"]["members"])) if own else self.handle
+        value = (str(int(own["points"])) if scoring == "ICPC" else f"{own['points']:g}") if own else "—"
+        other = (str(own["penalty"]) if scoring == "ICPC" else
+                 f"{own.get('successfulHackCount', 0)}/{own.get('unsuccessfulHackCount', 0)}") if own else "—"
+        table.add_row(str(own["rank"]) if own else "—", Text(name), value, other, *cells)
+        stats = self.snapshot.get("stats", {})
+        for key in ("scored", "attempted"):
+            table.add_row("", "attempted ≥" if key == "attempted" else key, "", "", *(str(stats[key][p]) if key in stats and p in stats[key] else "—"
+                                              for p in self.contest.problems))
+        note = "Official public standings · scored = positive points · * preliminary"
+        if own is None:
+            note = "Your participation is absent from the public official standings; points and rank unavailable."
+        labels = self._record_table()
+        labels.add_row("problem", "submission", "time", "result", style="bold black on #eeeeee")
+        return Group(title, heading, table, Text(note, style="#666666"), Text(" "), labels)
 
 
 class TerminalDashboard:
