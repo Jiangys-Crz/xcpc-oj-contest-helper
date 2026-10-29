@@ -104,8 +104,6 @@ def _resume_vp(root: Path, url: str, handle: str, config: dict) -> tuple[Path, d
     if state.get("status") == "scheduled" or not ended:
         raise VPError("这场比赛尚未结束。VP 可先运行 xcpc end；live 请等待原站比赛结束后补题。")
     directory = Path(state["directory"])
-    if not directory.is_dir():
-        raise VPError("原 VP 文件夹不存在，请先恢复该文件夹：" + str(directory))
     if state.get("mode") == "live":
         from .live import live_adapter
         native = live_adapter(url, config)

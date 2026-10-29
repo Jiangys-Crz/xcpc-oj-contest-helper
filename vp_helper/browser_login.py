@@ -393,7 +393,7 @@ def refresh_submission_login(path: Path, config: dict, platform: str) -> None:
         write_json(path, config)
 
 
-def login_diagnostics(platform: str, account: dict) -> list[str]:
+def login_diagnostics(platform: str, account: dict, *, verified_account: dict | None = None) -> list[str]:
     """Safe to share: locations, counts and fixed errors, never cookie values."""
     if account.get("cookie_source") == "manual":
         return ["当前配置使用手动 Cookie，未自动读取 Firefox。"]
@@ -413,6 +413,8 @@ def login_diagnostics(platform: str, account: dict) -> list[str]:
         problems = []
         verified = _verify(platform, candidate, account.get("handle", ""), errors=problems)
         if verified:
+            if verified_account is not None:
+                verified_account.update(verified)
             return messages + ["已验证该站点的 Firefox 登录：" + str(candidate.profile)]
         messages.extend(str(candidate.profile) + "：" + reason for reason in problems)
     return messages

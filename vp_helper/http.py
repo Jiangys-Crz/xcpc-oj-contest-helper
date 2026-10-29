@@ -68,6 +68,7 @@ class WebSession:
         self.origin = origin.rstrip("/")
         self.account = account
         self._browser_checked = False
+        self._http1_only = False
         self._auto_refresh = (auto_refresh and bool(account.get("handle"))
                               and urlsplit(self.origin).hostname in ("qoj.ac", "codeforces.com", CWNUOJ_HOST, NOWCODER_HOST))
         if _IMPERSONATE:
@@ -118,16 +119,37 @@ class WebSession:
                 # 1s then 2s -- the backoff the replaced urllib3 Retry used.
                 time.sleep(_RETRY_BACKOFF * 2 ** (attempt - 1))
             try:
-                r = self.session.get(url, timeout=(10, 40), **kwargs)
+                request_options = dict(kwargs)
+                if self._http1_only:
+                    from curl_cffi.const import CurlHttpVersion
+                    request_options['http_version'] = CurlHttpVersion.V1_1
+                try:
+                    r = self.session.get(url, timeout=(10, 40), **request_options)
+                except _RequestException as exc:
+                    if not (_IMPERSONATE and host == 'codeforces.com' and not self._http1_only
+                            and type(exc).__name__ == 'SSLError'):
+                        raise
+                    from curl_cffi.const import CurlHttpVersion
+                    self._http1_only = True
+                    if urlsplit(url).path.startswith('/api/'):
+                        time.sleep(2.1)
+                    request_options['http_version'] = CurlHttpVersion.V1_1
+                    r = self.session.get(url, timeout=(10, 40), **request_options)
                 if (not refreshed and r.status_code == 200
                         and urlsplit(r.url).path in ("/login", "/user/login", "/enter")):
                     refreshed = True
                     if self._refresh_browser(force=True):
                         # Only an idempotent GET is repeated after refreshing login.
-                        r = self.session.get(url, timeout=(10, 40), **kwargs)
+                        r = self.session.get(url, timeout=(10, 40), **request_options)
             except _RequestException as exc:
                 if attempt == retries:
-                    raise VPError(f"Connection failed: {host} ({type(exc).__name__})") from None
+                    detail = (str(exc).splitlines() or [''])[0][:500]
+                    import re
+                    detail = re.sub(r'https?://\S+', '[request URL]', detail)
+                    for key in ('api_key', 'api_secret', 'cookie'):
+                        if self.account.get(key):
+                            detail = detail.replace(self.account[key], '[redacted]')
+                    raise VPError(f"Connection failed: {host} ({type(exc).__name__}): {detail}") from None
                 continue
             if r.status_code in _RETRY_STATUS and attempt < retries:
                 continue
@@ -138,13 +160,25 @@ class WebSession:
     def post(self, url: str, data: dict, *, headers: dict | None = None):
         try:
             # Never retry a native contest start automatically.
-            r = self.session.post(url, data=data, timeout=(10, 40), **({'headers': headers} if headers else {}))
+            options = {'headers': headers} if headers else {}
+            if self._http1_only:
+                from curl_cffi.const import CurlHttpVersion
+                options['http_version'] = CurlHttpVersion.V1_1
+            r = self.session.post(url, data=data, timeout=(10, 40), **options)
         except _RequestException:
             raise VPError("The server did not confirm starting the VP. Run the same URL to check the remote state.") from None
         return self.check(r)
 
     def check(self, r):
         if r.status_code != 200:
+            if (urlsplit(r.url).hostname == 'codeforces.com' and urlsplit(r.url).path.startswith('/api/')
+                    and r.status_code in (400, 403, 429)):
+                try:
+                    data = r.json()
+                except (ValueError, AttributeError):
+                    data = None
+                if isinstance(data, dict) and data.get('status') == 'FAILED':
+                    return r
             raise VPError(f"{urlsplit(r.url).hostname} returned HTTP {r.status_code}")
         if urlsplit(r.url).path in ("/login", "/user/login", "/enter"):
             if self.account.get("cookie_source") == "manual":

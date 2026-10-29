@@ -68,12 +68,21 @@ def _activate(path: Path) -> dict:
         if api.handle.casefold() != state["handle"].casefold():
             raise VPError("The scheduled VP account changed. Restore its Firefox login.")
         recovering = bool(state.get("activation_uncertain"))
+        def matches(started):
+            if started is None:
+                return False
+            if contest.platform == 'qoj':
+                # QOJ starts immediately on POST. A delayed response can only
+                # be confirmed by a new native record after this request.
+                return state['activation_target'] - 60 <= started <= time.time() + 60
+            return abs(started-state['activation_target']) <= 60
         try:
             if recovering:
+                api._native_duration = contest.rules.duration
                 recovered = (api._virtual_party() if contest.platform in ("cf", "gym")
                              else api._registration(duration=contest.rules.duration))
                 started = recovered.get("startTimeSeconds") if isinstance(recovered, dict) else recovered[0] if recovered else None
-                if started is None or abs(started-state["activation_target"]) > 60:
+                if not matches(started):
                     raise VPError("The platform has not confirmed the requested VP start. The start request will not be repeated.")
                 if not isinstance(recovered, dict):
                     contest.rules.duration = recovered[1]
@@ -81,14 +90,20 @@ def _activate(path: Path) -> dict:
                 state["activation_target"] = max(state["requested_start"], time.time())
                 # If interrupted during POST, recovery is query-only, even when
                 # the process could not persist the response.
-                state["activation_uncertain"] = True
+                state["activation_uncertain"] = False
                 write_json(path, state)
                 api.native_post_sent = False
+                def before_post(at):
+                    state['activation_uncertain'] = True
+                    if contest.platform == 'qoj':
+                        state['activation_target'] = at
+                    write_json(path, state)
+                api.before_native_post = before_post
                 if contest.platform in ("cf", "gym"):
                     started = api.start(contest, requested_start=state["activation_target"], fresh=True)
                 else:
                     started = api.start(contest, fresh=True)
-                if abs(started-state["activation_target"]) > 60:
+                if not matches(started):
                     raise StartRejected("原站返回的 VP 开始时间与本次请求不符，本次命令已取消。")
         except StartRejected as exc:
             _fail(path, state, exc)

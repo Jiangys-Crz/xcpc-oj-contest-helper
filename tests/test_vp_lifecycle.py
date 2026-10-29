@@ -200,7 +200,7 @@ class NativeRefusalTests(Isolated):
     def test_qoj_finished_registration_without_new_form_is_rejected(self):
         client, contest = self.qoj('')
         client._registration.return_value = (1, 100)
-        with self.assertRaises(StartRejected):
+        with self.assertRaises(VPError):
             client.start(contest, fresh=True)
         client.web.post.assert_not_called()
 

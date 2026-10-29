@@ -67,11 +67,20 @@ def promote(path: Path, state: dict) -> None:
     with file_lock(path.parent / 'workspaces.lock'):
         source = Path(state['directory'])
         target = Path(state.get('workspace_target', source))
-        if source.resolve() != target.resolve():
+        owners = _owners(path.parent, source)
+        missing = not source.exists()
+        if source.is_symlink() and not source.is_dir():
+            raise VPError('原比赛目录是不可用的符号链接，请先修复链接：' + str(source))
+        if missing:
+            _check(path.parent, target, state['url'], state['handle'])
+            target.mkdir(parents=True, exist_ok=True)
+        elif not source.is_dir():
+            raise VPError('原比赛目录位置已被文件占用，未覆盖：' + str(source))
+        elif source.resolve() != target.resolve():
             if target.exists():
                 raise VPError("比赛名称目录已经存在，原目录保留：" + str(target))
-            owners = _owners(path.parent, source)
             source.rename(target)
+        if source.resolve() != target.resolve():
             for old_path, _ in owners:
                 with file_lock(old_path.with_suffix('.save.lock')):
                     old = read_json(old_path)

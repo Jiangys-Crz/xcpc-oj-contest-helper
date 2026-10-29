@@ -44,9 +44,12 @@ class QOJ:
         soup = soup if soup is not None else self._page()
         generic = {"qoj", "qoj.ac", "contest", "contests", "contest home", "home", "overview",
                    "problems", "problem list", "standings", "virtual participation", "register",
+                   "virtual contest rules", "virtual contest", "login", "error",
                    "比赛", "比赛主页", "题目", "总览", "虚拟参赛", "报名"}
 
         def usable(value):
+            from unicodedata import category
+            value = ''.join(char for char in value if category(char) != 'Cf')
             value = " ".join(value.split())
             return value if value.casefold() not in generic and value else ""
 
@@ -62,6 +65,7 @@ class QOJ:
                     return value
         if soup.title:
             title = re.sub(r'\s*[-–—|]\s*QOJ(?:\.ac)?\s*$', '', soup.title.get_text(' ', strip=True), flags=re.I)
+            title = re.sub(r'\s*[-–—|]\s*(?:Virtual Contest Rules|Virtual Participation|Problems|Standings|Registrants|Submissions)\s*$', '', title, flags=re.I)
             if value := usable(title):
                 return value
         listing = listing if listing is not None else self.web.soup(self.origin + '/contests', params={'locale': 'en'})
@@ -147,19 +151,27 @@ class QOJ:
             records = []
             for row in soup.select("tr"):
                 cells = row.select("td")
-                if len(cells) not in (3, 5) or has_virtual_table and len(cells) != 3:
+                table = row.find_parent('table')
+                headers = [h.get_text(' ', strip=True) for h in table.select('thead th')] if table else []
+                start_index = next((i for i, title in enumerate(headers)
+                                    if re.search(r'\bstart(?:ing)?(?:\s+time)?\b|开始|起始', title, re.I)), None)
+                if start_index is None and (len(cells) not in (3, 5) or has_virtual_table and len(cells) != 3):
                     continue
-                user = cells[1].select_one('.uoj-username, a[href*="/user/profile/"]')
+                user = row.select_one('.uoj-username, a[href*="/user/profile/"]')
                 user_id = urlsplit(user["href"]).path.rsplit("/", 1)[-1] if user and user.get("href") else user.get_text(strip=True) if user else ""
                 if user_id != self.handle:
                     continue
-                date_cell = cells[2] if len(cells) == 3 else cells[-2]
+                if start_index is not None and start_index >= len(cells):
+                    continue
+                date_cell = cells[start_index] if start_index is not None else cells[2] if len(cells) == 3 else cells[-2]
                 node = date_cell.select_one("time[datetime]")
                 if node:
                     value = timestamp(node["datetime"])
                 else:
                     value = timestamp(date_cell.get_text(strip=True))
-                minutes = cells[-1].get_text(strip=True) if len(cells) == 5 else ""
+                duration_index = next((i for i, title in enumerate(headers) if re.search(r'duration|时长', title, re.I)), None)
+                minutes = (cells[duration_index].get_text(strip=True) if duration_index is not None and duration_index < len(cells)
+                           else cells[-1].get_text(strip=True) if len(cells) == 5 else '')
                 length = int(minutes) * 60 if minutes.isdigit() else duration or self._registry_duration(soup)
                 if length and value > timestamp("2000-01-01 00:00:00"):
                     records.append((value, length))
@@ -167,30 +179,49 @@ class QOJ:
                 return max(records)
         return None
 
-    def _start_form(self):
+    def _start_form(self, overview=None):
         endpoint = self.url + '/virtual/register'
         soup = self._page('/virtual/register')
         from .browser_login import identity_from_page
         identity_from_page('qoj', str(soup), self.handle)
-        forms = []
-        for form in soup.select('form'):
-            target = urlsplit(urljoin(endpoint, form.get('action') or endpoint))
-            expected = urlsplit(endpoint)
-            if (target.scheme != 'https' or target.netloc != expected.netloc
-                    or target.path.rstrip('/') != expected.path or target.query or target.fragment):
-                continue
-            if form.select_one('input[type="password"], textarea'):
-                continue
-            if form.select_one('[name="_token"], [name="csrf_token"], [name="_csrf"]'):
-                forms.append(form)
-        selected = next((form for form in forms if form.get('id') in
-                         ('form-regvir', 'form-register', 'form-registration')), None)
-        if selected is None and len(forms) == 1:
-            selected = forms[0]
-        if selected is None:
-            detail = self._start_message(str(soup))
-            raise StartRejected('QOJ 未允许此账号新建 VP，本次命令已取消。' + (' ' + detail if detail else ''))
-        return selected, endpoint
+        expected = urlsplit(endpoint)
+        known_ids = ('form-register_vp', 'form-regvir', 'form-register', 'form-registration')
+
+        def select(page, base, *, legacy=False):
+            forms = []
+            for form in page.select('form'):
+                if str(form.get('method', 'get')).casefold() == 'get' and form.get('id') not in known_ids:
+                    continue
+                target = urlsplit(urljoin(base, form.get('action') or base))
+                allowed_paths = (expected.path, urlsplit(self.url).path) if form.get('id') == 'form-regvir' else (expected.path,)
+                if (target.scheme != 'https' or target.netloc != expected.netloc
+                        or target.path.rstrip('/') not in allowed_paths
+                        or legacy and form.get('id') != 'form-regvir'):
+                    continue
+                if form.select_one('input[type="password"], textarea'):
+                    continue
+                if form.select_one('[name="_token"], [name="csrf_token"], [name="_csrf"]'):
+                    forms.append((form, target._replace(fragment='').geturl()))
+            selected = next((item for item in forms if item[0].get('id') in known_ids), None)
+            return selected or (forms[0] if len(forms) == 1 else None)
+
+        selected = select(soup, endpoint)
+        if selected:
+            return selected
+        detail = self._start_message(str(soup))
+        if detail:
+            raise StartRejected('QOJ 返回启动限制：' + detail)
+        if overview is not None:
+            selected = select(overview, self.url, legacy=True)
+            if selected:
+                return selected
+        descriptions = []
+        for form in soup.select('form')[:4]:
+            action = urlsplit(urljoin(endpoint, form.get('action') or endpoint)).path
+            fields = [node.get('name') for node in form.select('input[name], button[name], select[name]')]
+            descriptions.append(f"form#{form.get('id', '(无ID)')} {action} fields=" + ','.join(fields))
+        raise VPError('未识别到 QOJ 的原生 VP 开始表单；未发送开始请求，也未占用本次 VP。'
+                      + '\n表单结构（不含 Cookie 或令牌值）：' + ('；'.join(descriptions) or '没有表单'))
 
     def check_start(self, contest: Contest):
         soup = self._page()
@@ -199,7 +230,7 @@ class QOJ:
         current = self._registration(duration=contest.rules.duration)
         if current and time.time() < current[0] + current[1]:
             raise StartRejected("QOJ 已有尚未结束的 VP，本次命令已取消。")
-        form, endpoint = self._start_form()
+        form, endpoint = self._start_form(soup)
         return form, endpoint, current
 
     def start(self, contest: Contest, *, fresh: bool = False) -> float:
@@ -216,7 +247,7 @@ class QOJ:
             return self.start_time
         if not fresh:
             try:
-                form, endpoint = self._start_form()
+                form, endpoint = self._start_form(soup)
             except StartRejected:
                 if not current:
                     raise
@@ -224,7 +255,7 @@ class QOJ:
                 contest.rules.duration = current[1]
                 return self.start_time
         payload = form_values(form)
-        button = form.select_one('input[type="submit"][name], button[name]:not([type="button"])')
+        button = form.select_one('input[type="submit"][name], button[type="submit"][name], button:not([type])[name]')
         if button:
             payload[button['name']] = button.get('value', '')
         elif re.fullmatch(r'form-[\w-]+', form.get('id', '')):
@@ -237,6 +268,9 @@ class QOJ:
         post_error = None
         site_message = ""
         try:
+            before_post = getattr(self, 'before_native_post', None)
+            if callable(before_post):
+                before_post(time.time())
             self.native_post_sent = True
             response = self.web.post(endpoint, payload, headers={'Origin': self.origin, 'Referer': endpoint})
             site_message = self._start_message(response)

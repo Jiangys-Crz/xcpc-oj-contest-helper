@@ -61,9 +61,15 @@ def _load_account(path: Path, platform: str, *, live: bool = False) -> dict:
     if not verified and account.get("cookie_source") != "manual":
         site = {"qoj": "QOJ", "cwnuoj": "CWNUOJ", "nowcoder": "Nowcoder"}.get(platform, "Codeforces")
         alias = {"cwnuoj": "paa", "nowcoder": "nk"}.get(platform, platform)
-        detail = "\n".join(login_diagnostics(platform, account))
-        raise VPError(f"无法验证 {site} 的 Firefox 登录。\n{detail}\n"
-                      f"可运行 xcpc doctor {alias} 查看检查结果。")
+        recovered = {}
+        detail = "\n".join(login_diagnostics(platform, account, verified_account=recovered))
+        if recovered:
+            account.update(recovered)
+            verified = True
+            write_json(path, config)
+        else:
+            raise VPError(f"无法验证 {site} 的 Firefox 登录。\n{detail}\n"
+                          f"可运行 xcpc doctor {alias} 查看检查结果。")
     required = ("handle", "cookie", "api_key", "api_secret") if platform in ("cf", "gym") else ("handle", "cookie")
     missing = [key for key in required if not account.get(key)]
     if platform in ("cf", "gym") and any(key in missing for key in ("api_key", "api_secret")):
@@ -74,6 +80,12 @@ def _load_account(path: Path, platform: str, *, live: bool = False) -> dict:
         console.print(f"First use: configure the existing {platform} login session.", markup=False)
         labels = {"handle": "Account handle", "cookie": "Browser login Cookie (copy the Cookie value only)", "api_key": "Codeforces API key", "api_secret": "Codeforces API secret"}
         for key in missing:
+            if key == 'api_secret' and account.get('api_secret'):
+                continue
+            if key == 'api_key':
+                from .accounts import prompt_api_credentials
+                account.update(prompt_api_credentials())
+                continue
             value = input(labels[key] + ": ").strip() if key == "handle" else getpass.getpass(labels[key] + ": ").strip()
             if not value:
                 raise VPError("An account field was empty; no native VP was started.")
@@ -297,14 +309,23 @@ def restore_contest(path: Path, state: dict, config: dict) -> tuple[Path, dict]:
     from .live import live_adapter
     from .workspaces import refresh_name, rename_existing
     contest = Contest.from_dict(state["contest"])
-    if not Path(state["directory"]).is_dir():
-        raise VPError("原比赛目录不存在，请先恢复：" + state["directory"])
     is_live = state.get("mode") == "live"
-    api = live_adapter(state["url"], config) if is_live else adapter(state["url"], config)
-    refresh_name(api, contest)
+    overrides = None
+    if state.get('mode') == 'practice':
+        from .practice import Practice
+        client = Practice(state['url'], config)
+        api = client.api if contest.platform == 'qoj' else client
+        refresh_name(client.api, contest)
+        is_live = contest.platform != 'qoj'
+        overrides = {'mode':'practice','base_url':state['url'],'platform':contest.platform,
+                     'problem_ids':contest.problems,
+                     'problems':''.join(contest.problems) if contest.platform == 'qoj' else list(contest.problems)}
+    else:
+        api = live_adapter(state["url"], config) if is_live else adapter(state["url"], config)
+        refresh_name(api, contest)
     rename_existing(path, state, contest)
     directory = Path(state["directory"])
-    configure_contest(api, contest, directory, path, state, live=is_live)
+    configure_contest(api, contest, directory, path, state, live=is_live, overrides=overrides)
     write_json(path.parent / "current.json", {"state_path": str(path)})
     return path, state
 
@@ -386,6 +407,9 @@ def start(url: str, *, live: bool = False, practice: bool = False, resume: bool 
 
 
 def open_state(path: Path, state: dict) -> None:
+    if not Path(state['directory']).is_dir():
+        config = load_account(state['contest']['platform'], live=True)
+        path, state = restore_contest(path, read_json(path), config)
     if state.get("workspace_target") and state.get("status") == "running":
         from .workspaces import promote
         with file_lock(path.parent / "start.lock"):

@@ -33,6 +33,7 @@ class Gym:
         self.account = account
         self.handle = account.get("handle", "")
         self.web = WebSession(self.origin, account)
+        self.public = WebSession(self.origin, {}, auto_refresh=False)
         self.start_time: float | None = None
         self._original = None
         self.submissions_complete = False
@@ -41,6 +42,9 @@ class Gym:
         self._replay_error = ""
 
     def api(self, method: str, **params):
+        if self.platform == 'cf' and method == 'contest.standings':
+            from .codeforces_live import public_api
+            return public_api(self.public, method, contestId=params.get('contestId', self.id))
         refresh_api_credentials(self.account, self.platform)
         if not self.account.get("api_key") or not self.account.get("api_secret"):
             raise VPError("请先运行 xcpc api cf 设置 Codeforces API key 和 secret。")
@@ -117,6 +121,23 @@ class Gym:
         return self.api('contest.standings', contestId=self.id)['contest']['name']
 
     def _virtual_party(self):
+        if self.platform == 'cf':
+            records = self.api('contest.status', contestId=self.id, handle=self.handle, **{'from': 1, 'count': 100})
+            parties = [record.get('author', {}) for record in records]
+            parties = [party for party in parties if party.get('participantType') == 'VIRTUAL'
+                       and any(member.get('handle', '').casefold() == self.handle.casefold() for member in party.get('members', []))
+                       and party.get('startTimeSeconds') is not None]
+            latest = max(parties, key=lambda party: party['startTimeSeconds'], default=None)
+            duration = getattr(self, '_native_duration', None)
+            if latest and isinstance(duration, (int, float)) and time.time() < latest['startTimeSeconds'] + duration:
+                return latest
+            # Before the first submission, regular CF APIs expose no virtual
+            # party. Read the account's native countdown using the server's
+            # HTTP Date, never the local clock or the requested time.
+            native = self._countdown_party()
+            if native is not None:
+                parties.append(native)
+            return max(parties, key=lambda party: party['startTimeSeconds'], default=None)
         data = self.api("contest.standings", contestId=self.id, handles=self.handle,
                         showUnofficial=True, participantTypes="VIRTUAL")
         parties = [r["party"] for r in data["rows"]
@@ -125,7 +146,34 @@ class Gym:
                    and r["party"].get("startTimeSeconds") is not None]
         return max(parties, key=lambda p: p["startTimeSeconds"], default=None)
 
+    def _countdown_party(self):
+        from bs4 import BeautifulSoup
+        from email.utils import parsedate_to_datetime
+        from .codeforces_live import verify_login
+        response = self.web.get(self.url, params={'locale': 'en'})
+        soup = BeautifulSoup(response.text, 'html.parser')
+        verify_login(soup, self.handle)
+        try:
+            server_time = parsedate_to_datetime(response.headers.get('Date', '')).timestamp()
+        except (TypeError, ValueError, AttributeError, OverflowError):
+            return None
+        for phase in ('start', 'finish'):
+            node = soup.select_one(f'.countdown.before-contest-{self.id}-{phase}')
+            if node is None:
+                continue
+            match = re.fullmatch(r'(\d+):(\d{2}):(\d{2})', node.get_text(strip=True))
+            if not match or any(int(value) > 59 for value in match.groups()[1:]):
+                continue
+            duration = getattr(self, '_native_duration', None)
+            if phase == 'finish' and not isinstance(duration, (int, float)):
+                continue
+            remaining = int(match[1])*3600 + int(match[2])*60 + int(match[3])
+            started = server_time + remaining - (duration if phase == 'finish' else 0)
+            return {'participantType':'VIRTUAL','members':[{'handle':self.handle}], 'startTimeSeconds':started}
+        return None
+
     def start(self, contest: Contest, requested_start: float | None = None, *, fresh: bool = False) -> float:
+        self._native_duration = contest.rules.duration
         soup = self.web.soup(self.url, params={"locale": "en"})
         profile = soup.select_one("#header")
         if not profile or not any(urlsplit(a.get("href", "")).path.lower() == f"/profile/{self.handle}".lower() for a in profile.select("a")):
@@ -153,6 +201,9 @@ class Gym:
             registration_time(form, payload, requested_start)
         # Preserve the platform's observed start/timezone fields. In particular,
         # never use a local-clock guess for the native VP start.
+        before_post = getattr(self, 'before_native_post', None)
+        if callable(before_post):
+            before_post(time.time())
         self.native_post_sent = True
         response = self.web.post(urljoin(self.origin, form.get("action") or f"/contestRegistration/{self.id}/virtual/true"), payload)
         from bs4 import BeautifulSoup
@@ -165,7 +216,7 @@ class Gym:
             if message:
                 raise StartRejected("Codeforces 拒绝启动 VP：" + message[:500])
             if old and party:
-                raise StartRejected("Codeforces 未创建新的 VP，本次命令已取消。")
+                raise VPError("Codeforces 尚未返回新的 VP 开始记录；请恢复原会话继续核验，不会重发报名请求。")
             raise VPError("Codeforces did not confirm a new native VIRTUAL participation and start time.")
         self.start_time = float(party["startTimeSeconds"])
         if requested_start is not None and abs(self.start_time - requested_start) > 60:

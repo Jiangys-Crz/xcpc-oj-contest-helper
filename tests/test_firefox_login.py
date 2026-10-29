@@ -151,6 +151,28 @@ class FirefoxLoginTests(unittest.TestCase):
                 self.assertEqual(config['qoj']['firefox_profile'],str(self.root/'old-profile'))
         self.assertNotIn('_login_verified',read_json(path)['qoj'])
 
+    def test_successful_diagnostic_recheck_is_used_after_initial_timeout(self):
+        from vp_helper import cli
+        from vp_helper.storage import config_directory,read_json,write_json
+        path=config_directory()/'config.json'
+        profile=self.root/'fixture-profile'
+        write_json(path,{'qoj':{'handle':'tester','cookie':'sid=expired','cookie_source':'firefox'}})
+        candidates=[login.BrowserCookies(profile,'sid=expired'),login.BrowserCookies(profile,'sid=valid-fixture')]
+        verified={'handle':'tester','cookie':'sid=valid-fixture','cookie_source':'firefox','firefox_profile':str(profile)}
+        def verify(platform,candidate,expected,**kwargs):
+            if candidate.cookie=='sid=expired':
+                kwargs.get('errors',[]).append('网站验证请求失败（Timeout）')
+                return None
+            return verified
+        with patch.object(cli,'refresh_browser_account',return_value=False), \
+             patch.object(cli,'verify_stored_session',return_value=False), \
+             patch.object(login,'firefox_profiles',return_value=[profile]), \
+             patch.object(login,'browser_cookies',return_value=candidates),patch.object(login,'_verify',side_effect=verify):
+            result=cli._load_account(path,'qoj')
+        self.assertTrue(result['qoj']['_login_verified'])
+        self.assertEqual(read_json(path)['qoj']['cookie'],'sid=valid-fixture')
+        self.assertNotIn('_login_verified',read_json(path)['qoj'])
+
     def test_unverified_cached_cookie_is_not_treated_as_logged_in(self):
         from vp_helper import cli
         from vp_helper.storage import config_directory, write_json

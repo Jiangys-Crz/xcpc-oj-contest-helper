@@ -10,6 +10,25 @@ from .storage import config_directory, file_lock, read_json, write_json
 API_FIELDS = ("api_key", "api_secret")
 
 
+def pasted_credential(value: str) -> str:
+    value = value.replace('\x1b[200~', '').replace('\x1b[201~', '').strip()
+    if not value or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value):
+        raise VPError('请粘贴完整的单个字段值，不包含字段名或其他内容；原配置未修改。')
+    return value
+
+
+def prompt_api_credentials() -> dict:
+    print('支持右键或 Ctrl+Shift+V 粘贴；secret 输入不回显，粘贴后按回车。')
+    values = {}
+    try:
+        values['api_key'] = pasted_credential(input('新的 API key（可粘贴）：'))
+        values['api_secret'] = pasted_credential(getpass.getpass('新的 API secret（可粘贴，不回显）：'))
+    except EOFError:
+        raise VPError('输入已取消，原 API 配置未修改。') from None
+    print(f"已读取 key {len(values['api_key'])} 字符、secret {len(values['api_secret'])} 字符。")
+    return values
+
+
 def account_key(config: dict, platform: str) -> str:
     if platform not in ("cf", "gym") or platform in config:
         return platform
@@ -45,15 +64,7 @@ def configure_api(platform: str = "cf") -> None:
     if not handle or any(c.isspace() for c in handle):
         raise VPError("Codeforces handle 不能为空或包含空白字符，原配置未修改。")
     print("重新设置 Codeforces API，账号：" + handle)
-    values = {}
-    try:
-        for key, label in (("api_key", "API key"), ("api_secret", "API secret")):
-            value = getpass.getpass("新的 " + label + "：").strip()
-            if not value or any(c.isspace() or ord(c) < 32 for c in value):
-                raise VPError("请填写完整的 key 和 secret 字段值，原配置未修改。")
-            values[key] = value
-    except EOFError:
-        raise VPError("输入已取消，原 API 配置未修改。") from None
+    values = prompt_api_credentials()
     with file_lock(path.with_suffix(".lock")):
         current = read_json(path)
         account = current.setdefault(selected, {})

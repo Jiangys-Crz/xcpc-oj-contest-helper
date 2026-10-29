@@ -78,10 +78,12 @@ VP Helper · Ubuntu 26.04 ARM64 安装说明
    vp history --live 查看实时比赛历史。
    BT / live 不下载题面，VP 首次下载失败时仍可使用面板和提交。
    所有工作目录按实际比赛名称命名；重复 vp / live / bt 保留原文件夹全部内容。
+   原目录丢失时自动重建原目录及提交配置，保留比赛状态和记录，不重新开始 VP。
    标题包含 CCPC 时使用 CCPC 新赛制，否则按 ICPC；无需年份、赛区命名。
 
    CF / Gym 首次运行 VP、BT 或 live 时需要填写 Codeforces API key 和 secret。
    重新设置运行 xcpc api cf，同账号的 VP、BT、live 和 Gym 共用新配置。
+   key 和 secret 均支持右键或 Ctrl+Shift+V 粘贴；secret 不回显，按回车完成。
    比赛目录内使用 submit A.cpp 提交；vp history 查看本地历史。
    比赛命令会在原平台启动真实虚拟参赛，请在准备好比赛后使用。
 

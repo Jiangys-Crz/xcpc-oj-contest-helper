@@ -29,7 +29,8 @@ class CodeforcesAPISettingsTests(unittest.TestCase):
                        'api_key':'old-key','api_secret':'old-secret'}
 
     def configure(self,platform='cf',values=('new-key','new-secret')):
-        with patch.object(accounts.getpass,'getpass',side_effect=values):
+        with patch.object(accounts.getpass,'getpass',side_effect=[values[1]]), \
+                patch('builtins.input',side_effect=lambda prompt: 'tester' if 'handle' in prompt else values[0]):
             accounts.configure_api(platform)
 
     def test_reset_preserves_browser_workspace_and_other_platform_settings(self):
@@ -84,16 +85,18 @@ class CodeforcesAPISettingsTests(unittest.TestCase):
         for is_live in (False,True):
             write_json(self.path,{'gym':{'handle':'tester','cookie':'synthetic'}})
             with patch.object(cli,'refresh_browser_account',return_value=True), \
-                    patch.object(cli.getpass,'getpass',side_effect=['new-key','new-secret']) as prompt:
+                    patch('builtins.input',return_value='new-key'), \
+                    patch.object(cli.getpass,'getpass',return_value='new-secret') as prompt:
                 config=cli._load_account(self.path,'cf',live=is_live)
-            self.assertEqual(prompt.call_count,2)
+            self.assertEqual(prompt.call_count,1)
             self.assertEqual(config['gym']['api_key'],'new-key')
             self.assertEqual(config['gym']['api_secret'],'new-secret')
 
     def test_incomplete_pair_is_replaced_together_and_never_mixed(self):
         write_json(self.path,{'gym':{'handle':'tester','cookie':'synthetic','api_key':'half-old-key'}})
         with patch.object(cli,'refresh_browser_account',return_value=True), \
-                patch.object(cli.getpass,'getpass',side_effect=['new-key','new-secret']):
+                patch('builtins.input',return_value='new-key'), \
+                patch.object(cli.getpass,'getpass',return_value='new-secret'):
             config=cli._load_account(self.path,'cf',live=True)
         self.assertEqual(config['gym']['api_key'],'new-key')
         self.assertEqual(config['gym']['api_secret'],'new-secret')
@@ -108,6 +111,21 @@ class CodeforcesAPISettingsTests(unittest.TestCase):
         self.assertFalse(client.public.get.call_args.kwargs['retry'])
         self.assertEqual(client.public.account,{})
         self.assertFalse(client.public._auto_refresh)
+
+    def test_regular_cf_vp_standings_strip_signatures_and_filters(self):
+        client=Gym('https://codeforces.com/contest/2181',dict(self.original))
+        client.public.get=Mock(return_value=Mock(json=Mock(return_value={'status':'OK','result':{'rows':[]}})))
+        client.api('contest.standings',contestId='2181',showUnofficial=False,participantTypes='CONTESTANT',handles='tester')
+        self.assertEqual(client.public.get.call_args.kwargs['params'],{'contestId':'2181'})
+        self.assertEqual(client.public.account,{})
+
+    def test_bracketed_paste_is_normalized_for_key_and_secret(self):
+        write_json(self.path,{'gym':self.original})
+        self.configure(values=('\x1b[200~new-key\x1b[201~','\x1b[200~new-secret\x1b[201~'))
+        result=read_json(self.path)['gym']
+        self.assertEqual(result['api_key'],'new-key')
+        self.assertEqual(result['api_secret'],'new-secret')
+        self.assertNotIn('new-secret',self.output.getvalue())
 
     def test_live_and_bt_authenticated_queries_pick_up_reset_keys_in_memory(self):
         write_json(self.path,{'gym':self.original})

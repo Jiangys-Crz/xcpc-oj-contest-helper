@@ -1,3 +1,3 @@
 """QOJ/Gym virtual contests and Codeforces/CWNUOJ/Nowcoder live contest helper."""
 
-__version__ = "0.7.4"
+__version__ = "0.7.5"

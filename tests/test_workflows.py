@@ -4,6 +4,7 @@ from dataclasses import asdict
 from datetime import datetime
 import io
 import os
+import shutil
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -327,17 +328,18 @@ class PracticeTests(Isolated):
         self.assertTrue(saved["submissions"][0]["practice"])
         self.assertEqual(score_submissions([Submission(**e) for e in saved["submissions"]], ["A"], Rules(18000), 600).solved, 0)
 
-    def test_bt_missing_original_directory_does_not_create_a_replacement(self):
+    def test_bt_missing_original_directory_is_recreated_without_new_attempt(self):
         path, state = cli.prepare_start(URL)
         self.clock = 20000
-        state["directory"] = str(self.root/"missing original folder")
-        write_json(path, state)
-        before = path.read_bytes()
-        with self.assertRaisesRegex(VPError, "原 VP 文件夹不存在"):
-            practice.prepare(URL)
-        self.assertEqual(path.read_bytes(), before)
-        self.assertFalse(Path(state["directory"]).exists())
+        shutil.rmtree(state['directory'])
+        restored,current=practice.prepare(URL)
+        self.assertEqual(restored,path)
+        self.assertEqual(current['directory'],state['directory'])
+        self.assertEqual(current['start_time'],state['start_time'])
+        self.assertTrue(Path(state['directory']).is_dir())
+        self.assertEqual(read_json(Path(state['directory'])/'contest.json')['vp_context']['state_path'],str(path))
         self.assertEqual(len(attempts()), 1)
+        self.api.start.assert_called_once()
 
     def test_legacy_cf_dispatch_passes_explicit_problem_for_absolute_paths(self):
         source = self.root/"A.cpp"

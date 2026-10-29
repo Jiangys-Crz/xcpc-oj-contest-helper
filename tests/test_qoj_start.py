@@ -15,6 +15,39 @@ def page(body):
 
 
 class NativeQOJStartTests(Isolated):
+    def test_actual_qoj_register_vp_form_with_search_form_and_start_button(self):
+        client=QOJ('https://qoj.ac/contest/3617',self.api.account)
+        body=page('<title>The 2008 ACM-ICPC Asia Aizu Regional Contest - Virtual Contest Rules - QOJ.ac</title>'
+                  '<h1>QOJ.ac</h1><h1>QOJ</h1><h1>Virtual Contest Rules</h1>'
+                  '<form id="form-search-problem" method="get"><input name="search"><button type="submit" id="submit-search"></button></form>'
+                  '<form id="form-register_vp" method="post" action="/contest/3617/virtual/register">'
+                  '<input type="hidden" name="_token" value="fixture-token">'
+                  '<button type="submit" id="button-submit-register_vp" name="submit-register_vp" value="register_vp">Start!</button></form>')
+        client._page=Mock(return_value=body)
+        client._registration=Mock(side_effect=[None,(1000,18000)])
+        client.web=Mock()
+        client.web.post.return_value=Mock(content='<h1>Contest</h1>')
+        contest=self.api.prepare()
+        self.assertEqual(client.start(contest,fresh=True),1000)
+        call=client.web.post.call_args
+        self.assertEqual(call.args[0],'https://qoj.ac/contest/3617/virtual/register')
+        self.assertEqual(call.args[1],{'_token':'fixture-token','submit-register_vp':'register_vp'})
+        self.assertEqual(client.contest_name(body),'The 2008 ACM-ICPC Asia Aizu Regional Contest')
+        client.web.post.assert_called_once()
+
+    def test_qoj_action_query_is_preserved_and_unrecognized_form_is_not_native_refusal(self):
+        client=self.client()
+        client._page=Mock(return_value=page('<form id="form-register_vp" method="post" action="/contest/123/virtual/register?locale=en">'
+                                          '<input name="_token" value="fixture"></form>'))
+        form,target=client._start_form()
+        self.assertEqual(target,URL+'/virtual/register?locale=en')
+        client._page.return_value=page('<form id="unknown" method="post"><input name="nonce" value="PRIVATE-FIXTURE"></form>')
+        with self.assertRaises(VPError) as error:
+            client._start_form()
+        self.assertNotIsInstance(error.exception,StartRejected)
+        self.assertNotIn('PRIVATE-FIXTURE',str(error.exception))
+        client.web.post.assert_not_called()
+
     def test_cf_and_gym_register_future_start_immediately_instead_of_waiting_for_qoj_timer(self):
         self.api.account['submit_config_format']='contest.json'
         self.api.web.session.headers={'User-Agent':'fixture'}
@@ -80,11 +113,54 @@ class NativeQOJStartTests(Isolated):
         self.assertEqual(client.web.post.call_args.kwargs['headers'],{'Origin':'https://qoj.ac','Referer':URL+'/virtual/register'})
         self.assertEqual(read_json(path)['contest']['name'],'The Regional Training Contest')
 
+    def test_slow_preflight_records_actual_post_time_instead_of_old_local_target(self):
+        client=self.client()
+        path,state=cli.prepare_start(URL,scheduled_start=3000)
+        original_get=client.web.soup.side_effect
+        def slow_get(url,**kwargs):
+            if url==URL+'/virtual/register':
+                self.clock+=120
+            return original_get(url,**kwargs)
+        client.web.soup.side_effect=slow_get
+        self.clock=3000
+        started=vp.activate(path,state)
+        self.assertEqual(started['status'],'running')
+        self.assertEqual(started['activation_target'],3120)
+        self.assertEqual(started['start_time'],3120)
+        client.web.post.assert_called_once()
+
+    def test_interrupted_get_before_post_does_not_claim_a_start_request_was_sent(self):
+        client=self.client()
+        path,state=cli.prepare_start(URL,scheduled_start=3000)
+        original_get=client.web.soup.side_effect
+        def interrupted(url,**kwargs):
+            if url==URL+'/virtual/register':
+                raise KeyboardInterrupt
+            return original_get(url,**kwargs)
+        self.clock=3000
+        client.web.soup.side_effect=interrupted
+        with self.assertRaises(KeyboardInterrupt):
+            vp.activate(path,state)
+        self.assertFalse(read_json(path)['activation_uncertain'])
+        client.web.post.assert_not_called()
+        client.web.soup.side_effect=original_get
+        self.assertEqual(vp.activate(path,read_json(path))['status'],'running')
+        client.web.post.assert_called_once()
+
+    def test_registrants_start_time_is_read_by_header_with_four_columns(self):
+        client=self.client()
+        del client._registration
+        started=datetime(2026,10,29,12,0,tzinfo=timezone.utc).timestamp()
+        client._page=Mock(return_value=page('<table><thead><tr><th>User</th><th>Start Time</th><th>End Time</th><th>Duration</th></tr></thead>'
+            '<tr><td><a href="/user/profile/tester">tester</a></td><td><time datetime="2026-10-29T12:00:00Z"></time></td>'
+            '<td><time datetime="2026-10-29T17:00:00Z"></time></td><td>300</td></tr></table>'))
+        self.assertEqual(client._registration(duration=1),(started,18000))
+
     def test_register_form_for_another_contest_cannot_start_vp(self):
         client=self.client()
         client._page=Mock(return_value=page('<form method="post" action="/contest/999/virtual/register">'
                                           '<input name="_token" value="fixture"></form>'))
-        with self.assertRaises(StartRejected):
+        with self.assertRaises(VPError):
             client.start(self.api.prepare(),fresh=True)
         client.web.post.assert_not_called()
 
@@ -97,6 +173,19 @@ class NativeQOJStartTests(Isolated):
         with self.assertRaises(VPError):
             vp.activate(path,state)
         client.web.post.assert_called_once()
+
+    def test_delayed_native_confirmation_recovers_actual_start_without_another_post(self):
+        def timeout(*args,**kwargs):
+            self.api.native_post_sent=True
+            raise VPError('response lost')
+        self.api.start.side_effect=timeout
+        path,state=cli.prepare_start(URL)
+        self.clock=2500
+        self.api._registration.return_value=(1300,18000)
+        restored=vp.activate(path,state)
+        self.assertEqual(restored['status'],'running')
+        self.assertEqual(restored['start_time'],1300)
+        self.api.start.assert_called_once()
 
     def test_native_registration_row_confirms_actual_start_time(self):
         client=self.client()

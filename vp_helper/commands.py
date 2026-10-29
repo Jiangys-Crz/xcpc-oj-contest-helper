@@ -49,7 +49,7 @@ HELP = """XCPC 比赛终端助手
   xcpc doctor nk         检查牛客；也支持 cf / gym / qoj
 
 Codeforces API 设置
-  xcpc api cf           重新输入 key 和 secret，VP / BT / live 共用
+  xcpc api cf           粘贴或输入 key 和 secret，VP / BT / live 共用
   xcpc api gym          配置 Gym 使用的 Codeforces 账号
 
 更新
