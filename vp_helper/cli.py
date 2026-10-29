@@ -28,6 +28,7 @@ from .storage import config_directory, workspace_directory as desktop, file_lock
 from .tui import display, TerminalDashboard
 
 console = Console()
+SHELL_HEIGHT_PERCENT = 35
 
 
 def adapter(url: str, config: dict):
@@ -215,7 +216,7 @@ def launch(state_path: Path, state: dict) -> None:
     # yet: tmux aborts with "size missing".  Give the session the real terminal
     # geometry and split by an absolute number of lines instead.
     columns, rows = shutil.get_terminal_size(fallback=(80, 24))
-    shell_rows = max(4, rows * 3 // 10)
+    shell_rows = max(4, rows * SHELL_HEIGHT_PERCENT // 100)
     subprocess.run(["tmux", "new-session", "-d", "-s", name,
                     "-x", str(columns), "-y", str(rows), "-c", directory, monitor], check=True)
     try:
@@ -428,6 +429,13 @@ def open_state(path: Path, state: dict) -> None:
             subprocess.run(["tmux", "respawn-pane", *(["-k"] if dead != "1" else []),
                             "-t", pane, "-c", state["directory"], command], check=True)
         subprocess.run(["tmux", "set-option", "-t", state["tmux_session"], "mouse", "on"], check=True)
+        # When called from the lower shell, its terminal height is only that
+        # pane's height. Read the whole tmux window before restoring the split.
+        height = subprocess.run(["tmux", "display-message", "-p", "-t", pane, "#{window_height}"],
+                                check=True, capture_output=True, text=True).stdout.strip()
+        if height.isdecimal() and int(height) > 0:
+            subprocess.run(["tmux", "resize-pane", "-t", state["tmux_session"] + ":0.1",
+                            "-y", str(max(4, int(height) * SHELL_HEIGHT_PERCENT // 100))], check=True)
         attach(state["tmux_session"])
     else:
         launch(path, state)

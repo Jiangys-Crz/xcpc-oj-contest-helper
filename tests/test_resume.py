@@ -249,13 +249,16 @@ class RepairScriptTests(unittest.TestCase):
         for old, new in repair.STATISTICS_REPLACEMENTS:
             self.assertIn(new, legacy)
             legacy = legacy.replace(new, old)
-        with tempfile.TemporaryDirectory() as temporary:
-            path = Path(temporary) / "tui.py"
-            path.write_text(legacy)
-            backup = repair.repair(path, repair.STATISTICS_REPLACEMENTS)
-            self.assertEqual(backup.read_text(), legacy)
-            self.assertEqual(path.read_text(), fixed)
-            self.assertIsNone(repair.repair(path, repair.STATISTICS_REPLACEMENTS))
+        previous = fixed.replace(repair.STATISTICS_REPLACEMENTS[1][1],
+                                 repair.STATISTICS_REPLACEMENTS[1][1].replace(', ratio=1', ''))
+        for original in (legacy, previous):
+            with self.subTest(previous_layout=original == previous), tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "tui.py"
+                path.write_text(original)
+                backup = repair.repair(path, repair.STATISTICS_REPLACEMENTS)
+                self.assertEqual(backup.read_text(), original)
+                self.assertEqual(path.read_text(), fixed)
+                self.assertIsNone(repair.repair(path, repair.STATISTICS_REPLACEMENTS))
 
 
 if __name__ == "__main__":

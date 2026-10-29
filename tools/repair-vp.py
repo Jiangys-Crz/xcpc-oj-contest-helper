@@ -24,7 +24,7 @@ STATISTICS_REPLACEMENTS = (
      '                                            ("accepted", "attempted", "submitted")), reverse=True)\n'
      '        columns = ordered + hidden'),
     ('            table.add_column(problem or "?", justify="center")',
-     '            table.add_column(problem if problem in visible else "?", justify="center")'),
+     '            table.add_column(problem if problem in visible else "?", justify="center", ratio=1)'),
     ('            table.add_row(key, *("?" if p is None else str(self.stats[key][p]) if self.stats else "—" for p in columns))',
      '            table.add_row(key, *(str(self.stats[key][p]) if self.stats else "—" for p in columns))'),
 )
@@ -32,6 +32,10 @@ STATISTICS_REPLACEMENTS = (
 
 def updated_source(path: Path, original: bytes, replacements: tuple) -> str:
     source = original.decode("utf8")
+    if replacements == STATISTICS_REPLACEMENTS:
+        # Accept the previous repaired layout as well as the original release.
+        previous_column = '            table.add_column(problem if problem in visible else "?", justify="center")'
+        source = source.replace(previous_column + '\n', STATISTICS_REPLACEMENTS[1][1] + '\n')
     for old, new in replacements:
         if old not in source:
             if "\n" + new + "\n" in "\n" + source + "\n":

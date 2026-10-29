@@ -66,9 +66,11 @@ class Dashboard:
         table = Table(box=SCORE_BOX, padding=(0, 1), style="default",
                       header_style="bold black on #eeeeee", border_style="#bbbbbb",
                       show_edge=False, expand=True)
-        for label in ("rank", "team", "solved", "penalty", *self.contest.problems):
+        for label in ("rank", "team", "solved", "penalty"):
             table.add_column(label, justify="left" if label == "team" else "center",
-                             no_wrap=label == "rank", min_width=12 if label == "rank" else None)
+                             no_wrap=True)
+        for label in self.contest.problems:
+            table.add_column(label, justify="center", ratio=1)
         cells = []
         corrections = recorded_cells(self.contest, self.submissions, practice=True)
         for label in self.contest.problems:
@@ -120,7 +122,7 @@ class Dashboard:
         table = Table(box=None, expand=True, padding=(0, 1), style="default", header_style="bold")
         table.add_column("public", justify="left")
         for problem in columns:
-            table.add_column(problem if problem in visible else "?", justify="center")
+            table.add_column(problem if problem in visible else "?", justify="center", ratio=1)
         for key in ("submitted", "attempted", "accepted"):
             table.add_row(key, *(str(self.stats[key][p]) if self.stats else "—" for p in columns))
         caption = f"CCPC · revealed {len(ordered)}/{len(self.contest.problems)} · {self.contest.rules.problem_reveal_count} teams incl. starred"
@@ -187,14 +189,18 @@ class LiveDashboard:
         heading = Text("" if self.practice else timing + " · " + phase_text + (" · Scoreboard frozen" if frozen else ""))
         scoring = self.contest.extra["scoring"]
         own = self.snapshot.get("own")
-        table = Table(box=SCORE_BOX, padding=(0, 1), expand=True, show_edge=False)
+        table = Table(box=SCORE_BOX, padding=(0, 1), style="default",
+                      header_style="bold black on #eeeeee", border_style="#bbbbbb",
+                      expand=True, show_edge=False)
         columns = ["rank", "team", "solved" if scoring == "ICPC" else "points"]
         if scoring == "ICPC":
             columns.append("penalty")
         elif self.contest.platform == "cf":
             columns.append("hacks +/−")
-        for label in [*columns, *self.contest.problems]:
-            table.add_column(label, justify="left" if label == "team" else "center")
+        for label in columns:
+            table.add_column(label, justify="left" if label == "team" else "center", no_wrap=True)
+        for label in self.contest.problems:
+            table.add_column(label, justify="center", ratio=1)
         results = own["problemResults"] if own else []
         cells = []
         corrections = recorded_cells(self.contest, self.submissions, practice=True)
