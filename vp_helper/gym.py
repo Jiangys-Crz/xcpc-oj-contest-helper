@@ -9,7 +9,7 @@ import time
 from urllib.parse import urlencode, urljoin, urlsplit
 
 from .http import WebSession, form_values
-from .models import Cell, Contest, Medals, Reference, Rules, Submission, TeamScore, VPError
+from .models import Cell, Contest, Medals, Reference, Rules, Submission, TeamScore, VPError, StartRejected
 from .originals import OriginalReplay, classify, load_metadata
 from .parsing import ccpc_reveal_count, directory_name, medals_from_html
 from .scoring import verdict
@@ -127,17 +127,15 @@ class Gym:
                    and r["party"].get("startTimeSeconds") is not None]
         return max(parties, key=lambda p: p["startTimeSeconds"], default=None)
 
-    def start(self, contest: Contest, requested_start: float | None = None) -> float:
+    def start(self, contest: Contest, requested_start: float | None = None, *, fresh: bool = False) -> float:
         soup = self.web.soup(self.url, params={"locale": "en"})
         profile = soup.select_one("#header")
         if not profile or not any(urlsplit(a.get("href", "")).path.lower() == f"/profile/{self.handle}".lower() for a in profile.select("a")):
             raise VPError("The Codeforces login cookie does not belong to the configured handle.")
         old = self._virtual_party()
         if old and time.time() < old["startTimeSeconds"] + contest.rules.duration:
-            if requested_start is not None and abs(requested_start - old["startTimeSeconds"]) > 60:
-                contest.extra.update(local_attempt=True, native_start_time=old["startTimeSeconds"])
-                self.start_time = requested_start
-                return self.start_time
+            if fresh or requested_start is not None and abs(requested_start - old["startTimeSeconds"]) > 60:
+                raise StartRejected("Codeforces 已有尚未结束或已预约的 VP，本次命令已取消。")
             self.start_time = float(old["startTimeSeconds"])
             return self.start_time
         registration = self.web.soup(self.origin + f"/contestRegistration/{self.id}/virtual/true", params={"locale": "en"})
@@ -145,7 +143,7 @@ class Gym:
         if form is None:
             form = next((f for f in registration.select("form") if f.select_one('[name="startTime"], [name="virtualStartTime"]')), None)
         if form is None:
-            raise VPError("Codeforces did not return its virtual participation registration form.")
+            raise StartRejected("Codeforces did not allow a new virtual participation registration.")
         payload = form_values(form)
         submit = form.select_one('input[type="submit"][name], button[type="submit"][name]')
         if submit:
@@ -158,13 +156,22 @@ class Gym:
         # Preserve the platform's observed start/timezone fields. In particular,
         # never use a local-clock guess for the native VP start.
         self.native_post_sent = True
-        self.web.post(urljoin(self.origin, form.get("action") or f"/contestRegistration/{self.id}/virtual/true"), payload)
+        response = self.web.post(urljoin(self.origin, form.get("action") or f"/contestRegistration/{self.id}/virtual/true"), payload)
+        from bs4 import BeautifulSoup
+        content = getattr(response, "content", None)
+        errors = (BeautifulSoup(content, "html.parser").select(".error, .error__message, .alert-danger")
+                  if isinstance(content, (str, bytes)) else [])
+        message = " ".join(e.get_text(" ", strip=True) for e in errors).strip()
         party = self._virtual_party()
         if not party or (old and party["startTimeSeconds"] == old["startTimeSeconds"]):
+            if message:
+                raise StartRejected("Codeforces 拒绝启动 VP：" + message[:500])
+            if old and party:
+                raise StartRejected("Codeforces 未创建新的 VP，本次命令已取消。")
             raise VPError("Codeforces did not confirm a new native VIRTUAL participation and start time.")
         self.start_time = float(party["startTimeSeconds"])
         if requested_start is not None and abs(self.start_time - requested_start) > 60:
-            raise VPError("Codeforces confirmed a different virtual start time. Check the original registration before retrying.")
+            raise StartRejected("Codeforces confirmed a different virtual start time. Check the original registration before retrying.")
         return self.start_time
 
     def submissions(self, contest: Contest) -> list[Submission]:

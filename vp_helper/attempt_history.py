@@ -18,7 +18,7 @@ from .tui import Dashboard
 
 def refresh(path: Path, state: dict) -> str:
     from . import cli, live
-    if state.get("status") == "scheduled" or time.time() < state["start_time"]:
+    if state.get("status") in ("scheduled", "failed", "cancelled") or time.time() < state["start_time"]:
         return ""
     contest = Contest.from_dict(state["contest"])
     config = read_json(config_directory() / "config.json")
@@ -83,6 +83,8 @@ def history(args: list[str]) -> None:
         raise VPError("Unknown or ambiguous attempt ID. Use vp history to list exact IDs.")
     path, state = matches[0]
     if reopen:
+        if state.get("status") in ("failed", "cancelled"):
+            raise VPError("此轮次未启动：" + state.get("activation_error", "本地预约已取消。"))
         from .cli import open_state
         open_state(path, state)
         return

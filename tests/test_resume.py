@@ -142,7 +142,7 @@ class ResumeTests(unittest.TestCase):
         self.api.prepare.side_effect = None
         self.api.prepare.return_value = contest
         self.api.start.side_effect = None
-        self.api.start.return_value = 1000
+        self.api.start.return_value = 2000
         self.api.web.pdf.side_effect = VPError("download failed")
         with patch.object(cli, "desktop", return_value=self.root):
             path, state = cli.prepare_start(self.state["url"])

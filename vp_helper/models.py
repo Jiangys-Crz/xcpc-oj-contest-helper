@@ -7,6 +7,10 @@ class VPError(RuntimeError):
     """An actionable platform, configuration or data error."""
 
 
+class StartRejected(VPError):
+    """The native site refused this new VP; never start a local fallback."""
+
+
 @dataclass
 class Rules:
     duration: int

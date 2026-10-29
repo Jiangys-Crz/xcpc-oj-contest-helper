@@ -23,8 +23,8 @@ def main() -> None:
         context = config.get("vp_context", {})
         if context.get("state_path"):
             state = read_json(Path(context["state_path"]))
-            if state.get("status") == "cancelled":
-                raise VPError("This scheduled VP was replaced before it started. Use the new attempt's directory.")
+            if state.get("status") in ("cancelled", "failed"):
+                raise VPError("This VP did not start. Use bt CONTEST_URL for practice.")
             if state.get("status") == "scheduled" or time.time() < state.get("start_time", 0):
                 raise VPError("This VP has not started yet. Wait for the countdown.")
         platform = config.get("platform")

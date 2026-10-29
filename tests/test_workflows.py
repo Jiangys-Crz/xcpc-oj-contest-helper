@@ -15,12 +15,12 @@ from rich.console import Console
 
 from vp_helper import attempt_history, cli, live, practice, submit, vp
 from vp_helper.gym import Gym
-from vp_helper.models import Contest, Rules, Submission, VPError
+from vp_helper.models import Contest, Rules, Submission, VPError, StartRejected
 from vp_helper.parsing import contest_id_url
 from vp_helper.receipts import record_receipt, ReceiptReader
 from vp_helper.scheduling import parse_start, registration_time
 from vp_helper.scoring import score_submissions, submission_history
-from vp_helper.sessions import attempts, boundary, close_attempt, merge_records, merge_submissions
+from vp_helper.sessions import attempts, boundary, close_attempt, merge_records, merge_submissions, end_attempt, save_state
 from vp_helper.storage import read_json, state_directory, write_json
 from vp_helper.submit_context import submission_configuration
 from vp_helper.tui import Dashboard
@@ -65,10 +65,11 @@ class AttemptTests(Isolated):
         self.assertNotEqual(s1["directory"], s2["directory"])
         self.assertEqual(s2["start_time"], 2000)
         self.assertEqual(s2["attempt"], 2)
-        self.assertTrue(s2["contest"]["extra"]["local_attempt"])
+        self.assertFalse(s2["contest"]["extra"].get("local_attempt"))
         self.assertEqual(original.read_text(), "saved solution")
         self.assertEqual(boundary(p1), 2000)
-        self.api.start.assert_called_once()
+        self.assertEqual(self.api.start.call_count, 2)
+        self.assertTrue(all(call.kwargs.get("fresh") for call in self.api.start.call_args_list))
         self.assertEqual(read_json(original.parent/"contest.json")["vp_context"]["state_path"], str(p1))
         self.assertEqual(read_json(original.parent/"contest.json")["platform"], "qoj")
         self.assertEqual(len(attempts()), 2)
@@ -118,12 +119,14 @@ class AttemptTests(Isolated):
         _, newer = cli.prepare_start(URL)
         self.clock = 3000
         self.assertEqual(vp.activate(path, state)["status"], "cancelled")
-        self.api.start.assert_not_called()
+        self.api.start.assert_called_once()
         self.assertEqual(newer["start_time"], 2000)
 
     def test_start_timeout_only_queries_registration_afterwards(self):
-        self.api.start.side_effect = VPError("timeout")
-        self.api.native_post_sent = True
+        def timeout(*args, **kwargs):
+            self.api.native_post_sent = True
+            raise VPError("timeout")
+        self.api.start.side_effect = timeout
         self.api._registration.return_value = None
         path, state = cli.prepare_start(URL)
         self.assertTrue(state["activation_uncertain"])

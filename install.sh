@@ -6,6 +6,8 @@ vp_local=false
 vp_offline=false
 vp_python=python3
 vp_submit_path=
+vp_target_root=
+vp_target_bin=
 vp_args=("$@")
 while (( $# )); do
     case "$1" in
@@ -14,6 +16,10 @@ while (( $# )); do
         --python)
             if (( $# < 2 )); then printf '%s\n' '--python requires an interpreter path.' >&2; exit 2; fi
             vp_python="$2"; shift ;;
+        --target-root|--target-bin)
+            if (( $# < 2 )) || [[ "$2" != /* ]]; then printf '%s\n' 'Update targets require absolute paths.' >&2; exit 2; fi
+            if [[ "$1" == --target-root ]]; then vp_target_root="$2"; else vp_target_bin="$2"; fi
+            shift ;;
         -h|--help)
             printf '%s\n' 'Usage: bash install.sh [--local] [--offline] [--python PYTHON] [EXISTING_SUBMIT]' \
                 '  --local    Install inside this folder (.vp-install/ and bin/), without sudo except for apt.' \
@@ -48,6 +54,14 @@ vp_bin=/usr/local/bin
 if $vp_local; then
     vp_prefix="$vp_source/.vp-install"
     vp_bin="$vp_source/bin"
+fi
+if [[ -n "$vp_target_root" || -n "$vp_target_bin" ]]; then
+    if [[ -z "$vp_target_root" || -z "$vp_target_bin" ]]; then
+        printf '%s\n' 'Both update target paths are required.' >&2
+        exit 2
+    fi
+    vp_prefix="$vp_target_root"
+    vp_bin="$vp_target_bin"
 fi
 if [[ -n "$vp_submit_path" ]]; then
     if [[ ! -f "$vp_submit_path" || ! -x "$vp_submit_path" ]]; then
@@ -222,6 +236,31 @@ if [[ -z "$vp_submit_path" && -L "$vp_selected" ]]; then
             ln -sfn "$vp_prefix/current/venv/bin/vp-submit" "$vp_selected" ;;
     esac
 fi
+# Record the install target independently from the source checkout. The updater
+# can then install a clean cached checkout back into the same local/global path.
+"$vp_release/venv/bin/python" - "$vp_release" "$vp_source" "$vp_prefix" "$vp_bin" "$vp_local" "$vp_python" "$vp_submit_path" <<'PY_INSTALLATION'
+import json, shutil, subprocess, sys
+from pathlib import Path
+release, source, prefix, commands, local, python, submit = sys.argv[1:]
+revision = ""
+if shutil.which("git"):
+    try:
+        # Global installation runs under sudo while the explicit source folder
+        # belongs to the invoking user. Trust only this installer source for
+        # these read-only revision queries, without changing Git configuration.
+        git = ["git", "-c", "safe.directory=" + str(Path(source).resolve()), "-C", source]
+        top = subprocess.check_output([*git, "rev-parse", "--show-toplevel"], stderr=subprocess.DEVNULL, text=True, timeout=5).strip()
+        if Path(top).resolve() == Path(source).resolve():
+            revision = subprocess.check_output([*git, "rev-parse", "HEAD"], stderr=subprocess.DEVNULL, text=True, timeout=5).strip()
+    except (subprocess.SubprocessError, OSError):
+        pass
+path = Path(release) / "installation.json"
+path.write_text(json.dumps({"install_root": str(Path(prefix).absolute()), "bin_directory": str(Path(commands).absolute()),
+                           "source_directory": str(Path(source).resolve()), "source_revision": revision,
+                           "local": local == "true", "python": shutil.which(python) or python,
+                           "submit_path": submit}, ensure_ascii=False, indent=2))
+path.chmod(0o644)
+PY_INSTALLATION
 # Publish only after the new environment and both submitters have passed checks.
 ln -s "$vp_release" "$vp_prefix/.current-new-$$"
 mv -Tf "$vp_prefix/.current-new-$$" "$vp_prefix/current"

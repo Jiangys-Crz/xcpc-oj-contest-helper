@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 import requests
 
 from .http import WebSession, form_values
-from .models import Cell, Contest, Reference, Rules, Submission, TeamScore, VPError
+from .models import Cell, Contest, Reference, Rules, Submission, TeamScore, VPError, StartRejected
 from .originals import OriginalReplay, cache_archive_submissions, classify, eligibility_lookup, identity, load_archive_submissions, load_metadata, lookup_team
 from .parsing import ccpc_reveal_count, directory_name, js_value, medals_from_html, seconds, timestamp
 from .scoring import verdict
@@ -138,12 +138,25 @@ class QOJ:
                 return max(records)
         return None
 
-    def start(self, contest: Contest) -> float:
+    def check_start(self, contest: Contest):
         soup = self._page()
-        nav = soup.select_one("ul.nav-pills")
-        if not nav or not any(urlsplit(a.get("href", "")).path == f"/user/profile/{self.handle}" for a in nav.select("a")):
-            raise VPError("The QOJ login cookie does not belong to the configured handle.")
+        from .browser_login import identity_from_page
+        identity_from_page("qoj", str(soup), self.handle)
         current = self._registration(duration=contest.rules.duration)
+        if current and time.time() < current[0] + current[1]:
+            raise StartRejected("QOJ 已有尚未结束的 VP，本次命令已取消。")
+        if soup.select_one("form#form-regvir") is None:
+            raise StartRejected("QOJ 未允许此账号新建 VP（可能不支持再次 VP），本次命令已取消。")
+        return soup, current
+
+    def start(self, contest: Contest, *, fresh: bool = False) -> float:
+        if fresh:
+            soup, current = self.check_start(contest)
+        else:
+            soup = self._page()
+            from .browser_login import identity_from_page
+            identity_from_page("qoj", str(soup), self.handle)
+            current = self._registration(duration=contest.rules.duration)
         if current and time.time() < current[0] + current[1]:
             self.start_time = current[0]
             contest.rules.duration = current[1]
@@ -154,7 +167,7 @@ class QOJ:
                 self.start_time = current[0]
                 contest.rules.duration = current[1]
                 return self.start_time
-            raise VPError("QOJ did not offer native virtual participation for this account.")
+            raise StartRejected("QOJ did not offer native virtual participation for this account.")
         payload = form_values(form)
         payload["submit-regvir"] = "regvir"
         if not payload.get("_token"):
@@ -189,14 +202,14 @@ class QOJ:
         if post_error:
             raise post_error
         if site_message:
-            raise VPError(f"QOJ could not start the VP: {site_message}")
+            raise StartRejected(f"QOJ could not start the VP: {site_message}")
         if registration_error:
             raise VPError(f"The native VP start could not be verified: {registration_error}. "
-                          f"Run vp qoj {self.id} again to check the existing registration.")
+                          "Use vp history ATTEMPT_ID --open to continue checking the existing registration.")
         if current and confirmed and confirmed[0] <= current[0]:
-            raise VPError("QOJ did not create a new native VP; the old participation is already finished.")
+            raise StartRejected("QOJ did not create a new native VP; the old participation is already finished.")
         raise VPError("QOJ did not confirm a VP start time in the account registration record. "
-                      f"Run vp qoj {self.id} again to check the existing registration.")
+                      "Use vp history ATTEMPT_ID --open to continue checking the existing registration.")
 
     @staticmethod
     def _start_message(response) -> str:

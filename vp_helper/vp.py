@@ -1,19 +1,45 @@
-"""Create a fresh, scheduled or immediate VP without replacing prior attempts."""
+"""Create a fresh native VP; replace local counting only after confirmation."""
 from __future__ import annotations
 
 from pathlib import Path
 import time
 from uuid import uuid4
 
-from .models import Contest, VPError
+from .models import Contest, VPError, StartRejected
 from .parsing import contest_url
 from .sessions import attempts, boundary, close_attempt
 from .storage import file_lock, read_json, write_json
 
 
-def activate(path: Path, state: dict) -> dict:
+def _publish_started(path: Path, state: dict) -> None:
+    """Only a verified native start may replace an existing local attempt."""
     from . import cli
-    with file_lock(path.with_suffix(".activate.lock"), nonblocking=True):
+    for previous_path, previous in attempts(path.parent):
+        if (previous_path != path and previous.get("mode", "vp") == "vp"
+                and previous.get("status") not in ("failed", "cancelled")
+                and previous["url"] == state["url"]
+                and previous["handle"].casefold() == state["handle"].casefold()):
+            close_attempt(previous_path, state["start_time"], state["attempt_id"])
+    write_json(path.parent / "current.json", {"state_path": str(path)})
+    cli.bind_submit_context(Path(state["directory"]), path, state)
+
+
+def _fail(path: Path, state: dict, error: Exception) -> None:
+    state.update(status="failed", activation_error=str(error), activation_uncertain=False)
+    write_json(path, state)
+    current = path.parent / "current.json"
+    if read_json(current).get("state_path") == str(path):
+        write_json(current, state.get("previous_current", {}))
+
+
+def activate(path: Path, state: dict) -> dict:
+    with file_lock(path.parent / "start.lock"):
+        return _activate(path)
+
+
+def _activate(path: Path) -> dict:
+    from . import cli
+    with file_lock(path.with_suffix(".activate.lock")):
         state = read_json(path)
         if state.get("status") != "scheduled":
             return state
@@ -27,34 +53,40 @@ def activate(path: Path, state: dict) -> dict:
         api = cli.adapter(contest.url, config)
         if api.handle.casefold() != state["handle"].casefold():
             raise VPError("The scheduled VP account changed. Restore its Firefox login.")
-        requested = state["requested_start"]
+        recovering = bool(state.get("activation_uncertain"))
         try:
-            if contest.extra.get("local_attempt"):
-                started = requested
-            elif state.get("activation_uncertain"):
+            if recovering:
                 recovered = (api._virtual_party() if contest.platform in ("cf", "gym")
                              else api._registration(duration=contest.rules.duration))
                 started = recovered.get("startTimeSeconds") if isinstance(recovered, dict) else recovered[0] if recovered else None
                 if started is None or abs(started-state["activation_target"]) > 60:
                     raise VPError("The platform has not confirmed the requested VP start. The start request will not be repeated.")
-            elif contest.platform in ("cf", "gym"):
-                state["activation_target"] = max(requested, time.time())
-                started = api.start(contest, requested_start=state["activation_target"])
+                if not isinstance(recovered, dict):
+                    contest.rules.duration = recovered[1]
             else:
-                state["activation_target"] = max(requested, time.time())
-                started = api.start(contest)
+                state["activation_target"] = max(state["requested_start"], time.time())
+                # If interrupted during POST, recovery is query-only, even when
+                # the process could not persist the response.
+                state["activation_uncertain"] = True
+                write_json(path, state)
+                api.native_post_sent = False
+                if contest.platform in ("cf", "gym"):
+                    started = api.start(contest, requested_start=state["activation_target"], fresh=True)
+                else:
+                    started = api.start(contest, fresh=True)
                 if abs(started-state["activation_target"]) > 60:
-                    contest.extra.update(local_attempt=True, native_start_time=started)
-                    started = requested
+                    raise StartRejected("原站返回的 VP 开始时间与本次请求不符，本次命令已取消。")
+        except StartRejected as exc:
+            _fail(path, state, exc)
+            raise
         except (VPError, OSError) as exc:
-            state.update(activation_error=str(exc),
-                         activation_uncertain=state.get("activation_uncertain") or getattr(api, "native_post_sent", False) is True)
+            uncertain = recovering or getattr(api, "native_post_sent", False) is True
+            state.update(activation_error=str(exc), activation_uncertain=bool(uncertain))
             write_json(path, state)
             raise
-        state.update(start_time=started, contest=contest.to_dict(), status="running")
-        cli.configure_submit(api, contest, Path(state["directory"]))
+        state.update(start_time=started, contest=contest.to_dict(), status="running", activation_uncertain=False)
         write_json(path, state)
-        cli.bind_submit_context(Path(state["directory"]), path, state)
+        _publish_started(path, state)
         return state
 
 
@@ -69,26 +101,26 @@ def prepare(url: str, scheduled_start: float | None = None) -> tuple[Path, dict]
     with file_lock(root / "start.lock"):
         current = read_json(root / "current.json")
         old = read_json(Path(current["state_path"])) if current else {}
-        if (old and old.get("url") != canonical and old.get("status") not in ("complete", "archived")
+        if (old and old.get("url") != canonical and old.get("status") not in ("complete", "archived", "failed", "cancelled")
                 and time.time() < old.get("start_time", 0) + old.get("contest", {}).get("rules", {}).get("duration", 0)):
             raise VPError(f"Another contest is still active: {old.get('url')}.")
         config = cli.load_account(platform)
         api = cli.adapter(canonical, config)
         previous = [(p, s) for p, s in attempts(root)
-                    if s.get("mode") != "live" and s["url"] == canonical
+                    if s.get("mode", "vp") == "vp" and s.get("status") not in ("failed", "cancelled") and s["url"] == canonical
                     and s["handle"].casefold() == api.handle.casefold()]
+        pending = next((s for _, s in previous if s.get("status") == "scheduled" and s.get("activation_uncertain")), None)
+        if pending:
+            raise VPError("上一轮启动结果尚未确认。请用 vp history " + pending["attempt_id"] +
+                          " --open 继续核验；不会重复发送启动请求。")
         cli.console.print("Reading contest information…", markup=False)
         contest = api.prepare()
         contest.directory_name = " ".join(contest.directory_name.split())
         number = len(previous) + 1
         attempt_id = uuid4().hex[:10]
         requested = scheduled_start if scheduled_start is not None else time.time()
-        if previous:
-            while any(abs(requested-s["start_time"]) < 0.0000005 for _, s in previous):
-                requested += 0.000001
-            latest = max(previous, key=lambda item: item[1].get("attempt", 0))[1]
-            contest.extra.update(local_attempt=True,
-                                 native_start_time=latest["contest"].get("extra", {}).get("native_start_time", latest["start_time"]))
+        if platform == "qoj":
+            api.check_start(contest)
         contest.extra.update(attempt=number, attempt_id=attempt_id)
         directory = cli.desktop() / f"{contest.directory_name} VP{number}-{attempt_id}"
         directory.mkdir(parents=True, exist_ok=False)
@@ -102,20 +134,24 @@ def prepare(url: str, scheduled_start: float | None = None) -> tuple[Path, dict]
         state = {"mode": "vp", "attempt": number, "attempt_id": attempt_id, "contest": contest.to_dict(),
                  "url": canonical, "start_time": requested, "requested_start": requested,
                  "handle": api.handle, "directory": str(directory), "tmux_session": path.stem,
-                 "status": "scheduled", "submissions": [], "recent": [],
+                 "status": "scheduled", "submissions": [], "recent": [], "previous_current": current,
                  "history_path": str(cli.desktop() / "vp_history.csv")}
         write_json(path, state)
         cli.bind_submit_context(directory, path, state)
-        write_json(root / "current.json", {"state_path": str(path)})
-        for previous_path, _ in previous:
-            close_attempt(previous_path, requested, attempt_id)
-        # Codeforces accepts a scheduled native registration now. QOJ starts
-        # when the background monitor reaches the requested wall-clock time.
-        if (platform in ("cf", "gym") and not previous) or requested <= time.time():
+        # Codeforces confirms a future registration now; QOJ preflights the
+        # reservation and sends its single native start request at the deadline.
+        if platform in ("cf", "gym") or requested <= time.time():
             try:
-                state = activate(path, state)
+                state = _activate(path)
+            except StartRejected:
+                raise
             except (VPError, OSError) as exc:
-                cli.console.print("Waiting for automatic start verification: " + str(exc), markup=False)
                 state = read_json(path)
+                if not state.get("activation_uncertain"):
+                    _fail(path, state, exc)
+                    raise
+                cli.console.print("Waiting for automatic start verification: " + str(exc), markup=False)
+        if state.get("status") == "scheduled":
+            write_json(root / "current.json", {"state_path": str(path)})
         cli.console.print(f"VP #{number} · {attempt_id} · {directory}", markup=False)
         return path, state

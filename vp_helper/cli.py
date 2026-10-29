@@ -17,8 +17,8 @@ from rich.console import Console
 from rich.table import Table
 from rich import box
 
-from .models import Contest, Reference, Submission, VPError
-from .browser_login import browser_fields, refresh_browser_account
+from .models import Contest, Reference, Submission, VPError, StartRejected
+from .browser_login import browser_fields, refresh_browser_account, login_diagnostics, verify_stored_session
 from .history_lines import enrich_history
 from .parsing import contest_url, contest_id_url
 from .receipts import ReceiptReader
@@ -50,14 +50,17 @@ def _load_account(path: Path, platform: str, *, live: bool = False) -> dict:
     config = read_json(path)
     key = "gym" if platform == "cf" and "cf" not in config else platform
     account = config.setdefault(key, {})
+    account.pop("_login_verified", None)
     before = dict(account)
-    refresh_browser_account(platform, account)
+    verified = refresh_browser_account(platform, account) or verify_stored_session(platform, account)
     if account != before:
         write_json(path, config)
-    if not account.get("cookie") and account.get("cookie_source") != "manual":
+    if not verified and account.get("cookie_source") != "manual":
         site = {"qoj": "QOJ", "cwnuoj": "CWNUOJ", "nowcoder": "Nowcoder"}.get(platform, "Codeforces")
-        raise VPError(f"No matching Firefox login was found for {site}. "
-                      "Log in to the site in Firefox, then run the same vp command again.")
+        alias = {"cwnuoj": "paa", "nowcoder": "nk"}.get(platform, platform)
+        detail = "\n".join(login_diagnostics(platform, account))
+        raise VPError(f"无法验证 {site} 的 Firefox 登录。\n{detail}\n"
+                      f"可运行 xcpc doctor {alias} 查看检查结果。")
     required = ("handle", "cookie") if platform in ("qoj", "cwnuoj", "nowcoder") or live else ("handle", "cookie", "api_key", "api_secret")
     missing = [key for key in required if not account.get(key)]
     if missing and not sys.stdin.isatty():
@@ -71,6 +74,7 @@ def _load_account(path: Path, platform: str, *, live: bool = False) -> dict:
                 raise VPError("An account field was empty; no native VP was started.")
             account[key] = value
         write_json(path, config)
+    account["_login_verified"] = verified
     return config
 
 
@@ -303,7 +307,7 @@ def monitor(path: Path) -> None:
         from .practice import monitor as practice_monitor
         practice_monitor(path)
         return
-    # Scheduled QOJ and repeated VPs wait in the persistent tmux monitor.
+    # Scheduled QOJ and uncertain registrations wait in the persistent monitor.
     waiting = read_json(path)
     if waiting.get("status") == "scheduled":
         from .vp import activate
@@ -323,6 +327,9 @@ def monitor(path: Path) -> None:
                 if remaining <= 0 and time.monotonic() >= retry_at:
                     try:
                         waiting = activate(path, waiting)
+                    except StartRejected as exc:
+                        console.print("VP 已取消：" + str(exc), markup=False)
+                        return
                     except (VPError, OSError) as exc:
                         error = str(exc)
                         retry_at = time.monotonic() + 15
@@ -332,8 +339,10 @@ def monitor(path: Path) -> None:
                 view.update(display(c, -max(0, remaining), score_submissions([], list(c.problems), c.rules, 0),
                                     "—", "", None, [], error or "Waiting for scheduled start"))
                 time.sleep(0.2)
-        if waiting.get("status") == "cancelled":
+        if waiting.get("status") in ("cancelled", "failed"):
             return
+    if read_json(path).get("status") in ("cancelled", "failed"):
+        raise VPError("此 VP 未启动。请查看历史记录中的失败原因。")
     with file_lock(path.with_suffix(".monitor.lock"), nonblocking=True):
         state = read_json(path)
         contest = Contest.from_dict(state["contest"])
@@ -430,8 +439,9 @@ def monitor(path: Path) -> None:
                 if boundary(path) is not None and time.time() >= boundary(path):
                     shown_message = "Archived VP · new submissions from this directory are practice"
                 if now >= next_render:
-                    dashboard = display(contest, elapsed, private, shown_rank, prize, stats, records, shown_message)
-                    dashboard.revealed = revealed_problems(contest, elapsed, current_reference)
+                    dashboard = display(contest, max(0, scoring_elapsed) if interrupted else elapsed,
+                                        private, shown_rank, prize, stats, records, shown_message)
+                    dashboard.revealed = revealed_problems(contest, scoring_elapsed, current_reference)
                     view.update(dashboard)
                     next_render = now + 0.25
                 if fresh_submissions:

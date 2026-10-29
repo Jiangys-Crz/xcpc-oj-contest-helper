@@ -40,14 +40,18 @@ class Practice:
         c = Contest(self.platform, self.id, self.url, self.platform + " " + self.id,
                     self.platform + " " + self.id, {}, Rules(1))
         if self.platform in ("cf", "gym"):
-            verify_login(self.web.soup(self.url, params={"locale": "en"}), self.handle)
+            if not self.account.get("_login_verified"):
+                verify_login(self.web.soup(self.url, params={"locale": "en"}), self.handle)
             data = self.api.api("contest.standings", contestId=self.id)
             apply_metadata(c, data["contest"], data["problems"])
             if c.extra["phase"] != "FINISHED":
                 raise VPError("Use live or vp while the original contest is active; bt requires a finished contest.")
             verify_practice(self.api, c.rules.duration)
         elif self.platform in ("cwnuoj", "nowcoder"):
-            self.api.identity()
+            if self.account.get("_login_verified") and self.account.get("uid") is not None:
+                self.api._identified = True
+            else:
+                self.api.identity()
             self.api.apply_metadata(c, self.api.details(), require_registration=False)
             if c.extra["phase"] != "FINISHED":
                 raise VPError("This contest has not finished. Use live for the existing participation.")
@@ -55,9 +59,9 @@ class Practice:
                 self.api.problem_list(c)
         else:
             page = self.api._page()
-            nav = page.select_one("ul.nav-pills")
-            if not nav or not nav.select_one(f'a[href="/user/profile/{self.handle}"]'):
-                raise VPError("The QOJ Firefox login does not match this account.")
+            if not self.account.get("_login_verified"):
+                from .browser_login import identity_from_page
+                identity_from_page("qoj", str(page), self.handle)
             title = page.select_one("h1")
             if title:
                 c.name = title.get_text(" ", strip=True)

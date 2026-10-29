@@ -40,21 +40,35 @@ class BrowserCookies:
     cookie: str = field(repr=False)
 
 
-def firefox_profiles(account: dict) -> list[Path]:
-    explicit = account.get("firefox_profile")
-    if explicit:
-        return [Path(explicit).expanduser().resolve()]
-    if os.name != "posix":
-        return []
+def firefox_roots() -> list[Path]:
     home = Path.home()
+    switched_user = False
     if os.geteuid() == 0 and os.environ.get("SUDO_USER") not in (None, "", "root"):
         import pwd
         try:
             home = Path(pwd.getpwnam(os.environ["SUDO_USER"]).pw_dir)
+            switched_user = True
         except KeyError:
             pass
-    profiles = []
-    for base in (home / ".mozilla/firefox", home / "snap/firefox/common/.mozilla/firefox"):
+    config = Path(os.environ.get("XDG_CONFIG_HOME", home / ".config")) if not switched_user else home / ".config"
+    roots = [config / "mozilla/firefox", home / ".mozilla/firefox",
+             home / "snap/firefox/common/.config/mozilla/firefox",
+             home / "snap/firefox/common/.mozilla/firefox",
+             home / ".var/app/org.mozilla.firefox/config/mozilla/firefox",
+             home / ".var/app/org.mozilla.firefox/.mozilla/firefox"]
+    return list(dict.fromkeys(p.expanduser().resolve() for p in roots))
+
+
+def firefox_profiles(account: dict) -> list[Path]:
+    if os.name != "posix":
+        return []
+    explicit = account.get("firefox_profile")
+    profiles = [Path(explicit).expanduser().resolve()] if explicit else []
+    # Verified logins cache their profile path. An automatically cached old
+    # location must not hide the same user's newly migrated Firefox profile.
+    if explicit and (account.get("firefox_profile_strict") or not account.get("handle")):
+        return profiles
+    for base in firefox_roots():
         parser = configparser.ConfigParser(interpolation=None)
         try:
             parser.read(base / "profiles.ini")
@@ -71,7 +85,21 @@ def firefox_profiles(account: dict) -> list[Path]:
                 if path.is_dir() and path not in profiles:
                     profiles.append(path)
         except (OSError, configparser.Error):
-            continue
+            pass
+        # Profile manager/custom installations may not list every profile in
+        # profiles.ini. Inspect only immediate Firefox profile directories.
+        try:
+            for directory in (base, base / "Profiles"):
+                if not directory.is_dir():
+                    continue
+                if (directory / "cookies.sqlite").is_file() and directory not in profiles:
+                    profiles.append(directory)
+                for candidate in sorted(directory.iterdir()):
+                    if (candidate.is_dir() and (candidate / "cookies.sqlite").is_file()
+                            and candidate.resolve() not in profiles):
+                        profiles.append(candidate.resolve())
+        except OSError:
+            pass
     return profiles
 
 
@@ -128,7 +156,7 @@ def _ordinary(attributes) -> bool:
     return not any(attributes.values()) if isinstance(attributes, dict) else attributes in (None, "")
 
 
-def _session_cookies(profile: Path, host: str) -> dict:
+def _session_cookie_rows(profile: Path, host: str) -> list[tuple[str, str, str]]:
     files = [profile / "sessionstore.jsonlz4",
              profile / "sessionstore-backups/recovery.jsonlz4",
              profile / "sessionstore-backups/recovery.baklz4",
@@ -136,21 +164,34 @@ def _session_cookies(profile: Path, host: str) -> dict:
     try:
         existing = [p for p in files if p.is_file()]
         if not existing:
-            return {}
+            return []
         latest = max(existing, key=lambda p: p.stat().st_mtime_ns)
         if latest.stat().st_size > _MAX_SESSION_SIZE:
-            return {}
+            return []
         state = _decode_session(latest.read_bytes())
         cookies = list(state.get("cookies", []))
         for window in state.get("windows", []):
             if not window.get("isPrivate"):
                 cookies.extend(window.get("cookies", []))
-        return {c["name"]: c["value"] for c in cookies
+        return [(c["name"], c["value"], c["host"]) for c in cookies
                 if c.get("host", "") in cookie_hosts(host) and c.get("path", "/") == "/"
                 and _ordinary(c.get("originAttributes")) and c.get("expiry", float("inf")) > time.time()
-                and isinstance(c.get("name"), str) and isinstance(c.get("value"), str)}
+                and isinstance(c.get("name"), str) and isinstance(c.get("value"), str)]
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
-        return {}
+        return []
+
+
+def _cookie_values(rows, host: str) -> dict:
+    values, priority = {}, {}
+    for name, value, domain in rows:
+        rank = int(domain.lstrip(".") == host)
+        if rank >= priority.get(name, -1):
+            values[name], priority[name] = value, rank
+    return values
+
+
+def _session_cookies(profile: Path, host: str) -> dict:
+    return _cookie_values(_session_cookie_rows(profile, host), host)
 
 
 def _header(values: dict) -> str:
@@ -162,25 +203,34 @@ def _header(values: dict) -> str:
     return "; ".join(m.OutputString() for m in jar.values())
 
 
-def browser_cookies(platform: str, account: dict) -> list[BrowserCookies]:
+def browser_cookies(platform: str, account: dict, *, errors: list[str] | None = None) -> list[BrowserCookies]:
     host = platform_host(platform)
     candidates = []
     for profile in firefox_profiles(account):
-        persistent = {}
+        rows = []
         database = profile / "cookies.sqlite"
         try:
             if database.is_file():
                 with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=0.5)) as conn:
                     hosts = cookie_hosts(host)
-                    persistent = dict(conn.execute(
-                        "SELECT name, value FROM moz_cookies WHERE host IN (" + ",".join("?" for _ in hosts) + ") AND path='/' "
+                    rows = list(conn.execute(
+                        "SELECT name, value, host FROM moz_cookies WHERE host IN (" + ",".join("?" for _ in hosts) + ") AND path='/' "
                         "AND expiry > ? AND originAttributes='' ORDER BY lastAccessed",
                         (*hosts, int(time.time()))))
         except (OSError, sqlite3.Error):
-            pass
-        combined = {**persistent, **_session_cookies(profile, host)}
+            if errors is not None:
+                errors.append(str(profile) + "：无法读取 Cookie 数据库；请确认使用同一个 Ubuntu 用户运行。")
+        persistent = _cookie_values(rows, host)
+        session_rows = _session_cookie_rows(profile, host)
+        combined_rows = [*rows, *session_rows]
+        combined = _cookie_values(combined_rows, host)
         seen = set()
-        for values in (combined, persistent):
+        # Host and parent-domain cookies may share a name. Prefer the site's
+        # cookie, but verify the latest parent variant as well: an old guest
+        # host cookie must not hide a valid shared-domain login.
+        latest_combined = {name: value for name, value, _ in combined_rows}
+        latest_persistent = {name: value for name, value, _ in rows}
+        for values in (combined, latest_combined, persistent, latest_persistent):
             header = _header(values)
             if header and header not in seen:
                 candidates.append(BrowserCookies(profile, header))
@@ -188,7 +238,33 @@ def browser_cookies(platform: str, account: dict) -> list[BrowserCookies]:
     return candidates
 
 
-def _verify(platform: str, candidate: BrowserCookies, expected: str) -> dict | None:
+def identity_from_page(platform: str, html: str, expected: str = "") -> dict:
+    """Use the same authenticated navigation identity for VP and practice."""
+    from .models import VPError
+    identity = {}
+    if platform in ("cwnuoj", "nowcoder"):
+        if platform == "cwnuoj":
+            from .hydro import identity_from_html
+        else:
+            from .nowcoder import identity_from_html
+        identity = identity_from_html(html)
+        handles = {identity["handle"]}
+    else:
+        soup = BeautifulSoup(html, "html.parser")
+        selector = "ul.nav-pills, .navbar, nav, header, .nav-item.dropdown .dropdown-menu" if platform == "qoj" else "#header"
+        prefix = "/user/profile/" if platform == "qoj" else "/profile/"
+        handles = {urlsplit(a["href"]).path[len(prefix):].rstrip("/")
+                   for header in soup.select(selector) for a in header.select("a[href]")
+                   if urlsplit(a["href"]).path.startswith(prefix)}
+    if expected:
+        handles = {h for h in handles if h == expected or platform != "qoj" and h.casefold() == expected.casefold()}
+    if len(handles) != 1:
+        raise VPError("网页登录账号与本地 handle 配置不匹配，或网页未返回登录账号。" +
+                      ("CWNUOJ 的 handle 应为用户名，不是登录邮箱。" if platform == "cwnuoj" else ""))
+    return {**identity, "handle": expected or handles.pop()}
+
+
+def _verify(platform: str, candidate: BrowserCookies, expected: str, *, errors: list[str] | None = None) -> dict | None:
     from .http import WebSession
     host = platform_host(platform)
     origin = "https://" + host
@@ -197,36 +273,34 @@ def _verify(platform: str, candidate: BrowserCookies, expected: str) -> dict | N
         response = web.session.get(origin + "/", params={"locale": "en"}, timeout=(5, 15))
         web.check(response)
         if urlsplit(response.url).hostname != host:
+            if errors is not None:
+                errors.append("网站验证跳转到了其他域名。")
             return None
-        identity = {}
-        if platform in ("cwnuoj", "nowcoder"):
-            if platform == "cwnuoj":
-                from .hydro import identity_from_html
-            else:
-                from .nowcoder import identity_from_html
-            identity = identity_from_html(response.text)
-            handles = {identity["handle"]}
-        else:
-            soup = BeautifulSoup(response.text, "html.parser")
-            selector = "ul.nav-pills, .navbar, nav, header, .nav-item.dropdown .dropdown-menu" if platform == "qoj" else "#header"
-            prefix = "/user/profile/" if platform == "qoj" else "/profile/"
-            handles = {urlsplit(a.get("href", "")).path[len(prefix):].rstrip("/")
-                       for header in soup.select(selector) for a in header.select("a[href]")
-                       if urlsplit(a["href"]).path.startswith(prefix)}
-        if expected:
-            handles = {h for h in handles if h == expected or platform != "qoj" and h.lower() == expected.lower()}
-        if len(handles) != 1:
-            return None
+        identity = identity_from_page(platform, response.text, expected)
         jar = getattr(web.session.cookies, "jar", web.session.cookies)
         values = {c.name: c.value for c in jar
                   if c.domain in cookie_hosts(host) and c.path == "/"}
-        return {**identity, "cookie": _header(values), "handle": expected or handles.pop(),
+        return {**identity, "cookie": _header(values),
                 "cookie_source": "firefox", "firefox_profile": str(candidate.profile)}
-    except Exception:
+    except Exception as exc:
         # Do not replace a configured session on network failure or another login.
+        if errors is not None:
+            from .models import VPError
+            errors.append(str(exc) if isinstance(exc, VPError) else "网站验证请求失败（" + type(exc).__name__ + "）；请检查此终端的网络连接。")
         return None
     finally:
         web.session.close()
+
+
+def verify_stored_session(platform: str, account: dict) -> bool:
+    if not account.get("cookie"):
+        return False
+    verified = _verify(platform, BrowserCookies(Path(account.get("firefox_profile") or "."), account["cookie"]),
+                       account.get("handle", ""))
+    if not verified:
+        return False
+    account.update({key: verified[key] for key in ("cookie", "handle", "uid") if key in verified})
+    return True
 
 
 def refresh_browser_account(platform: str, account: dict, *, force: bool = False) -> bool:
@@ -249,7 +323,7 @@ def refresh_browser_account(platform: str, account: dict, *, force: bool = False
 
 
 def browser_fields(account: dict) -> dict:
-    return {k: account[k] for k in ("cookie_source", "firefox_profile") if account.get(k)}
+    return {k: account[k] for k in ("cookie_source", "firefox_profile", "firefox_profile_strict") if account.get(k)}
 
 
 def refresh_submission_login(path: Path, config: dict, platform: str) -> None:
@@ -257,3 +331,27 @@ def refresh_submission_login(path: Path, config: dict, platform: str) -> None:
     before = dict(config)
     if refresh_browser_account(platform, config) and config != before:
         write_json(path, config)
+
+
+def login_diagnostics(platform: str, account: dict) -> list[str]:
+    """Safe to share: locations, counts and fixed errors, never cookie values."""
+    if account.get("cookie_source") == "manual":
+        return ["当前配置使用手动 Cookie，未自动读取 Firefox。"]
+    profiles = firefox_profiles(account)
+    if not profiles:
+        return ["未找到 Firefox 配置目录。请在 Firefox 打开 about:support 查看“配置文件夹”。",
+                "已检查：" + "、".join(map(str, firefox_roots()))]
+    messages = ["找到 Firefox 配置目录：" + "、".join(map(str, profiles))]
+    errors = []
+    candidates = browser_cookies(platform, account, errors=errors)
+    if not candidates:
+        return messages + errors + ["未读到该站点的普通窗口 Cookie。请在普通 Firefox 窗口登录对应网站；隐私窗口和容器登录不会混用。",
+                                    "若仍失败，可关闭 Firefox 后再试一次，让登录状态写入磁盘。"]
+    messages.append(f"读取到 {len(candidates)} 组该站点 Cookie。")
+    for candidate in candidates:
+        problems = []
+        verified = _verify(platform, candidate, account.get("handle", ""), errors=problems)
+        if verified:
+            return messages + ["已验证该站点的 Firefox 登录：" + str(candidate.profile)]
+        messages.extend(str(candidate.profile) + "：" + reason for reason in problems)
+    return messages

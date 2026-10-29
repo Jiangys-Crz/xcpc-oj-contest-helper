@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
+import time
 
 from .models import Contest, Submission, VPError
 from .storage import file_lock, read_json, state_directory, write_json
@@ -23,10 +24,10 @@ def boundary(path: Path) -> float | None:
     return read_json(path.with_suffix(".closed")).get("capture_until")
 
 
-def close_attempt(path: Path, at: float, next_id: str) -> None:
+def close_attempt(path: Path, at: float, next_id: str = "", *, reason: str = "replaced") -> None:
     old = boundary(path)
     write_json(path.with_suffix(".closed"), {"capture_until": min(old, at) if old is not None else at,
-                                           "next_attempt": next_id})
+                                           "next_attempt": next_id, "reason": reason})
 
 
 def receipt_owners(path: Path, state: dict) -> dict[str, tuple[Path, dict]]:
@@ -78,4 +79,53 @@ def save_state(path: Path, state: dict) -> None:
         combined = {str(e["id"]): e for e in previous.get("submissions", [])}
         combined.update({str(e["id"]): e for e in state.get("submissions", [])})
         state["submissions"] = merge_records(path, state, list(combined.values()))
+        cutoff = boundary(path)
+        if state.get("mode", "vp") == "vp" and cutoff is not None and time.time() >= cutoff:
+            state["status"] = "cancelled" if previous.get("status") == "cancelled" or state.get("status") in ("scheduled", "cancelled") else "archived"
+            if previous.get("ended_at") is not None:
+                state["ended_at"] = previous["ended_at"]
         write_json(path, state)
+
+
+def end_attempt(attempt_id: str | None = None) -> tuple[Path, dict]:
+    """End only local counting. Never contact or change the native site."""
+    from .scoring import score_submissions
+    root = state_directory()
+    with file_lock(root / "start.lock"):
+        saved = [(p, s) for p, s in attempts(root) if s.get("mode", "vp") == "vp"]
+        if attempt_id:
+            selected = [(p, s) for p, s in saved if attempt_id in (p.stem, s.get("attempt_id"))]
+        else:
+            current = read_json(root / "current.json").get("state_path")
+            active = [(p, s) for p, s in saved if s.get("status") in ("scheduled", "running")
+                      and (boundary(p) is None or time.time() < boundary(p))
+                      and time.time() < s["start_time"] + s["contest"]["rules"]["duration"]]
+            selected = [(p, s) for p, s in active if str(p) == current] or active[-1:]
+        if len(selected) != 1:
+            raise VPError("未找到正在进行的本地 VP。可用 vp history 查询轮次，再运行 xcpc end 轮次ID。")
+        path, _ = selected[0]
+        with file_lock(path.with_suffix(".activate.lock")):
+            state = read_json(path)
+            if state.get("status") in ("failed", "cancelled", "complete", "archived"):
+                return path, state
+            now = time.time()
+            cancelled = state.get("status") == "scheduled" or now < state["start_time"]
+            close_attempt(path, now, reason="manual")
+            state.update(status="cancelled" if cancelled else "archived", ended_at=now)
+            contest = Contest.from_dict(state["contest"])
+            state["submissions"] = merge_records(path, state, [])
+            score = score_submissions([Submission(**e) for e in state["submissions"]], list(contest.problems),
+                                      contest.rules, max(0, now-state["start_time"]))
+            state["summary"] = {"solved": score.solved, "penalty": score.penalty if score.results_complete else "",
+                                "rank": "", "prize": ""}
+            save_state(path, state)
+            return path, state
+
+
+def locally_ended(url: str, handle: str, native_start: float) -> bool:
+    return any(s.get("mode", "vp") == "vp" and s["url"] == url
+               and s["handle"].casefold() == handle.casefold()
+               and s["contest"].get("extra", {}).get("native_start_time", s["start_time"]) == native_start
+               and read_json(p.with_suffix(".closed")).get("reason") == "manual"
+               and boundary(p) is not None and time.time() >= boundary(p)
+               for p, s in attempts())

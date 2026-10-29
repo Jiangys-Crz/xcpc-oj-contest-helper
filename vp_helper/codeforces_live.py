@@ -48,6 +48,9 @@ def verify_practice(api, duration: int) -> None:
                 and any(m.get("handle", "").casefold() == api.handle.casefold() for m in party.get("members", []))
                 and party.get("startTimeSeconds") is not None
                 and time.time() < party["startTimeSeconds"] + duration):
+            from .sessions import locally_ended
+            if locally_ended(api.url, api.handle, party["startTimeSeconds"]):
+                continue
             raise VPError("Codeforces still has an active or scheduled virtual participation. Use bt after it ends so practice cannot change that VP.")
 
 
