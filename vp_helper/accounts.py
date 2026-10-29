@@ -54,6 +54,36 @@ def refresh_api_credentials(account: dict, platform: str) -> None:
     account.update(api_credentials(account, config, platform))
 
 
+def prepare_api_account(path, config: dict, platform: str) -> None:
+    """Called under the account lock, before native-browser verification."""
+    selected = account_key(config, platform)
+    original = config.get(selected, {})
+    account = dict(original)
+    account.update(api_credentials(account, config, platform))
+    missing = [field for field in ('handle', *API_FIELDS) if not account.get(field)]
+    if missing:
+        if not sys.stdin.isatty():
+            raise VPError('Missing Codeforces API configuration. Run xcpc api cf in an interactive terminal.')
+        if not account.get('handle'):
+            try:
+                handle = input('Codeforces handle：').strip()
+            except EOFError:
+                raise VPError('输入已取消，原 API 配置未修改。') from None
+            if not handle or any(c.isspace() for c in handle):
+                raise VPError('Codeforces handle 不能为空或包含空白字符，原配置未修改。')
+            account['handle'] = handle
+            account.update(api_credentials(account, config, platform))
+        if not all(account.get(field) for field in API_FIELDS):
+            account.update(prompt_api_credentials())
+    if account != original:
+        config[selected] = account
+        for other in ('cf', 'gym'):
+            saved = config.get(other)
+            if saved and saved.get('handle', '').casefold() == account['handle'].casefold():
+                saved.update({field: account[field] for field in API_FIELDS})
+        write_json(path, config)
+
+
 def configure_api(platform: str = "cf") -> None:
     if not sys.stdin.isatty():
         raise VPError("请在交互终端运行 xcpc api cf，输入新的 API key 和 secret。")

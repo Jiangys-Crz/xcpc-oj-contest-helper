@@ -14,6 +14,45 @@ from vp_helper.storage import config_directory, read_json, write_json
 
 
 class CodeforcesAPISettingsTests(unittest.TestCase):
+    def test_native_first_use_prompts_api_before_browser_and_shares_cf_gym(self):
+        for operating_system in ('darwin','win32'):
+            for platform in ('cf','gym'):
+                write_json(self.path,{'workspace_directory':'/kept'})
+                def verified(judge,account):
+                    self.assertEqual(read_json(self.path)['gym']['api_key'],'new-key')
+                    self.assertEqual(account['handle'],'tester')
+                    account.update(cookie='synthetic',cookie_source='chrome')
+                    return True
+                with patch('sys.platform',operating_system),patch.object(cli,'refresh_browser_account',side_effect=verified), \
+                        patch('builtins.input',side_effect=['tester','new-key']), \
+                        patch.object(accounts.getpass,'getpass',return_value='new-secret'):
+                    result=cli._load_account(self.path,platform,live=True)
+                self.assertEqual(result['gym']['api_secret'],'new-secret')
+                self.assertEqual(result['workspace_directory'],'/kept')
+                self.assertEqual(accounts.account_key(result,'cf'),accounts.account_key(result,'gym'))
+
+    def test_native_browser_failure_keeps_completed_api_configuration(self):
+        for operating_system in ('darwin','win32'):
+            write_json(self.path,{})
+            with patch('sys.platform',operating_system),patch.object(cli,'refresh_browser_account',return_value=False), \
+                    patch.object(cli,'verify_stored_session',return_value=False), \
+                    patch.object(cli,'login_diagnostics',return_value=['No browser snapshot']), \
+                    patch('builtins.input',side_effect=['tester','new-key']), \
+                    patch.object(accounts.getpass,'getpass',return_value='new-secret'):
+                with self.assertRaises(VPError):
+                    cli._load_account(self.path,'cf')
+            self.assertEqual(read_json(self.path)['gym'],{'handle':'tester','api_key':'new-key','api_secret':'new-secret'})
+
+    def test_native_cancelled_setup_does_not_save_partial_credentials_or_check_browser(self):
+        write_json(self.path,{'gym':{'handle':'tester','cookie':'keep-cookie','api_key':'half-key'}})
+        before=self.path.read_bytes()
+        with patch('sys.platform','win32'),patch('builtins.input',return_value='new-key'), \
+                patch.object(accounts.getpass,'getpass',side_effect=EOFError),patch.object(cli,'refresh_browser_account') as browser:
+            with self.assertRaises(VPError):
+                cli._load_account(self.path,'gym')
+        self.assertEqual(self.path.read_bytes(),before)
+        browser.assert_not_called()
+
     def setUp(self):
         self.stack=ExitStack()
         self.addCleanup(self.stack.close)

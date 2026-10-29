@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from http.cookies import SimpleCookie
 from pathlib import Path
+import sys
 import time
 from urllib.parse import urlsplit
 
@@ -66,11 +67,24 @@ except ImportError:  # pragma: no cover - curl_cffi not installed
 class WebSession:
     def __init__(self, origin: str, account: dict, *, auto_refresh: bool = True):
         self.origin = origin.rstrip("/")
+        if auto_refresh and account.get('cookie_source') in ('chrome', 'edge') and account.get('browser_host'):
+            from .browser_sites import canonical_host
+            host = urlsplit(self.origin).hostname
+            if canonical_host(account['browser_host']) != canonical_host(host):
+                from .browser_login import refresh_browser_account
+                selected = {**account, '_browser_target': host}
+                platform = {'qoj.ac':'qoj', 'contest.ucup.ac':'qoj', CWNUOJ_HOST:'cwnuoj', NOWCODER_HOST:'nowcoder'}.get(host, 'cf')
+                if not refresh_browser_account(platform, selected):
+                    raise VPError('请在已加载 XCPC 扩展的浏览器配置中登录 ' + host + ' 后同步。')
+                selected.pop('_browser_target', None)
+                account.update(selected)
         self.account = account
         self._browser_checked = False
         self._http1_only = False
         self._auto_refresh = (auto_refresh and bool(account.get("handle"))
                               and urlsplit(self.origin).hostname in ("qoj.ac", "codeforces.com", CWNUOJ_HOST, NOWCODER_HOST))
+        if account.get('cookie_source') in ('chrome', 'edge') and urlsplit(self.origin).hostname == 'contest.ucup.ac':
+            self._auto_refresh = auto_refresh and bool(account.get('handle'))
         if _IMPERSONATE:
             # Linux retains its fixed Firefox profile. Extension snapshots use
             # the Chromium transport and the actual normal-window User-Agent.
@@ -99,9 +113,14 @@ class WebSession:
         if not self._auto_refresh:
             return False
         from .browser_login import refresh_browser_account
-        platform = {"qoj.ac": "qoj", CWNUOJ_HOST: "cwnuoj", NOWCODER_HOST: "nowcoder"}.get(urlsplit(self.origin).hostname, "gym")
-        if not refresh_browser_account(platform, self.account, force=force):
+        host = urlsplit(self.origin).hostname
+        platform = {"qoj.ac": "qoj", 'contest.ucup.ac': 'qoj', CWNUOJ_HOST: "cwnuoj", NOWCODER_HOST: "nowcoder"}.get(host, "gym")
+        selected = {**self.account, '_browser_target': host} if self.account.get('cookie_source') in ('chrome', 'edge') else self.account
+        if not refresh_browser_account(platform, selected, force=force):
             return False
+        if selected is not self.account:
+            selected.pop('_browser_target', None)
+            self.account.update(selected)
         self.session.cookies.clear()
         self._set_cookies(self.account["cookie"])
         if self.account.get('cookie_source') in ('chrome', 'edge') and self.account.get('user_agent'):
@@ -204,7 +223,9 @@ class WebSession:
             except Exception:
                 body = ""
             if "Just a moment..." in body or "cf-chl-" in body:
-                raise VPError("The platform requests browser verification; refresh the login session in the Ubuntu browser.")
+                from .portable import login_browser
+                browser = 'Ubuntu browser' if sys.platform == 'linux' else login_browser()
+                raise VPError(f"The platform requests browser verification; refresh the login session in the {browser}.")
         from .platform_clock import observe
         observe(r, sent_at)
         return r

@@ -61,7 +61,7 @@ class ExtensionLoginTests(Isolated):
         value['cookies'] += [dict(name='bad', value='excluded', domain=domain, path='/')
                              for domain in ('example.com','evil.qoj.ac','qoj.ac.evil.test')]
         value['cookies'] += [dict(name='excluded', value='excluded', domain='qoj.ac', path='/', **change)
-                             for change in ({'partitionKey':{'topLevelSite':'https://qoj.ac'}},
+                             for change in ({'partitionKey':{'topLevelSite':'https://other.example'}},
                                             {'incognito':True}, {'expirationDate':1}, {'expirationDate':float('nan')})]
         value['cookies'] += [dict(name='bad\r\nHeader', value='excluded',domain='qoj.ac',path='/'),
                              dict(name='path-cookie',value='excluded',domain='qoj.ac',path='/private')]
@@ -83,6 +83,87 @@ class ExtensionLoginTests(Isolated):
         bridge.store_snapshot(snapshot(source='edge',cookies=[dict(name='sid',value='edge-user',domain='qoj.ac',path='/')]))
         self.assertEqual({c.cookie for c in chromium_login.cookies('cwnuoj', {})}, {'sid=guest','sid=signed-in'})
         self.assertEqual({c.source for c in chromium_login.cookies('qoj', {})}, {'edge'})
+
+    def test_www_and_first_party_partitioned_logins_for_every_judge(self):
+        cases = [('cf','codeforces.com'),('gym','codeforces.com'),('qoj','qoj.ac'),
+                 ('qoj','contest.ucup.ac'),('cwnuoj','oj.cwnupaa.com'),('nowcoder','ac.nowcoder.com')]
+        for platform,host in cases:
+            with self.subTest(platform=platform,host=host):
+                site='https://'+'.'.join(host.split('.')[-2:])
+                for domain in (host,'www.'+host):
+                    bridge.store_snapshot(snapshot(cookies=[dict(name='sid',value='signed-in',domain=domain,path='/',
+                        partitionKey={'topLevelSite':site,'hasCrossSiteAncestor':False}),
+                        dict(name='sid',value='guest',domain=host,path='/'),
+                        dict(name='cross-site',value='excluded',domain=domain,path='/',
+                             partitionKey={'topLevelSite':site,'hasCrossSiteAncestor':True})]))
+                    candidates=chromium_login.cookies(platform,{})
+                    self.assertIn('sid=signed-in',{c.cookie for c in candidates})
+                    self.assertTrue(all('excluded' not in c.cookie for c in candidates))
+                    self.assertTrue(all(c.host==host for c in candidates))
+
+    def test_partial_site_read_failure_is_diagnosed_without_exposing_credentials(self):
+        bridge.store_snapshot(snapshot(cookies=[],read_errors=['codeforces.com','unrelated.example']))
+        with patch.object(chromium_login,'enabled',return_value=True):
+            message='\n'.join(login.login_diagnostics('cf',{}))
+        self.assertIn('未授权',message)
+        self.assertIn('Cookie：0',message)
+        self.assertIn(PROFILE[-8:],message)
+        self.assertNotIn('unrelated.example',message)
+
+    def test_native_www_redirect_preserves_verified_cookie_and_ucup_stays_separate(self):
+        web=Mock()
+        web.session.cookies=requests.cookies.RequestsCookieJar()
+        web.session.cookies.set('sid','www-cookie',domain='www.codeforces.com',path='/')
+        web.session.get.return_value=Mock(url='https://www.codeforces.com/',text='<div id="header"><a href="/profile/tester">tester</a></div>')
+        candidate=login.BrowserCookies(self.root,'sid=www-cookie','chrome','Synthetic Chromium','codeforces.com')
+        with patch('vp_helper.http.WebSession',return_value=web):
+            result=login._verify('cf',candidate,'tester')
+        self.assertEqual(result['cookie'],'sid=www-cookie')
+        self.assertEqual(result['browser_host'],'codeforces.com')
+        bridge.store_snapshot(snapshot(cookies=[dict(name='sid',value='ucup-only',domain='www.contest.ucup.ac',path='/')]))
+        self.assertEqual(chromium_login.cookies('qoj',{'_browser_target':'qoj.ac'}),[])
+        self.assertEqual(chromium_login.cookies('qoj',{'_browser_target':'contest.ucup.ac'})[0].cookie,'sid=ucup-only')
+
+    def test_extension_manifest_declares_every_imported_host_and_no_unrelated_site(self):
+        from vp_helper.browser_sites import HOSTS
+        manifest=storage.read_json(chromium_login.extension_source()/'manifest.json')
+        self.assertEqual(set(manifest['host_permissions']),{'https://'+host+'/*' for host in HOSTS})
+
+    def test_ucup_web_client_refreshes_only_the_target_judge_cookies(self):
+        from vp_helper.http import WebSession
+        account={'handle':'tester','cookie_source':'chrome','browser_host':'qoj.ac','cookie':'sid=qoj'}
+        def refresh(platform,selected,**kwargs):
+            self.assertEqual(platform,'qoj')
+            self.assertEqual(selected['_browser_target'],'contest.ucup.ac')
+            selected.update(cookie='sid=ucup',browser_host='contest.ucup.ac')
+            return True
+        with patch.object(login,'refresh_browser_account',side_effect=refresh):
+            web=WebSession('https://contest.ucup.ac',account)
+            self.assertTrue(web._auto_refresh)
+            self.assertTrue(web._refresh_browser())
+            self.assertNotIn('_browser_target',account)
+            self.assertEqual(account['cookie'],'sid=ucup')
+            web.session.close()
+
+    def test_submit_keeps_qoj_and_ucup_sessions_scoped_to_the_contest_url(self):
+        bridge.store_snapshot(snapshot(cookies=[dict(name='sid',value='qoj',domain='qoj.ac',path='/'),
+            dict(name='sid',value='ucup',domain='www.contest.ucup.ac',path='/')]))
+        config={'handle':'tester','cookie_source':'chrome','base_url':'https://contest.ucup.ac/contest/123'}
+        def verify(platform,candidate,expected,**kwargs):
+            return {'handle':expected,'cookie':candidate.cookie,'browser_host':candidate.host,'cookie_source':'chrome'}
+        with patch.object(chromium_login,'enabled',return_value=True),patch.object(login,'_verify',side_effect=verify):
+            login.refresh_submission_login(self.root/'contest.json',config,'qoj')
+        self.assertEqual(config['cookie'],'sid=ucup')
+        self.assertEqual(config['browser_host'],'contest.ucup.ac')
+        self.assertNotIn('_browser_target',storage.read_json(self.root/'contest.json'))
+
+    def test_www_contest_links_normalize_to_the_same_saved_contest(self):
+        from vp_helper.parsing import contest_url
+        urls=['https://codeforces.com/contest/123','https://codeforces.com/gym/100123',
+              'https://qoj.ac/contest/123','https://contest.ucup.ac/contest/123',
+              'https://oj.cwnupaa.com/contest/'+'a'*24,'https://ac.nowcoder.com/acm/contest/123']
+        for url in urls:
+            self.assertEqual(contest_url(url.replace('https://','https://www.')),contest_url(url))
 
     def test_logout_clears_snapshot_and_never_falls_back_to_cached_account(self):
         bridge.store_snapshot(snapshot())

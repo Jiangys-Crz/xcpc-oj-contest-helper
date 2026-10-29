@@ -51,6 +51,9 @@ def load_account(platform: str, *, live: bool = False) -> dict:
 
 def _load_account(path: Path, platform: str, *, live: bool = False) -> dict:
     config = read_json(path)
+    if platform in ('cf', 'gym') and sys.platform in ('darwin', 'win32'):
+        from .accounts import prepare_api_account
+        prepare_api_account(path, config, platform)
     key = account_key(config, platform)
     account = config.setdefault(key, {})
     account.pop("_login_verified", None)

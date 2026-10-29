@@ -24,26 +24,27 @@ def contest_id_url(platform: str, ident: str) -> str:
 
 def contest_url(url: str) -> tuple[str, str, str]:
     p = urlsplit(url)
+    hostname = (p.hostname or '').removeprefix('www.')
     try:
         port = p.port
     except ValueError:
         raise VPError("Invalid contest URL port.") from None
     if p.scheme not in ("http", "https") or p.username or p.password or port:
         raise VPError("Use a QOJ, Codeforces contest or Codeforces Gym URL.")
-    if p.hostname in ("qoj.ac", "contest.ucup.ac"):
+    if hostname in ("qoj.ac", "contest.ucup.ac"):
         match = re.fullmatch(r"/contest/(\d+)/?", p.path)
         platform = "qoj"
-    elif p.hostname == "codeforces.com":
+    elif hostname == "codeforces.com":
         match = re.fullmatch(r"/(?:contest|gym)/(\d+)/?", p.path)
         platform = "gym" if p.path.startswith("/gym/") else "cf"
-    elif p.hostname == CWNUOJ_HOST:
+    elif hostname == CWNUOJ_HOST:
         match = re.fullmatch(r"(?:/d/([A-Za-z0-9_.-]+))?/contest/([a-fA-F0-9]{24})/?", p.path)
         if match and match[1] not in (".", ".."):
             domain, ident = match[1], match[2].lower()
             prefix = f"/d/{domain}" if domain and domain != "system" else ""
             return "cwnuoj", ident, f"https://{CWNUOJ_HOST}{prefix}/contest/{ident}"
         match = None
-    elif p.hostname == NOWCODER_HOST:
+    elif hostname == NOWCODER_HOST:
         match = re.fullmatch(r"/acm/contest/([0-9]+)/?", p.path)
         if match and int(match[1]) > 0:
             ident = str(int(match[1]))
@@ -53,7 +54,7 @@ def contest_url(url: str) -> tuple[str, str, str]:
         match = None
     if not match:
         raise VPError("Use a QOJ, Codeforces contest/Gym, CWNUOJ or Nowcoder contest link.")
-    return platform, match[1], f"https://{p.hostname}{p.path.rstrip('/')}"
+    return platform, match[1], f"https://{hostname}{p.path.rstrip('/')}"
 
 
 def seconds(value: str) -> int:

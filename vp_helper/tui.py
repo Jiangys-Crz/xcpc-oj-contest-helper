@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import sys
 
 from rich import box
+from rich.align import Align
 from rich.cells import set_cell_size
 from rich.console import Console, Group
 from rich.table import Table
@@ -16,6 +18,11 @@ from .scoring import NON_ATTEMPT_VERDICTS, UNRESOLVED_VERDICTS
 
 PRACTICE_ACCEPTED = "white on #0000ff"
 SCORE_BOX = box.Box("    \n    \n ── \n    \n ── \n ── \n    \n    \n")
+
+
+def positioned_scoreboard(table):
+    # Center the compact table itself, rather than stretching empty problems.
+    return Align.center(table, pad=False) if sys.platform == 'win32' else table
 
 
 def clock(value: float) -> str:
@@ -105,8 +112,8 @@ class Dashboard:
         labels = self._record_table()
         labels.add_row("problem", "submission", "time", "result", style="bold black on #eeeeee")
         if not self.practice and self.contest.rules.problem_reveal_count:
-            return Group(heading, Text(" "), table, self.public_statistics(), Text(" "), labels)
-        return Group(heading, Text(" "), table, Text(" "), labels)
+            return Group(heading, Text(" "), positioned_scoreboard(table), self.public_statistics(), Text(" "), labels)
+        return Group(heading, Text(" "), positioned_scoreboard(table), Text(" "), labels)
 
     def public_statistics(self):
         visible = self.revealed or frozenset()
@@ -264,14 +271,16 @@ class LiveDashboard:
             note = ""
         labels = self._record_table()
         labels.add_row("problem", "submission", "time", "result", style="bold black on #eeeeee")
-        return Group(title, heading, table, Text(note, style="#666666"), Text(" "), labels)
+        return Group(title, heading, positioned_scoreboard(table), Text(note, style="#666666"), Text(" "), labels)
 
 
 class TerminalDashboard:
     """Fixed scoreboard with every submission in a keyboard/mouse scroll region."""
 
     def __init__(self):
-        self.console = Console(style="default", color_system="256", highlight=False)
+        # Curses draws the segments; Rich must not substitute legacy Windows boxes.
+        self.console = Console(style="default", color_system="256", highlight=False,
+                               legacy_windows=False, safe_box=False)
         self.offset = 0
         self.page_size = 1
         self.total_lines = 0

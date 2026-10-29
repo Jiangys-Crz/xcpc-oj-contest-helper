@@ -9,10 +9,7 @@ import time
 
 from .storage import state_directory, write_json
 from .chromium_login import extension_id
-
-DOMAINS = {'qoj.ac', '.qoj.ac', 'codeforces.com', '.codeforces.com',
-           'oj.cwnupaa.com', '.oj.cwnupaa.com', 'cwnupaa.com', '.cwnupaa.com',
-           'ac.nowcoder.com', '.ac.nowcoder.com', 'nowcoder.com', '.nowcoder.com'}
+from .browser_sites import DOMAINS, HOSTS, first_party
 
 
 def read_message(stream):
@@ -43,18 +40,22 @@ def store_snapshot(value):
     cookies = []
     for c in value.get('cookies', []):
         if (not isinstance(c, dict) or c.get('domain') not in DOMAINS or c.get('path') != '/'
-                or c.get('partitionKey') or c.get('incognito')
+                or not first_party(c) or c.get('incognito')
                 or not isinstance(c.get('name'), str) or not isinstance(c.get('value'), str)
                 or any(ch in c['name'] + c['value'] for ch in '\r\n;')):
             continue
         expiry = c.get('expirationDate', -1)
         if isinstance(expiry, (int, float)) and math.isfinite(expiry):
-            cookies.append({key: c[key] for key in ('name', 'value', 'domain', 'path')} | {'expires': expiry})
+            saved = {key: c[key] for key in ('name', 'value', 'domain', 'path')} | {'expires': expiry}
+            if c.get('partitionKey') is not None:
+                saved['partitionKey'] = {'topLevelSite': c['partitionKey']['topLevelSite']}
+            cookies.append(saved)
     agent = value.get('user_agent', '')
     if not isinstance(agent, str) or len(agent) > 1000 or '\n' in agent or '\r' in agent:
         raise ValueError('Invalid browser metadata')
     write_json(state_directory() / 'browser-login' / source / (profile + '.json'),
-               {'source': source, 'profile_id': profile, 'user_agent': agent, 'updated_at': time.time(), 'cookies': cookies})
+               {'source': source, 'profile_id': profile, 'user_agent': agent, 'updated_at': time.time(), 'cookies': cookies,
+                'read_errors': [host for host in value.get('read_errors', []) if host in HOSTS]})
 
 
 def main():

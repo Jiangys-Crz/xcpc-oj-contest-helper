@@ -42,6 +42,7 @@ class BrowserCookies:
     cookie: str = field(repr=False)
     source: str = 'firefox'
     user_agent: str = ''
+    host: str = ''
 
 
 def firefox_roots() -> list[Path]:
@@ -339,7 +340,7 @@ def identity_from_page(platform: str, html: str, expected: str = "") -> dict:
 
 def _verify(platform: str, candidate: BrowserCookies, expected: str, *, errors: list[str] | None = None) -> dict | None:
     from .http import WebSession
-    host = platform_host(platform)
+    host = candidate.host or platform_host(platform)
     origin = "https://" + host
     credentials = {'cookie': candidate.cookie}
     if candidate.source in ('chrome', 'edge'):
@@ -350,18 +351,27 @@ def _verify(platform: str, candidate: BrowserCookies, expected: str, *, errors: 
         sent_at = tick()
         response = web.session.get(origin + "/", params={"locale": "en"}, timeout=(5, 15))
         web.check(response, sent_at=sent_at)
-        if urlsplit(response.url).hostname != host:
+        from .browser_sites import canonical_host
+        response_host = urlsplit(response.url).hostname or ''
+        same_host = canonical_host(response_host) == canonical_host(host) if candidate.source in ('chrome', 'edge') else response_host == host
+        if not same_host:
             if errors is not None:
                 errors.append("网站验证跳转到了其他域名。")
             return None
         identity = identity_from_page(platform, response.text, expected)
         jar = getattr(web.session.cookies, "jar", web.session.cookies)
-        values = {c.name: c.value for c in jar
-                  if c.domain in cookie_hosts(host) and c.path == "/"}
+        if candidate.source in ('chrome', 'edge'):
+            from .browser_sites import group_domains
+            values = _cookie_values([(c.name, c.value, c.domain) for c in jar
+                                     if c.domain in group_domains(canonical_host(host)) and c.path == '/'], response_host)
+        else:
+            values = {c.name: c.value for c in jar if c.domain in cookie_hosts(host) and c.path == '/'}
         fields = {'cookie_source': candidate.source}
         if candidate.user_agent:
             fields['user_agent'] = candidate.user_agent
         fields['firefox_profile' if candidate.source == 'firefox' else 'browser_profile'] = str(candidate.profile)
+        if candidate.host:
+            fields['browser_host'] = candidate.host
         return {**identity, "cookie": _header(values), **fields}
     except Exception as exc:
         # Do not replace a configured session on network failure or another login.
@@ -392,7 +402,7 @@ def refresh_browser_account(platform: str, account: dict, *, force: bool = False
     if account.get("cookie_source") == "manual":
         return False
     for candidate in browser_cookies(platform, account):
-        key = (platform_host(platform), str(candidate.profile), candidate.source, candidate.user_agent, account.get("handle", ""),
+        key = (candidate.host or platform_host(platform), str(candidate.profile), candidate.source, candidate.user_agent, account.get("handle", ""),
                hashlib.sha256(candidate.cookie.encode()).digest())
         with _lock:
             cached = _cache.get(key)
@@ -408,14 +418,21 @@ def refresh_browser_account(platform: str, account: dict, *, force: bool = False
 
 
 def browser_fields(account: dict) -> dict:
-    return {k: account[k] for k in ("cookie_source", "firefox_profile", "firefox_profile_strict", 'browser_profile') if account.get(k)}
+    return {k: account[k] for k in ("cookie_source", "firefox_profile", "firefox_profile_strict", 'browser_profile', 'browser_host') if account.get(k)}
 
 
 def refresh_submission_login(path: Path, config: dict, platform: str) -> None:
     from .storage import write_json
-    before = dict(config)
-    refreshed = refresh_browser_account(platform, config)
     from .chromium_login import enabled
+    before = dict(config)
+    selected = config
+    if enabled() and config.get('cookie_source') != 'manual':
+        target = urlsplit(config.get('base_url') or config.get('vp_context', {}).get('url') or '').hostname
+        selected = {**config, '_browser_target': target or config.get('browser_host') or platform_host(platform)}
+    refreshed = refresh_browser_account(platform, selected)
+    if refreshed and selected is not config:
+        selected.pop('_browser_target', None)
+        config.update(selected)
     if enabled() and config.get('cookie_source') != 'manual' and not refreshed:
         from .models import VPError
         raise VPError('无法验证当前 Chrome / Edge 登录。请在原浏览器窗口登录并同步 XCPC 扩展后重试。')
@@ -438,7 +455,7 @@ def login_diagnostics(platform: str, account: dict, *, verified_account: dict | 
             if verified:
                 if verified_account is not None:
                     verified_account.update(verified)
-                return messages + ['已验证该站点的浏览器登录。']
+                return messages + errors + ['已验证该站点的浏览器登录。']
         return messages + errors + ['请确认已加载扩展，并在普通 Chrome / Edge 窗口登录此网站后重试。']
     profiles = firefox_profiles(account)
     if not profiles:

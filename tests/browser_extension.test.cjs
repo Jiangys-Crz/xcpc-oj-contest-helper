@@ -23,7 +23,7 @@ async function test() {
     storage:{local:{async get() {return {...values};},async set(next) {Object.assign(values,next);}}},
     runtime:{connectNative(name) {assert.equal(name,'com.xcpc.browser');return port;},
       onInstalled:event('installed'),onStartup:event('startup'),onMessage:event('message')},
-    cookies:{async getAll({url}) {assert.ok(url.startsWith('https://'));return cookies;},onChanged:event('changed')},
+    cookies:{async getAll({domain}) {assert.ok(domain.includes('.'));return cookies;},onChanged:event('changed')},
     alarms:{onAlarm:event('alarm'),create(name,options) {assert.equal(name,'xcpc-login');assert.equal(options.periodInMinutes,.5);}},
   };
   const context = {chrome,navigator:{userAgent:'Synthetic Edg/150'},crypto:{randomUUID:()=> '01234567-89ab-cdef-0123-456789abcdef'},
@@ -41,6 +41,22 @@ async function test() {
   await listeners.ack({type:'stored'});
   assert.equal(values.connected,true);
   assert.ok(!JSON.stringify(values).includes('synthetic-only')); // Cookies never enter extension storage.
+
+  cookies=[{domain:'www.codeforces.com',name:'sid',value:'cf-www',path:'/'},
+    {domain:'codeforces.com',name:'partition',value:'first-party',path:'/',
+      partitionKey:{topLevelSite:'https://codeforces.com',hasCrossSiteAncestor:false}},
+    {domain:'codeforces.com',name:'cross-site',value:'exclude',path:'/',
+      partitionKey:{topLevelSite:'https://codeforces.com',hasCrossSiteAncestor:true}}];
+  listeners.changed({cookie:{domain:'www.codeforces.com'}});
+  await flush();
+  assert.equal(messages.at(-1).cookies.length,2);
+  await listeners.ack({type:'stored'});
+  assert.equal(values.counts.Codeforces,2);
+  chrome.cookies.getAll=async({domain})=>{if(domain==='codeforces.com')throw Error('permission denied');return cookies;};
+  listeners.changed({cookie:{domain:'qoj.ac'}});
+  await flush();
+  assert.ok(messages.at(-1).read_errors.includes('codeforces.com'));
+  assert.equal(messages.at(-1).cookies.length,2); // A failed site read must not drop successful site reads.
 
   cookies = [];
   listeners.changed({cookie:{domain:'qoj.ac'}});

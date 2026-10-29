@@ -5,16 +5,39 @@ import unittest
 from unittest.mock import patch
 
 from rich.console import Console
+from rich.cells import cell_len
 
 from vp_helper.attempt_history import _records
 from vp_helper.models import Contest, Rules, Submission
 from vp_helper.practice import PracticeDashboard
 from vp_helper.scoring import score_submissions
 from vp_helper.submission_results import judging_url
-from vp_helper.tui import Dashboard, LiveDashboard
+from vp_helper.tui import Dashboard, LiveDashboard, TerminalDashboard
 
 
 class SubmissionDisplayTests(unittest.TestCase):
+    def test_windows_score_tables_center_without_expanding_empty_problem_cells(self):
+        contest=self.contest()
+        records=[Submission('1','me','A',10,'WRONG-ANSWER'),Submission('2','me','A',20,'PENDING')]
+        for width in (100,140,160):
+            for submissions in ([],records):
+                me=score_submissions(submissions,list(contest.problems),contest.rules,120,name='中文 team')
+                views=[Dashboard(contest,120,me,'1','',None,[],practice=True),
+                       LiveDashboard(contest,120,{'phase':'CODING'},[],handle='中文 team'),
+                       PracticeDashboard(contest,120,[],handle='中文 team')]
+                with patch('sys.platform','win32'):
+                    renderer=TerminalDashboard()
+                    self.assertFalse(renderer.console.legacy_windows)
+                    for view in views:
+                        lines=renderer._lines(view.fixed(width),width)
+                        text=[''.join(s.text for s in line) for line in lines]
+                        separator=next(line for line in text if line.strip().startswith('─'))
+                        left=cell_len(separator)-cell_len(separator.lstrip())
+                        right=width-cell_len(separator.rstrip())
+                        self.assertLessEqual(abs(left-right),1,(width,separator,left,right))
+                        header=next(line for line in text if 'rank' in line and 'team' in line)
+                        self.assertLess(header.index('D')-header.index('C'),5)
+
     def render(self, view, width=160):
         out = io.StringIO()
         Console(file=out, width=width, color_system=None).print(view)

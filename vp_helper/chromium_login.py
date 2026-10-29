@@ -8,6 +8,7 @@ import shutil
 import sys
 
 from .storage import config_directory, read_json, state_directory, write_json
+from .browser_sites import BASES, PARENTS, canonical_host, group_domains, first_party
 
 HOST = 'com.xcpc.browser'
 NAMES = {'chrome': 'Google Chrome', 'edge': 'Microsoft Edge'}
@@ -76,9 +77,8 @@ def register_bridge():
 
 
 def cookies(platform, account, *, errors=None):
-    from .browser_login import BrowserCookies, _cookie_values, _header, cookie_hosts, platform_host
+    from .browser_login import BrowserCookies, _cookie_values, _header
     import time
-    host = platform_host(platform)
     candidates = []
     root = state_directory() / 'browser-login'
     paths = [p for kind in NAMES for p in (root / kind).glob('*.json')]
@@ -87,19 +87,31 @@ def cookies(platform, account, *, errors=None):
         kind = snapshot.get('source')
         if kind not in NAMES:
             continue
-        rows = [(c['name'], c['value'], c['domain']) for c in snapshot.get('cookies', [])
-                if c.get('domain') in cookie_hosts(host) and c.get('path') == '/'
-                and (c.get('expires', -1) <= 0 or c['expires'] > time.time())]
-        alternatives = [_cookie_values(rows, host),
-                        {name: value for name, value, domain in sorted(rows, key=lambda row: row[2] in (host, '.' + host), reverse=True)}]
         seen = set()
-        for values in alternatives:
-            header = _header(values)
-            if header and header not in seen:
-                candidates.append(BrowserCookies(path, header, kind, snapshot.get('user_agent', '')))
-                seen.add(header)
+        available = 0
+        for base in BASES[platform]:
+            target = account.get('_browser_target')
+            if target and canonical_host(target) != base:
+                continue
+            items = [c for c in snapshot.get('cookies', [])
+                     if c.get('domain') in group_domains(base) and c.get('path') == '/' and first_party(c)
+                     and (c.get('expires', -1) <= 0 or c['expires'] > time.time())]
+            available += len(items)
+            for partitioned in (False, True):
+                rows = [(c['name'], c['value'], c['domain']) for c in sorted(items, key=lambda c: bool(c.get('partitionKey')))
+                        if not c.get('partitionKey') or partitioned]
+                for host in (base, 'www.' + base, PARENTS.get(base, base), 'www.' + PARENTS.get(base, base)):
+                    header = _header(_cookie_values(rows, host))
+                    if header and (base, header) not in seen:
+                        candidates.append(BrowserCookies(path, header, kind, snapshot.get('user_agent', ''), base))
+                        seen.add((base, header))
+        if errors is not None:
+            errors.append(f"收到 {NAMES[kind]} 配置 {snapshot.get('profile_id', '')[-8:]} 的同步；该站可用 Cookie：{available} 项。")
+            if any(host in group_domains(base) or '.' + host in group_domains(base)
+                   for base in BASES[platform] for host in snapshot.get('read_errors', [])):
+                errors.append('此站点 Cookie 读取失败或未授权。请在扩展详情中允许访问此比赛网站，再同步。')
     if not candidates and errors is not None:
-        errors.append('未收到此站点登录信息。请加载 XCPC 扩展并在普通窗口登录；可点击扩展“同步登录状态”。')
+        errors.append('未收到此站点登录信息。请确认登录页与 XCPC 扩展处于同一浏览器用户配置，并在扩展详情允许访问此站点后同步。')
     return candidates
 
 
