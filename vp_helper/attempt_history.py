@@ -34,9 +34,8 @@ def refresh(path: Path, state: dict) -> str:
             api = live.live_adapter(state["url"], config) if state.get("mode") == "live" else cli.adapter(state["url"], config)
         api.start_time = state["start_time"]
         revision = reserve_submission_sync(path)
-        if contest.platform in ('cf', 'gym') and hasattr(api, 'seed_submissions'):
-            records = state.get('submissions', [])
-            api.seed_submissions(records if state.get('mode') in ('live', 'practice') else [Submission(**e) for e in records])
+        from .pending_results import seed_pending
+        seed_pending(api, contest.platform, state.get('submissions', []))
         incoming = api.submissions(contest, state["start_time"]) if state.get("mode") == "practice" else api.submissions(contest)
         incoming = incoming if state.get("mode") in ("live", "practice") else [asdict(s) for s in incoming]
         apply_submission_sync(path, state, incoming, revision)

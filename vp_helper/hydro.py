@@ -16,6 +16,7 @@ from .platform_clock import platform_now
 from .models import Contest, Rules, VPError
 from .parsing import CWNUOJ_HOST, contest_url, timestamp
 from .receipts import valid_submission_id
+from .pending_results import PendingResults
 
 ORIGIN = "https://" + CWNUOJ_HOST
 SCORING = {"acm": "ICPC", "oi": "OI", "ioi": "IOI", "codeforces": "CF"}
@@ -69,6 +70,9 @@ class HydroLive:
         self.uid = account.get("uid")
         self._identified = False
         self._dynamic_records = None
+        self.pending_results = PendingResults()
+        self.submissions_complete = False
+        self.submission_message = ''
         self.web = WebSession(ORIGIN, account)
 
     def identity(self) -> dict:
@@ -85,11 +89,13 @@ class HydroLive:
         self._identified = True
         return identity
 
-    def get_json(self, url: str, **params) -> dict:
+    def get_json(self, url: str, *, timeout=(10, 40), **params) -> dict:
         if urlsplit(url).scheme != "https" or urlsplit(url).netloc != CWNUOJ_HOST:
             raise VPError("Refusing an unexpected CWNUOJ API destination.")
         for attempt in range(2):
-            response = self.web.get(url, params=params, headers={"Accept": "application/json"})
+            response = self.web.get(url, params={**params, '_': time.time_ns()},
+                                    headers={"Accept": "application/json", "Cache-Control": "no-cache"},
+                                    timeout=timeout, retry='record' not in urlsplit(url).path.split('/'))
             if urlsplit(response.url).netloc != CWNUOJ_HOST:
                 raise VPError("CWNUOJ redirected to another site.")
             try:
@@ -234,12 +240,40 @@ class HydroLive:
         return snapshot
 
     def submissions(self, contest: Contest) -> list[dict]:
+        self.submissions_complete = True
+        self.submission_message = ''
         if contest.extra.get("practice"):
-            return self._submissions(contest, correction=True)
-        values = {record["id"]: record for record in self._submissions(contest)}
-        if contest.extra.get("phase") == "FINISHED":
-            values.update({record["id"]: record for record in self._submissions(contest, correction=True)})
-        return list(values.values())
+            records = self._submissions(contest, correction=True)
+        else:
+            values = {record["id"]: record for record in self._submissions(contest)}
+            if contest.extra.get("phase") == "FINISHED":
+                try:
+                    values.update({record["id"]: record for record in self._submissions(contest, correction=True)})
+                except VPError as exc:
+                    if not values:
+                        raise
+                    self.submissions_complete = False
+                    self.submission_message += (' · ' if self.submission_message else '') + 'Practice records will be retried: ' + str(exc)
+            records = list(values.values())
+        return self.pending_results.update(self, records, lambda event: self.pending_detail(contest, event))
+
+    def seed_submissions(self, records) -> None:
+        self.pending_results.seed(records)
+
+    seed_pending_submissions = seed_submissions
+
+    def pending_detail(self, contest: Contest, event: dict) -> dict | None:
+        sid = str(event['id'])
+        if not valid_submission_id(sid, 'cwnuoj'):
+            raise VPError('CWNUOJ returned an invalid pending submission ID.')
+        record = self.get_json(ORIGIN + self.prefix + '/record/' + sid, timeout=(5, 8)).get('rdoc', {})
+        if (record.get('_id') != sid or record.get('uid') != self.uid
+                or str(record.get('pid')) != contest.problems.get(event['problem'])
+                or record.get('domainId', self.domain) != self.domain
+                or record.get('contest') not in (None, '', self.id)):
+            raise VPError('CWNUOJ pending record does not match this account, contest and problem.')
+        value = VERDICTS.get(record.get('status'))
+        return {'verdict': value, 'points': record.get('score')} if value is not None else None
 
     def _submissions(self, contest: Contest, *, correction: bool = False) -> list[dict]:
         if not self._identified:
@@ -255,7 +289,14 @@ class HydroLive:
             params = {"page": page} if correction else {"tid": self.id, "page": page}
             if dynamic is not True:
                 params["uidOrName"] = str(self.uid)
-            data = self.get_json(ORIGIN + self.prefix + "/record", **params)
+            try:
+                data = self.get_json(ORIGIN + self.prefix + "/record", **params)
+            except VPError as exc:
+                if not result:
+                    raise
+                self.submissions_complete = False
+                self.submission_message += (' · ' if self.submission_message else '') + 'Recent submissions synced; older history will be retried: ' + str(exc)
+                break
             if dynamic is None and data.get("ratingDynamicRecords"):
                 dynamic = True
                 if not correction:

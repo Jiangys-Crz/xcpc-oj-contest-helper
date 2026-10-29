@@ -595,8 +595,8 @@ def monitor(path: Path) -> None:
                     next_reference = now + 30
                 if future is None and now >= next_poll:
                     poll_revision = reserve_submission_sync(path)
-                    if contest.platform in ('cf', 'gym') and hasattr(api, 'seed_submissions'):
-                        api.seed_submissions(list(submissions.values()))
+                    from .pending_results import seed_pending
+                    seed_pending(api, contest.platform, list(submissions.values()))
                     future = network.submit(poll, api, contest, elapsed)
                 if reference_future is None and now >= next_reference:
                     reference_future = network.submit(poll, reference_api, contest, scoring_elapsed, True)

@@ -236,8 +236,8 @@ def monitor_live(path: Path) -> None:
                 if submission_future is None and now >= next_submissions and platform_now(contest.url) >= contest.original_start:
                     from .sessions import reserve_submission_sync
                     poll_revision = reserve_submission_sync(path)
-                    if hasattr(api, 'seed_submissions'):
-                        api.seed_submissions(list(events.values()))
+                    from .pending_results import seed_pending
+                    seed_pending(api, contest.platform, list(events.values()))
                     submission_start = contest.original_start
                     submission_future = network.submit(fetch, api, contest.to_dict())
                 if changed:

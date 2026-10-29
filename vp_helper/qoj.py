@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 from collections import Counter
 from datetime import datetime
 import re
@@ -12,6 +12,7 @@ import requests
 
 from .http import WebSession, form_values
 from .platform_clock import platform_now
+from .pending_results import PendingResults
 from .models import Cell, Contest, Reference, Rules, Submission, TeamScore, VPError, StartRejected
 from .originals import OriginalReplay, cache_archive_submissions, classify, eligibility_lookup, identity, load_archive_submissions, load_metadata, lookup_team
 from .parsing import ccpc_reveal_count, js_value, medals_from_html, seconds, timestamp
@@ -33,13 +34,15 @@ class QOJ:
         self._verdict_cache = {}
         self._detail_retry = {}
         self.submission_message = ""
+        self.pending_results = PendingResults()
         self._replay = None
         self._replay_error = ""
         self._next_replay_attempt = 0.0
         self._public_web = None
 
-    def _page(self, suffix: str = "", **params) -> BeautifulSoup:
-        return self.web.soup(self.url + suffix, params={"locale": "en", **params})
+    def _page(self, suffix: str = "", *, fresh: bool = False, **params) -> BeautifulSoup:
+        options = {'headers': {'Cache-Control': 'no-cache'}, 'retry': False} if fresh else {}
+        return self.web.soup(self.url + suffix, params={"locale": "en", **params}, **options)
 
     def contest_name(self, soup=None, listing=None) -> str:
         soup = soup if soup is not None else self._page()
@@ -341,10 +344,20 @@ class QOJ:
             raise VPError("The native QOJ VP start has not been verified.")
         result = {}
         unresolved = []
+        warnings = []
+        detail_reads = 0
+        self.submissions_complete = False
+        self.submission_message = ''
         inverse = {str(pid): label for label, pid in contest.problems.items()}
         page = 1
         while True:
-            soup = self._page("/submissions", submitter=self.handle, page=page)
+            try:
+                soup = self._page('/submissions', fresh=True, submitter=self.handle, page=page)
+            except VPError as exc:
+                if not result:
+                    raise
+                warnings.append('Recent submissions synced; older history will be retried: ' + str(exc))
+                break
             found = 0
             before = False
             for row in soup.select("tr"):
@@ -352,11 +365,18 @@ class QOJ:
                 id_link = row.select_one('a[href^="/submission/"]')
                 user = row.select_one('.uoj-username, a[href*="/user/profile/"]')
                 problem = row.select_one(f'a[href*="/contest/{self.id}/problem/"]')
+                global_problem = problem is None
+                if global_problem:
+                    problem = next((a for a in row.select('a[href]')
+                                    if re.fullmatch(r'/problem/[0-9]+/?', urlsplit(a['href']).path)
+                                    and urlsplit(a['href']).path.rstrip('/').rsplit('/', 1)[-1] in inverse), None)
                 if not id_link or not user or not problem:
                     continue
                 user_id = urlsplit(user["href"]).path.rsplit("/", 1)[-1] if user.get("href") else user.get_text(strip=True)
                 if user_id != self.handle:
                     continue
+                practice = global_problem and not any(urlsplit(a['href']).path == f'/contest/{self.id}'
+                                                      for a in row.select('sup a[href]'))
                 found += 1
                 date_node = row.select_one("time[datetime]")
                 dates = re.findall(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", row.get_text(" ", strip=True))
@@ -398,14 +418,18 @@ class QOJ:
                 if node is None:
                     raise VPError("QOJ submission result column is missing.")
                 status = node.get_text(" ", strip=True)
+                score = float(status) if re.fullmatch(r"\d+(?:\.\d+)?", status) else None
                 judging = bool(row.select_one('[id^="status_details_"]') or
                                re.search(r"update_judgement_status_details\s*\(", str(row)))
-                if judging:
-                    result[sid] = Submission(sid, "me", label, at, "PENDING")
+                try:
+                    named = verdict(status) if status else 'PENDING'
+                except VPError:
+                    named = 'UNAVAILABLE'
+                if judging and score is None and named in ('PENDING', 'UNAVAILABLE'):
+                    result[sid] = Submission(sid, "me", label, at, "PENDING", practice=practice)
                     self._verdict_cache.pop(sid, None)
                     self._detail_retry.pop(sid, None)
                     continue
-                score = float(status) if re.fullmatch(r"\d+(?:\.\d+)?", status) else None
                 if score is not None and score < 100:
                     # QOJ numeric zero alone does not distinguish WA/RE/MLE/CE.
                     cached = self._verdict_cache.get(sid)
@@ -416,25 +440,29 @@ class QOJ:
                         retry_at, delay = self._detail_retry.get(sid, (0.0, 0.0))
                         if now < retry_at:
                             parsed = "UNAVAILABLE"
+                        elif detail_reads >= 2:
+                            parsed = cached[1] if cached and cached[0] in (None, score) else 'UNAVAILABLE'
                         else:
+                            detail_reads += 1
                             try:
                                 detail = self.web.soup(self.origin + f"/submission/{sid}",
-                                                       params={"locale": "en"}, retry=False)
+                                                       params={"locale": "en"}, headers={'Cache-Control': 'no-cache'},
+                                                       timeout=(5, 8), retry=False)
                                 parsed = self.detail_verdict(detail, score)
                             except VPError:
                                 # A zero score is final, but can mean WA, CE or
                                 # another failure. Do not invent a scored WA or
                                 # keep an obsolete submission receipt as pending.
                                 parsed = "UNAVAILABLE"
-                                delay = min(120.0, max(15.0, delay * 2))
+                                delay = min(30.0, max(2.0, delay * 2))
                                 self._detail_retry[sid] = (time.monotonic() + delay, delay)
                             else:
                                 self._detail_retry.pop(sid, None)
                                 if parsed != "PENDING":
-                                    self._verdict_cache[sid] = (score, parsed, time.monotonic() + 300 + int(sid) % 300)
+                                    self._verdict_cache[sid] = (score, parsed, time.monotonic() + 10 + int(sid) % 3)
                         if parsed == "UNAVAILABLE":
                             unresolved.append(sid)
-                            result[sid] = Submission(sid, "me", label, at, parsed)
+                            result[sid] = Submission(sid, "me", label, at, parsed, practice=practice)
                             continue
                         status = parsed
                 try:
@@ -442,15 +470,55 @@ class QOJ:
                 except VPError:
                     parsed = 'UNAVAILABLE'
                     unresolved.append(sid)
-                result[sid] = Submission(sid, "me", label, at, parsed)
+                result[sid] = Submission(sid, "me", label, at, parsed, practice=practice)
             pages = [int(m[1]) for a in soup.select("a[href]") if (m := re.search(r"[?&]page=(\d+)", a["href"]))]
             if before or not found or page >= max(pages, default=page):
                 self.submissions_complete = True
                 break
             page += 1
-        self.submission_message = ("Result unavailable for " + ", ".join("#" + sid for sid in unresolved)
-                                   + " · retrying details; other submissions are synced" if unresolved else "")
-        return list(result.values())
+        if unresolved:
+            warnings.append("Result unavailable for " + ", ".join("#" + sid for sid in unresolved)
+                            + " · retrying details; other submissions are synced")
+        self.submission_message = ' · '.join(warnings)
+        events = self.pending_results.update(self, [asdict(s) for s in result.values()], lambda event: self.pending_detail(contest, event))
+        return [Submission(**event) for event in events]
+
+    def seed_pending_submissions(self, records) -> None:
+        self.pending_results.seed(records)
+
+    def pending_detail(self, contest: Contest, event: dict) -> dict | None:
+        sid = str(event['id'])
+        if not re.fullmatch(r'[0-9]+', sid):
+            raise VPError('QOJ returned an invalid pending submission ID.')
+        url = self.origin + '/submission/' + sid
+        response = self.web.get(url, params={'locale': 'en'}, headers={'Cache-Control': 'no-cache'}, timeout=(5, 8), retry=False)
+        if urlsplit(response.url).netloc != urlsplit(self.origin).netloc or urlsplit(response.url).path != '/submission/' + sid:
+            raise VPError('QOJ redirected the pending submission request.')
+        detail = BeautifulSoup(response.text, 'html.parser')
+        pid = contest.problems[event['problem']]
+        for row in detail.select('table tr'):
+            links = {urlsplit(a['href']).path.rstrip('/') for a in row.select('a[href]')}
+            if ('/user/profile/' + self.handle not in links
+                    or not links.intersection({f'/contest/{self.id}/problem/{pid}', '/problem/' + pid})):
+                continue
+            table = row.find_parent('table')
+            headers = [h.get_text(' ', strip=True).lower() for h in table.select('tr th')]
+            cells = row.select('td')
+            column = next((i for i, h in enumerate(headers) if h in ('result', 'score', 'status')), None)
+            node = cells[column] if column is not None and column < len(cells) else row.select_one('.uoj-score')
+            if node is None:
+                continue
+            text = node.get_text(' ', strip=True)
+            score = float(text) if re.fullmatch(r'\d+(?:\.\d+)?', text) else None
+            if score == 100:
+                return {'verdict': 'CORRECT'}
+            if score is not None:
+                return {'verdict': self.detail_verdict(detail, score)}
+            try:
+                return {'verdict': verdict(text)}
+            except VPError:
+                continue
+        raise VPError('QOJ did not expose a matching pending record summary; retrying.')
 
     @staticmethod
     def detail_verdict(detail: BeautifulSoup, score: float) -> str:
@@ -481,7 +549,7 @@ class QOJ:
     def seed_submissions(self, submissions: list[Submission]) -> None:
         for item in submissions:
             if item.verdict not in ("PENDING", "CORRECT", "TOO-LATE", "UNAVAILABLE"):
-                self._verdict_cache[item.id] = (None, item.verdict, time.monotonic() + 300 + int(item.id) % 300)
+                self._verdict_cache[item.id] = (None, item.verdict, time.monotonic() + 10 + int(item.id) % 3)
 
     @staticmethod
     def reference_from_html(html: str, contest: Contest, elapsed: float, *, released: bool = False) -> Reference:

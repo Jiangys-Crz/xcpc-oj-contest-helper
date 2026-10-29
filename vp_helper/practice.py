@@ -80,6 +80,10 @@ class Practice:
         if hasattr(self.api, 'seed_submissions'):
             self.api.seed_submissions([Submission(**e) for e in records] if self.platform == 'qoj' else records)
 
+    def seed_pending_submissions(self, records) -> None:
+        from .pending_results import seed_pending
+        seed_pending(self.api, self.platform, records)
+
     def submissions(self, contest: Contest, started: float) -> list[dict]:
         self.api.start_time = started
         values = self.api.submissions(contest)
@@ -216,8 +220,8 @@ def monitor(path: Path) -> None:
                     next_poll = time.monotonic() + (2.1 if pending else 5)
                 if future is None and time.monotonic() >= next_poll:
                     poll_revision = reserve_submission_sync(path)
-                    if contest.platform in ('cf', 'gym') and hasattr(api, 'seed_submissions'):
-                        api.seed_submissions(state.get('submissions', []))
+                    from .pending_results import seed_pending
+                    seed_pending(api, contest.platform, state.get('submissions', []))
                     future = pool.submit(api.submissions, contest, state["start_time"])
                 records = submission_records(merge_records(path, state, []), "FINISHED")
                 view.update(PracticeDashboard(contest, platform_now(state)-state["start_time"], records, message,

@@ -14,6 +14,7 @@ from .platform_clock import platform_now
 from .models import Contest, Rules, VPError
 from .parsing import NOWCODER_HOST, contest_url, js_value
 from .scoring import verdict as parse_verdict
+from .pending_results import PendingResults
 
 ORIGIN = "https://" + NOWCODER_HOST
 INFO = "/acm/contest/contest-info"
@@ -32,6 +33,18 @@ VERDICTS = {"答案正确": "CORRECT", "已通过": "CORRECT", "通过": "CORREC
             "评测中": "PENDING", "正在编译": "PENDING", "编译中": "PENDING", "运行中": "PENDING",
             "正在运行": "PENDING", "排队中": "PENDING", "提交中": "PENDING", "已提交": "PENDING",
             "未判定": "PENDING", "结果隐藏": "HIDDEN", "系统错误": "SYSTEM-ERROR", "内部错误": "SYSTEM-ERROR"}
+
+
+def judging_verdict(value) -> str:
+    value = value.strip() if isinstance(value, str) else value
+    if value in (None, '', '--', '-'):
+        return 'HIDDEN'
+    if isinstance(value, str) and value in VERDICTS:
+        return VERDICTS[value]
+    try:
+        return parse_verdict(value)
+    except (VPError, AttributeError):
+        return 'UNAVAILABLE'
 
 
 def identity_from_html(html: str) -> dict:
@@ -76,6 +89,10 @@ class NowcoderLive:
         self.uid = account.get("uid")
         self.web = WebSession(ORIGIN, account)
         self._identified = False
+        self.pending_results = PendingResults()
+        self._status_tags = {}
+        self.submissions_complete = False
+        self.submission_message = ''
 
     def identity(self) -> dict:
         for attempt in range(2):
@@ -257,14 +274,58 @@ class NowcoderLive:
                 snapshot["stats"][name] = {label: stats_source[pid][field] for label, pid in contest.problems.items()}
         return snapshot
 
+    def seed_submissions(self, records) -> None:
+        self.pending_results.seed(records)
+
+    seed_pending_submissions = seed_submissions
+
+    def pending_detail(self, contest: Contest, event: dict) -> dict | None:
+        label = event['problem']
+        if label not in self._status_tags:
+            response = self.web.get(self.url + '/' + label, headers={'Cache-Control': 'no-cache'}, timeout=(5, 8), retry=False)
+            if (urlsplit(response.url).netloc != NOWCODER_HOST
+                    or urlsplit(response.url).path != urlsplit(self.url).path + '/' + label
+                    or identity_from_html(response.text)['uid'] != self.uid):
+                raise VPError('Nowcoder pending problem page does not match this account.')
+            fields = problem_config(response.text)
+            if (fields.get('contestId') != self.id or fields.get('problemId') != contest.problems[label]
+                    or any(not re.fullmatch(r'[0-9]+', fields.get(key, '')) for key in ('tagId', 'subTagId'))):
+                raise VPError('Nowcoder pending problem configuration does not match this contest.')
+            self._status_tags[label] = {key: fields[key] for key in ('tagId', 'subTagId')}
+        sid = str(event['id'])
+        if not re.fullmatch(r'[0-9]+', sid):
+            raise VPError('Nowcoder returned an invalid pending submission ID.')
+        response = self.web.get(ORIGIN + '/nccommon/status',
+                                params={'submissionId': sid, **self._status_tags[label], '_': time.time_ns()},
+                                headers={'Accept': 'application/json', 'Cache-Control': 'no-cache'}, timeout=(5, 8), retry=False)
+        if urlsplit(response.url).netloc != NOWCODER_HOST or urlsplit(response.url).path != '/nccommon/status':
+            raise VPError('Nowcoder redirected the pending status request.')
+        try:
+            data = response.json()
+        except ValueError:
+            raise VPError('Nowcoder did not return a pending status object.') from None
+        if not isinstance(data, dict) or data.get('code') != 0 or str(data.get('id')) != sid:
+            raise VPError('Nowcoder pending status does not match the requested submission.')
+        value = judging_verdict(data.get('judgeReplyDesc'))
+        return {'verdict': value} if value not in ('HIDDEN', 'UNAVAILABLE') else None
+
     def submissions(self, contest: Contest) -> list[dict]:
         if not self._identified:
             self.identity()
         if self.uid != contest.extra.get("uid"):
             raise VPError("The Nowcoder user ID changed. Restore this contest's account.")
         result, page, seen = {}, 1, set()
+        repeated = False
+        self.submissions_complete = False
+        self.submission_message = ''
         while True:
-            data = self.get_json(STATUS, id=self.id, page=page, pageSize=20, onlyMyStatusFilter="true")
+            try:
+                data = self.get_json(STATUS, id=self.id, page=page, pageSize=20, onlyMyStatusFilter="true")
+            except VPError as exc:
+                if not result:
+                    raise
+                self.submission_message = 'Recent submissions synced; older history will be retried: ' + str(exc)
+                break
             basic = data.get("basicInfo", {})
             self.check_own_filter(basic)
             if str(basic.get("contestId")) != self.id or basic.get("pageCurrent") != page:
@@ -274,8 +335,11 @@ class NowcoderLive:
                 if raw.get("userId") != self.uid or raw.get("isTeam"):
                     continue
                 sid = str(raw.get("submissionId", ""))
-                if not re.fullmatch(r"[0-9]+", sid) or sid in seen:
-                    raise VPError("Nowcoder repeated or omitted a valid submission ID.")
+                if not re.fullmatch(r"[0-9]+", sid):
+                    raise VPError("Nowcoder omitted a valid submission ID.")
+                if sid in seen:
+                    repeated = True
+                    continue
                 seen.add(sid)
                 label = next((label for label, pid in contest.problems.items() if pid == str(raw.get("problemId"))), None)
                 if label is None:
@@ -283,18 +347,7 @@ class NowcoderLive:
                 submitted_at = raw["submitTime"] / 1000
                 if submitted_at < contest.original_start:
                     continue
-                value = raw.get("statusMessage")
-                if isinstance(value, str):
-                    value = value.strip()
-                verdict = VERDICTS.get(value)
-                if verdict is None:
-                    if value in (None, '', '--', '-'):
-                        verdict = 'HIDDEN'
-                    else:
-                        try:
-                            verdict = parse_verdict(value)
-                        except (VPError, AttributeError):
-                            verdict = 'UNAVAILABLE'
+                verdict = judging_verdict(raw.get('statusMessage'))
                 if (contest.extra["scoring"] != "ICPC" and verdict == "WRONG-ANSWER"
                         and type(raw.get("score")) in (int, float) and type(raw.get("fullScore")) in (int, float)
                         and 0 < raw["score"] < raw["fullScore"]):
@@ -302,13 +355,17 @@ class NowcoderLive:
                 result[sid] = {"id": sid, "team": "me", "problem": label, "time": submitted_at - contest.original_start,
                                "verdict": verdict, "points": raw.get("score"), "practice": submitted_at >= contest.extra["end_time"]}
             if page >= basic.get("pageCount", 0):
+                self.submissions_complete = True
                 break
             if not records or page > 10000:
                 raise VPError("Nowcoder ended the submission list before its declared last page.")
             page += 1
-        if basic.get("statusCount") is not None and len(seen) != basic["statusCount"]:
-            raise VPError("Nowcoder did not return a complete own-submission history.")
-        return list(result.values())
+        if repeated or basic.get("statusCount") is not None and len(seen) != basic["statusCount"]:
+            self.submissions_complete = False
+            if not result:
+                raise VPError("Nowcoder did not return a complete own-submission history.")
+            self.submission_message += (' · ' if self.submission_message else '') + 'Submission history changed while paging; recent results synced, retrying history.'
+        return self.pending_results.update(self, list(result.values()), lambda event: self.pending_detail(contest, event))
 
     def save_statements(self, contest: Contest, directory) -> None:
         for label in contest.problems:
