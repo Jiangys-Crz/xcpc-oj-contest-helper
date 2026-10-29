@@ -15,6 +15,7 @@ from .models import Contest, VPError
 from .receipts import record_receipt, valid_submission_id
 from .storage import read_json, state_directory
 from .submit_context import submission_configuration
+from .submission_confirmation import confirm_submission
 
 
 def language_id(options: dict, source: Path, requested: str | None) -> str:
@@ -107,10 +108,12 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     else:
         payload["tid"] = api.id
     payload.pop("pretest", None)
+    submit_url = url + ("?" + urlencode(query) if query else "")
+    if not confirm_submission(source, config, label, str(options[payload['lang']]), submit_url, config_path):
+        return None
     submitted_at = time.time()
     if submitted_at < contest.original_start:
         raise VPError("The CWNUOJ contest has not started. No code was sent.")
-    submit_url = url + ("?" + urlencode(query) if query else "")
     try:
         response = api.web.session.post(submit_url, data=payload,
                                         headers={"Accept": "application/json", "Origin": ORIGIN,

@@ -117,6 +117,12 @@ class HydroLive:
                 data = self.get_json(self.url)
         return data
 
+    def contest_name(self) -> str:
+        data = self.details().get('tdoc', {})
+        if str(data.get('docId', data.get('_id', ''))) != self.id or data.get('domainId', 'system') != self.domain:
+            raise VPError('CWNUOJ 返回了其他比赛的信息，原目录保留。')
+        return data.get('title', '')
+
     def apply_metadata(self, contest: Contest, data: dict, *, require_registration: bool = True) -> None:
         tdoc, status = data.get("tdoc", {}), data.get("tsdoc") or {}
         if contest.extra.get("uid") is not None and contest.extra["uid"] != self.uid:

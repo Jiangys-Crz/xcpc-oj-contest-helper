@@ -490,10 +490,7 @@
 -
 --- upstream/cf_submit.py
 +++ installed/cf_submit.py
-@@ -3,11 +3,21 @@
- import json
- import re
- import requests
+@@ -5,0 +6,10 @@
 +
 +# cf_login.make_session may hand RoboBrowser a curl_cffi session instead of a
 +# requests one, so the session's own exception type must be caught too.
@@ -504,19 +501,10 @@
 +
 +_SESSION_ERRORS = (requests.RequestException, _CurlCffiError)
 +
- import colours
- 
- """ submissions """
- def get_submission_data(handle):
+@@ -10 +20 @@
 -    req = requests.get("http://codeforces.com/api/user.status?handle={}&from=1&count=1".format(handle))
 +    req = requests.get("https://codeforces.com/api/user.status?handle={}&from=1&count=1".format(handle))
-     content = req.content.decode()
-     js = json.loads(content)
-     if "status" not in js or js["status"] != "OK":
-@@ -115,6 +125,15 @@
-     else:
-         print("Unknown Language")
-         return False
+@@ -117,0 +128,9 @@
 +    field = submission["programTypeId"]
 +    available = {str(value): str(label) for value, label in zip(field.options, field.labels)}
 +    preferred = ("GNU G++20", "GNU G++23", "GNU G++17") if lang == "cpp" else ("PyPy 3", "Python 3") if lang == "py" else ()
@@ -526,13 +514,17 @@
 +    if langcode is None:
 +        print("No compatible compiler is offered by this contest")
 +        return False
-     submission["programTypeId"] = langcode
- 
-     # check acmsguru
-@@ -140,6 +159,19 @@
- 
- """ submit problem """
- def submit(browser, handle, contest, problem, lang, source, show, guru):
+@@ -123,0 +143,9 @@
++    from pathlib import Path
++    from vp_helper.submission_confirmation import confirm_submission
++    config_path = Path('contest.json')
++    config = json.loads(config_path.read_text()) if config_path.is_file() else {'name': contest}
++    problem = str(guru) if guru != -1 else str(submission['submittedProblemIndex'].value)
++    if not confirm_submission(Path(source), config, problem, available[langcode], browser.url,
++                              config_path if config_path.is_file() else None):
++        return False
++    browser.vp_submitted_at = time.time()
+@@ -142,0 +171,13 @@
 +    from pathlib import Path
 +    import json
 +    from vp_helper.receipts import cf_submission_id, cf_submission_ids, record_receipt
@@ -546,29 +538,22 @@
 +                previous = cf_submission_ids(response.text)
 +        except _SESSION_ERRORS:
 +            pass
-     if guru:
-         print("Submitting to acmsguru " + problem + " as " + handle)
-     else:
-@@ -147,16 +179,28 @@
- 
-     pid = -1
-     if guru:
+@@ -150 +191 @@
 -        browser.open("http://codeforces.com/problemsets/acmsguru/submit")
 +        browser.open("https://codeforces.com/problemsets/acmsguru/submit")
-         pid = problem
-     elif len(contest) >= 6:
+@@ -153,3 +194,3 @@
 -        browser.open("http://codeforces.com/gym/" + contest + "/submit/" + problem.upper())
 -    else:
 -        browser.open("http://codeforces.com/contest/" + contest + "/submit/" + problem.upper())
 +        browser.open("https://codeforces.com/gym/" + contest + "/submit/" + problem.upper())
 +    else:
 +        browser.open("https://codeforces.com/contest/" + contest + "/submit/" + problem.upper())
- 
-     """ show submission """
+@@ -158,2 +199,15 @@
 -    if submit_problem(browser, contest, lang, source, pid) and show:
 -        watch(handle)
 +    submitted_at = time.time()
 +    if submit_problem(browser, contest, lang, source, pid):
++        submitted_at = browser.vp_submitted_at
 +        if previous is not None:
 +            sid = cf_submission_id(browser.parsed, previous, contest, problem, handle)
 +            if sid is not None:
@@ -581,31 +566,13 @@
 +                        print('Submitted, but the monitor notification failed: ' + str(exc))
 +        if show:
 +            watch(handle)
- 
- """ submit, possibly len(args) > 1 """
- def submit_files(browser, defaulthandle, defaultcontest, defaultprob, defext, defaultlang, args, show, guru):
-@@ -186,7 +230,7 @@
-                 submit(browser, defaulthandle, defaultcontest, defaultprob, info[-1], source, show, guru)
-             else:
-                 """  parse string """
+@@ -189 +243 @@
 -                splitted = re.split('(\D+)', defaultprob)
 +                splitted = re.split(r'(\D+)', defaultprob)
-                 if len(splitted) == 3 and len(splitted[1]) == 1 and len(splitted[2]) == 0:
-                     """ probably a good string """
-                     submit(browser, defaulthandle, splitted[0], splitted[1], info[-1], source, show, guru)
-@@ -208,7 +252,7 @@
-                     submit(browser, defaulthandle, defaultcontest, info[0], info[1], source, show, guru)
-                 else:
-                     """ contest is included, so parse """
+@@ -211 +265 @@
 -                    splitted = re.split('(\D+)', info[0])
 +                    splitted = re.split(r'(\D+)', info[0])
-                     if len(splitted) == 3 and len(splitted[1]) == 1 and len(splitted[2]) == 0:
-                         """ probably good string ? """
-                         submit(browser, defaulthandle, splitted[0], splitted[1], info[1], source, show, guru)
-@@ -217,4 +261,3 @@
- 
-         else:
-             print("cannot parse filename, specify problem with -p or --prob")
+@@ -220 +273,0 @@
 -
 --- upstream/colours.py
 +++ installed/colours.py

@@ -139,6 +139,9 @@ def fetch_statements(api, saved_contest: dict, directory: Path) -> str:
 
 def save_progress(path: Path, state: dict, contest: Contest, snapshot: dict,
                   events: dict[str, dict], submissions_at: float) -> None:
+    if state.get('practice_view'):
+        from .practice import saved_rank
+        state.setdefault('practice_rank', saved_rank(state))
     own = snapshot.get("own")
     final = (snapshot.get("phase") == "FINISHED" and not snapshot.get("frozen") and own is not None
              and submissions_at >= snapshot.get("at", float("inf"))
@@ -155,7 +158,7 @@ def save_progress(path: Path, state: dict, contest: Contest, snapshot: dict,
             "contest": contest.name, "url": contest.url, "handle": state["handle"],
             "scoring": contest.extra["scoring"], "points": own["points"] if own else "",
             "penalty": own["penalty"] if own and contest.extra["scoring"] == "ICPC" else "",
-            "rank": own["rank"] if own else "", "phase": snapshot["phase"], "frozen": snapshot["frozen"],
+            "rank": state.get('practice_rank', '—') if state.get('practice_view') else own["rank"] if own else "", "phase": snapshot["phase"], "frozen": snapshot["frozen"],
         }, fields=HISTORY_FIELDS, key_fields=("start_time", "url", "handle"))
 
 
@@ -163,6 +166,11 @@ def monitor_live(path: Path) -> None:
     from . import cli
     with file_lock(path.with_suffix(".monitor.lock"), nonblocking=True):
         state = read_json(path)
+        if state.get('practice_view') and 'practice_rank' not in state:
+            from .practice import saved_rank
+            from .sessions import save_state
+            state['practice_rank'] = saved_rank(state)
+            save_state(path, state)
         contest = Contest.from_dict(state["contest"])
         config = read_json(cli.config_directory() / "config.json")
         account = account_for(config, contest.platform)
@@ -245,7 +253,8 @@ def monitor_live(path: Path) -> None:
                     state["practice_view"] = bool(state.get("practice_view") or read_json(path).get("practice_view"))
                     dashboard = LiveDashboard(contest, time.time() - contest.original_start, snapshot,
                                               submission_records(list(events.values()), phase), message,
-                                              state["handle"], practice=state["practice_view"])
+                                              state["handle"], practice=state["practice_view"],
+                                              practice_rank=read_json(path).get('practice_rank', state.get('practice_rank', '—')))
                     view.update(dashboard)
                     next_render = now + 0.25
                 time.sleep(0.1)

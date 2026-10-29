@@ -314,6 +314,7 @@ class LocalTests(IsolatedState):
 class SubmitTests(IsolatedState):
     def setUp(self):
         super().setUp()
+        self.stack.enter_context(patch('builtins.input', return_value='y'))
         self.source = self.root / "A.cpp"
         self.source.write_text('int main() { /* 测试 & += */ }\n', encoding="utf8")
         self.config = {"platform": "nowcoder", "mode": "live", "base_url": URL, "contest_id": "123",
@@ -341,6 +342,14 @@ class SubmitTests(IsolatedState):
         self.assertFalse(call.kwargs["allow_redirects"])
         self.assertEqual(ReceiptReader(self.path, self.state).read()[0].id, "77")
         self.refresh.assert_called_once_with(self.root / "contest.json", self.config, "nowcoder")
+
+    def test_declined_preview_never_posts_or_creates_a_receipt(self):
+        with patch('builtins.input',return_value='n'), patch('sys.stdout',io.StringIO()) as output:
+            self.assertIsNone(nowcoder_submit.submit(self.source))
+        self.api.web.session.post.assert_not_called()
+        self.assertIn('clang++18',output.getvalue())
+        self.assertIn(URL+'/A',output.getvalue())
+        self.assertFalse(self.path.with_suffix('.receipts').exists())
 
     def test_explicit_gcc_and_python_language(self):
         self.assertEqual(nowcoder_submit.language_id(Path("A.py"), None), "11")

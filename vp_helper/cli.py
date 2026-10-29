@@ -295,23 +295,70 @@ def prepare_start(url: str, scheduled_start: float | None = None) -> tuple[Path,
 
 def restore_contest(path: Path, state: dict, config: dict) -> tuple[Path, dict]:
     from .live import live_adapter
-    from .workspaces import rename_existing
+    from .workspaces import refresh_name, rename_existing
     contest = Contest.from_dict(state["contest"])
     if not Path(state["directory"]).is_dir():
         raise VPError("原比赛目录不存在，请先恢复：" + state["directory"])
-    rename_existing(path, state, contest)
-    directory = Path(state["directory"])
     is_live = state.get("mode") == "live"
     api = live_adapter(state["url"], config) if is_live else adapter(state["url"], config)
+    refresh_name(api, contest)
+    rename_existing(path, state, contest)
+    directory = Path(state["directory"])
     configure_contest(api, contest, directory, path, state, live=is_live)
     write_json(path.parent / "current.json", {"state_path": str(path)})
     return path, state
 
 
+def reopen_saved(path: Path, state: dict, config: dict) -> None:
+    from .live import account_for
+    from .sessions import boundary
+    from . import practice
+    contest = Contest.from_dict(state['contest'])
+    if account_for(config, contest.platform).get('handle', '').casefold() != state['handle'].casefold():
+        raise VPError('请在 Firefox 登录此比赛原来的账号后再恢复面板。')
+    if state.get('mode') == 'practice':
+        path, state = practice.prepare(state['url'])
+    else:
+        cutoff = boundary(path)
+        ended = state.get('status') != 'scheduled' and (state.get('status') in ('complete', 'archived')
+                 or cutoff is not None and time.time() >= cutoff
+                 or time.time() >= state['start_time'] + contest.rules.duration)
+        with file_lock(state_directory() / 'start.lock'):
+            if ended:
+                restored = practice._resume_vp(state_directory(), state['url'], state['handle'], config)
+                if restored is None:
+                    raise VPError('比赛记录发生变化，请重新运行 xcpc dashboard。')
+                path, state = restored
+            else:
+                path, state = restore_contest(path, read_json(path), config)
+    state['_reload_monitor'] = True
+    open_state(path, state)
+
+
+def dashboard() -> None:
+    """Restore the current contest folder; never start or register a contest."""
+    from .sessions import attempts, latest_session
+    check_terminal()
+    here = Path.cwd().resolve()
+    bound = [(p, s) for p, s in attempts() if s.get('directory')
+             and here.is_relative_to(Path(s['directory']).resolve())]
+    if not bound:
+        raise VPError('当前目录没有比赛记录。请进入原比赛文件夹或其子目录，再运行 xcpc dashboard。')
+    _, owner = max(bound, key=lambda item: len(Path(item[1]['directory']).parts))
+    previous = latest_session(owner['url'], owner['handle'], include_practice=True)
+    if previous is None:
+        raise VPError('此比赛尚未成功开始；请先运行原比赛命令检查状态。')
+    platform = previous[1]['contest']['platform']
+    config = load_account(platform, live=True)
+    reopen_saved(previous[0], previous[1], config)
+
+
 def start(url: str, *, live: bool = False, practice: bool = False, resume: bool = False,
           restart: bool = False, scheduled_start: float | None = None) -> None:
     # Release the cross-shell preparation lock before entering an attached TUI.
-    if not practice and not resume and not restart:
+    if restart:
+        raise VPError('已取消重复 VP；每场比赛只支持一次 VP，再次运行原命令会恢复已有会话。')
+    if not practice and not resume:
         from .sessions import latest_session
         check_terminal()
         platform, _, url = contest_url(url)
@@ -319,10 +366,7 @@ def start(url: str, *, live: bool = False, practice: bool = False, resume: bool 
         from .live import account_for
         previous = latest_session(url, account_for(config, platform).get("handle", ""))
         if previous:
-            with file_lock(state_directory() / "start.lock"):
-                path, state = restore_contest(previous[0], read_json(previous[0]), config)
-            state["_reload_monitor"] = True
-            open_state(path, state)
+            reopen_saved(previous[0], previous[1], config)
             return
     if practice:
         from .practice import prepare
@@ -436,6 +480,11 @@ def monitor(path: Path) -> None:
         raise VPError("此 VP 未启动。请查看历史记录中的失败原因。")
     with file_lock(path.with_suffix(".monitor.lock"), nonblocking=True):
         state = read_json(path)
+        if state.get('practice_view') and 'practice_rank' not in state:
+            from .practice import saved_rank
+            from .sessions import save_state
+            state['practice_rank'] = saved_rank(state)
+            save_state(path, state)
         contest = Contest.from_dict(state["contest"])
         config = read_json(config_directory() / "config.json")
         api = adapter(contest.url, config)
@@ -531,6 +580,13 @@ def monitor(path: Path) -> None:
                     shown_message = "Archived VP · new submissions from this directory are practice"
                 if now >= next_render:
                     state["practice_view"] = bool(state.get("practice_view") or read_json(path).get("practice_view"))
+                    if state['practice_view']:
+                        from .practice import saved_rank
+                        state.setdefault('practice_rank', read_json(path).get('practice_rank', saved_rank(state)))
+                        shown_rank = state['practice_rank']
+                    elif shown_rank not in ('', '?', '—') and state.get('last_rank') != shown_rank:
+                        state['last_rank'] = shown_rank
+                        save_state(path, state)
                     dashboard = display(contest, max(0, scoring_elapsed) if interrupted else elapsed,
                                         private, shown_rank, prize, stats, records, shown_message)
                     dashboard.practice = state["practice_view"]
@@ -548,11 +604,11 @@ def monitor(path: Path) -> None:
                                  status="archived" if interrupted and elapsed >= cutoff-state["start_time"] else "complete" if finalized or preserve_final else "running")
                     state["summary"] = {"solved": private.solved,
                                         "penalty": private.penalty if private.results_complete else "",
-                                        "rank": rank if finalized else "", "prize": prize}
+                                        "rank": state.get('practice_rank', '—') if state['practice_view'] else rank if finalized else "", "prize": prize}
                     save_state(path, state)
                     row = {"start_time": datetime.fromtimestamp(state["start_time"], timezone.utc).isoformat(),
                            "contest": contest.name, "url": contest.url, "solved": private.solved,
-                           "penalty": private.penalty if private.results_complete else "", "rank": rank if finalized else "", "prize": prize}
+                           "penalty": private.penalty if private.results_complete else "", "rank": state.get('practice_rank', '—') if state['practice_view'] else rank if finalized else "", "prize": prize}
                     if finalized or not preserve_final:
                         update_history(Path(state["history_path"]), row)
                 time.sleep(0.1)
@@ -561,21 +617,18 @@ def monitor(path: Path) -> None:
 def main() -> None:
     args = sys.argv[1:]
     try:
-        restart = "--restart" in args
-        if restart:
-            if args.count("--restart") != 1 or "history" in args:
-                raise VPError("重新 VP 用法：vp cf ID --restart，或 vp CONTEST_URL --restart。")
-            args = [arg for arg in args if arg != "--restart"]
+        if '--restart' in args:
+            raise VPError('已取消 --restart；每场比赛只支持一次 VP，重复原命令即可恢复。')
         if args and args[0] == "history":
             from .attempt_history import history as attempts_history
             attempts_history(args[1:])
         elif len(args) == 2 and args[0] == "_monitor":
             monitor(Path(args[1]))
         elif len(args) == 2 and args[0] in ("cf", "qoj", "gym"):
-            start(contest_id_url(*args), **({"restart": True} if restart else {}))
+            start(contest_id_url(*args))
         elif len(args) == 1 and args[0] not in ("-h", "--help"):
             platform, _, url = contest_url(args[0])
-            start(url, **({"restart": True} if restart else {}))
+            start(url)
         elif args in ([], ["-h"], ["--help"]):
             console.print("查看全部命令和设置：xcpc --help", markup=False)
         else:

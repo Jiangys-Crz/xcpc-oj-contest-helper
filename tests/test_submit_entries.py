@@ -66,7 +66,14 @@ else:
 ''')
                 env = {**os.environ,"PYTHONPATH":str(root),"XDG_STATE_HOME":str(root/"state"),
                        "VP_FIXTURE_PLATFORM":platform}
-                result = subprocess.run([str(ENTRY),str(source),*(["-y"] if platform=="qoj" else [])],
+                if platform=='qoj':
+                    declined=subprocess.run([str(ENTRY),str(source)],input='n\n',cwd=root,env=env,
+                                            capture_output=True,text=True,timeout=30)
+                    self.assertEqual(declined.returncode,0,declined.stdout+declined.stderr)
+                    self.assertIn('Do you want to continue?',declined.stdout)
+                    self.assertIn('Aborted.',declined.stdout)
+                    self.assertFalse(state_path.with_suffix('.receipts').exists())
+                result = subprocess.run([str(ENTRY),str(source)],input='y\n',
                                         cwd=root,env=env,capture_output=True,text=True,timeout=30)
                 self.assertEqual(result.returncode,0,result.stdout+result.stderr)
                 if platform=="qoj":

@@ -19,6 +19,7 @@ from .nowcoder import NowcoderLive, ORIGIN, identity_from_html, problem_config
 from .receipts import record_receipt
 from .storage import read_json, state_directory
 from .submit_context import submission_configuration
+from .submission_confirmation import confirm_submission
 
 # Standard input/output judge (codeJudgeType 0). These IDs and names are also
 # present in the site's editor. Other judge types need their own templates.
@@ -44,7 +45,7 @@ def language_id(source: Path, requested: str | None) -> str:
     return selected
 
 
-def submit(source: Path, problem: str | None = None, language: str | None = None) -> str:
+def submit(source: Path, problem: str | None = None, language: str | None = None) -> str | None:
     source = source.expanduser().resolve()
     if not source.is_file():
         raise VPError("Source file not found: " + str(source))
@@ -96,6 +97,8 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     lang = language_id(source, language)
     payload = {key: fields[key] for key in ("questionId", "tagId", "subTagId", "doneQuestionId")}
     payload.update(content=source.read_text(encoding="utf8"), language=lang, languageName=LANGUAGES[lang])
+    if not confirm_submission(source, config, label, LANGUAGES[lang], url, config_path):
+        return None
     submitted_at = time.time()
     if submitted_at < contest.original_start:
         raise VPError("The Nowcoder contest has not started. No code was sent.")

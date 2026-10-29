@@ -8,17 +8,26 @@ from rich.console import Console, Group
 from rich.table import Table
 from rich.text import Text
 
-from .models import Contest, TeamScore
+from .models import Contest, Rules, Submission, TeamScore
 
 
-PRACTICE_WRONG = "#0000ff"
-PRACTICE_ACCEPTED = "#0000ff"
+PRACTICE_ACCEPTED = "white on #0000ff"
 SCORE_BOX = box.Box("    \n    \n ── \n    \n ── \n ── \n    \n    \n")
 
 
 def clock(value: float) -> str:
     value = max(0, int(value))
     return f"{value // 3600:02d}:{value // 60 % 60:02d}:{value % 60:02d}"
+
+
+def recorded_cells(contest: Contest, records: list[dict], *, practice: bool):
+    from .scoring import score_submissions
+    events = [Submission(str(r['id']), 'me', r['problem'], r['time'], r['verdict'])
+              for r in records if bool(r.get('practice')) == practice]
+    duration = max([1] + [int(r.time) + 1 for r in events])
+    rules = Rules(duration, penalty_minutes=contest.rules.penalty_minutes,
+                  compile_penalty=contest.rules.compile_penalty)
+    return score_submissions(events, list(contest.problems), rules, duration).cells
 
 
 @dataclass
@@ -61,8 +70,13 @@ class Dashboard:
             table.add_column(label, justify="left" if label == "team" else "center",
                              no_wrap=label == "rank", min_width=12 if label == "rank" else None)
         cells = []
+        corrections = recorded_cells(self.contest, self.submissions, practice=True)
         for label in self.contest.problems:
             c = self.me.cells[label]
+            correction = corrections[label]
+            blue = correction.solved and (not c.solved or self.contest.extra.get('practice'))
+            if blue:
+                c = correction
             tries = (f"{c.tries} + {c.pending} tries" if c.pending else
                      f"{c.tries} {'try' if c.tries == 1 else 'tries'}" if c.tries else "—")
             if width < 155:
@@ -70,7 +84,7 @@ class Dashboard:
             if c.unresolved:
                 tries = f"{c.tries}+?" if c.tries else "?"
             if c.solved:
-                cells.append(Text(f"{tries}\n{c.solve_time}", style="black on #60e760"))
+                cells.append(Text(f"{tries}\n{c.solve_time}", style=PRACTICE_ACCEPTED if blue else "black on #60e760"))
             elif c.pending:
                 cells.append(Text(tries, style="white on #6666ff"))
             elif c.tries:
@@ -127,15 +141,12 @@ class Dashboard:
         results = self._record_table()
         for item in self.submissions:
             v = item["verdict"]
-            practice = item.get("practice", False)
-            if practice:
-                color = PRACTICE_ACCEPTED if v == "CORRECT" else PRACTICE_WRONG
-                values = [item["problem"], "#" + item["id"], clock(item["time"]), v + " · practice"]
-                results.add_row(*values, style=color)
-            else:
-                color = "#008000" if v == "CORRECT" else "#b8860b" if v == "PRETESTS-PASSED" else "#808080" if v in ("PENDING", "TOO-LATE", "UNAVAILABLE", "HIDDEN") else "#ff0000"
-                results.add_row(Text(item["problem"]), Text("#" + item["id"]),
-                                Text(clock(item["time"])), Text("RESULT UNAVAILABLE" if v == "UNAVAILABLE" else v, style=color))
+            color = "#008000" if v == "CORRECT" else "#b8860b" if v == "PRETESTS-PASSED" else "#808080" if v in ("PENDING", "TOO-LATE", "UNAVAILABLE", "HIDDEN") else "#ff0000"
+            text = "RESULT UNAVAILABLE" if v == "UNAVAILABLE" else v
+            if item.get('practice'):
+                text += ' · practice'
+            results.add_row(Text(item["problem"]), Text("#" + item["id"]),
+                            Text(clock(item["time"])), Text(text, style=color))
         if not self.submissions:
             results.add_row(Text("No submissions yet", style="#555555"))
         return results
@@ -158,6 +169,7 @@ class LiveDashboard:
     message: str = ""
     handle: str = ""
     practice: bool = False
+    practice_rank: str | None = None
 
     _record_table = staticmethod(Dashboard._record_table)
     records = Dashboard.records
@@ -185,7 +197,18 @@ class LiveDashboard:
             table.add_column(label, justify="left" if label == "team" else "center")
         results = own["problemResults"] if own else []
         cells = []
-        for result in results:
+        corrections = recorded_cells(self.contest, self.submissions, practice=True)
+        original_cells = recorded_cells(self.contest, self.submissions, practice=False)
+        for index, label in enumerate(self.contest.problems):
+            result = results[index] if index < len(results) else {}
+            if index >= len(results) and original_cells[label].solved:
+                c = original_cells[label]
+                cells.append(Text(f"{c.tries} {'try' if c.tries == 1 else 'tries'}\n{c.solve_time}", style='black on #60e760'))
+                continue
+            if corrections[label].solved and not result.get('points', 0):
+                c = corrections[label]
+                cells.append(Text(f"{c.tries} {'try' if c.tries == 1 else 'tries'}\n{c.solve_time}", style=PRACTICE_ACCEPTED))
+                continue
             points = result.get("points", 0)
             rejected = result.get("rejectedAttemptCount", 0)
             preliminary = result.get("type") == "PRELIMINARY"
@@ -201,10 +224,10 @@ class LiveDashboard:
                 value += "\n" + clock(when)
             color = "#b8860b" if preliminary and points else "#008000" if points else "#ff0000" if rejected else "default"
             cells.append(Text(value, style=color))
-        cells.extend(Text("—") for _ in range(max(0, len(self.contest.problems) - len(cells))))
         name = (own["party"].get("teamName") or ";".join(m["handle"] for m in own["party"]["members"])) if own else self.handle
         value = (str(int(own["points"])) if scoring == "ICPC" else f"{own['points']:g}") if own else "—"
-        values = [str(own["rank"]) if own else "—", Text(name), value]
+        rank = self.practice_rank if self.practice else str(own['rank']) if own else '—'
+        values = [str(rank) if rank is not None else '—', Text(name), value]
         if scoring == "ICPC":
             values.append(str(own["penalty"]) if own else "—")
         elif self.contest.platform == "cf":

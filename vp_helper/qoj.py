@@ -40,13 +40,39 @@ class QOJ:
     def _page(self, suffix: str = "", **params) -> BeautifulSoup:
         return self.web.soup(self.url + suffix, params={"locale": "en", **params})
 
+    def contest_name(self, soup=None, listing=None) -> str:
+        soup = soup if soup is not None else self._page()
+        generic = {"qoj", "qoj.ac", "contest", "contests", "contest home", "home", "overview",
+                   "problems", "problem list", "standings", "virtual participation", "register",
+                   "比赛", "比赛主页", "题目", "总览", "虚拟参赛", "报名"}
+
+        def usable(value):
+            value = " ".join(value.split())
+            return value if value.casefold() not in generic and value else ""
+
+        # QOJ's site banner is h1; the actual contest heading can be h2/h3.
+        for heading in soup.select('.contest-title, .contest-name, h1, h2, h3'):
+            if heading.find_parent(['nav', 'header']) or heading.find_parent(class_='navbar'):
+                continue
+            if value := usable(heading.get_text(" ", strip=True)):
+                return value
+        for link in soup.select('a[href]'):
+            if urlsplit(urljoin(self.url, link['href'])).path.rstrip('/') == f'/contest/{self.id}':
+                if value := usable(link.get_text(" ", strip=True)):
+                    return value
+        if soup.title:
+            title = re.sub(r'\s*[-–—|]\s*QOJ(?:\.ac)?\s*$', '', soup.title.get_text(' ', strip=True), flags=re.I)
+            if value := usable(title):
+                return value
+        listing = listing if listing is not None else self.web.soup(self.origin + '/contests', params={'locale': 'en'})
+        for link in listing.select('a[href]'):
+            if urlsplit(urljoin(self.origin, link['href'])).path.rstrip('/') == f'/contest/{self.id}':
+                if value := usable(link.get_text(' ', strip=True)):
+                    return value
+        raise VPError('QOJ 未返回实际比赛名称，未使用站点标题或比赛编号建立目录。')
+
     def prepare(self) -> Contest:
         soup = self._page()
-        titles = [h.get_text(" ", strip=True) for h in soup.select("h1")]
-        titles.extend(a.get_text(" ", strip=True) for a in soup.select('a[href*="?v="]'))
-        name = next((title for title in titles if title.strip() and title.strip().casefold() != "qoj"), "")
-        if not name:
-            raise VPError("QOJ 未返回比赛名称。")
         problem_map = {}
         for row in soup.select("tr"):
             a = row.select_one(f'a[href*="/contest/{self.id}/problem/"]')
@@ -66,6 +92,7 @@ class QOJ:
         # contest duration (4582 already has two-hour rated participations).
         duration = None
         listing = self.web.soup(self.origin + "/contests", params={"locale": "en"})
+        name = self.contest_name(soup, listing)
         for row in listing.select("tr"):
             if not any(urlsplit(a.get("href", "")).path == f"/contest/{self.id}" for a in row.select("a")):
                 continue
@@ -140,6 +167,31 @@ class QOJ:
                 return max(records)
         return None
 
+    def _start_form(self):
+        endpoint = self.url + '/virtual/register'
+        soup = self._page('/virtual/register')
+        from .browser_login import identity_from_page
+        identity_from_page('qoj', str(soup), self.handle)
+        forms = []
+        for form in soup.select('form'):
+            target = urlsplit(urljoin(endpoint, form.get('action') or endpoint))
+            expected = urlsplit(endpoint)
+            if (target.scheme != 'https' or target.netloc != expected.netloc
+                    or target.path.rstrip('/') != expected.path or target.query or target.fragment):
+                continue
+            if form.select_one('input[type="password"], textarea'):
+                continue
+            if form.select_one('[name="_token"], [name="csrf_token"], [name="_csrf"]'):
+                forms.append(form)
+        selected = next((form for form in forms if form.get('id') in
+                         ('form-regvir', 'form-register', 'form-registration')), None)
+        if selected is None and len(forms) == 1:
+            selected = forms[0]
+        if selected is None:
+            detail = self._start_message(str(soup))
+            raise StartRejected('QOJ 未允许此账号新建 VP，本次命令已取消。' + (' ' + detail if detail else ''))
+        return selected, endpoint
+
     def check_start(self, contest: Contest):
         soup = self._page()
         from .browser_login import identity_from_page
@@ -147,13 +199,12 @@ class QOJ:
         current = self._registration(duration=contest.rules.duration)
         if current and time.time() < current[0] + current[1]:
             raise StartRejected("QOJ 已有尚未结束的 VP，本次命令已取消。")
-        if soup.select_one("form#form-regvir") is None:
-            raise StartRejected("QOJ 未允许此账号新建 VP（可能不支持再次 VP），本次命令已取消。")
-        return soup, current
+        form, endpoint = self._start_form()
+        return form, endpoint, current
 
     def start(self, contest: Contest, *, fresh: bool = False) -> float:
         if fresh:
-            soup, current = self.check_start(contest)
+            form, endpoint, current = self.check_start(contest)
         else:
             soup = self._page()
             from .browser_login import identity_from_page
@@ -163,22 +214,31 @@ class QOJ:
             self.start_time = current[0]
             contest.rules.duration = current[1]
             return self.start_time
-        form = soup.select_one("form#form-regvir")
-        if form is None:
-            if current:
+        if not fresh:
+            try:
+                form, endpoint = self._start_form()
+            except StartRejected:
+                if not current:
+                    raise
                 self.start_time = current[0]
                 contest.rules.duration = current[1]
                 return self.start_time
-            raise StartRejected("QOJ did not offer native virtual participation for this account.")
         payload = form_values(form)
-        payload["submit-regvir"] = "regvir"
-        if not payload.get("_token"):
+        button = form.select_one('input[type="submit"][name], button[name]:not([type="button"])')
+        if button:
+            payload[button['name']] = button.get('value', '')
+        elif re.fullmatch(r'form-[\w-]+', form.get('id', '')):
+            action = form['id'][5:]
+            payload['submit-' + action] = action
+        for checkbox in form.select('input[type="checkbox"][name][required]'):
+            payload[checkbox['name']] = checkbox.get('value', 'on')
+        if not any(payload.get(field) for field in ('_token', 'csrf_token', '_csrf')):
             raise VPError("QOJ did not provide a native VP start token.")
         post_error = None
         site_message = ""
         try:
             self.native_post_sent = True
-            response = self.web.post(urljoin(self.url, form.get("action", self.url)), payload)
+            response = self.web.post(endpoint, payload, headers={'Origin': self.origin, 'Referer': endpoint})
             site_message = self._start_message(response)
         except VPError as exc:
             # The request may have reached QOJ even if its response was lost.
@@ -217,7 +277,7 @@ class QOJ:
     def _start_message(response) -> str:
         # QOJ can return a form rejection as an HTTP 200 message page.
         # Keep that explanation instead of replacing it with a generic error.
-        content = getattr(response, "content", None)
+        content = response if isinstance(response, (str, bytes)) else getattr(response, "content", None)
         if not isinstance(content, (str, bytes)):
             return ""
         soup = BeautifulSoup(content, "html.parser")

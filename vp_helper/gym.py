@@ -110,6 +110,12 @@ class Gym:
                              problem_reveal_count=ccpc_reveal_count(name)),
                        pdfs, medals, raw.get("startTimeSeconds"), raw.get("websiteUrl"))
 
+    def contest_name(self) -> str:
+        if self.platform == 'cf':
+            from .codeforces_live import CodeforcesLive
+            return CodeforcesLive(self.url, self.account).contest_name()
+        return self.api('contest.standings', contestId=self.id)['contest']['name']
+
     def _virtual_party(self):
         data = self.api("contest.standings", contestId=self.id, handles=self.handle,
                         showUnofficial=True, participantTypes="VIRTUAL")

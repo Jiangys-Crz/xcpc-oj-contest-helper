@@ -17,6 +17,7 @@ from .models import VPError
 from .receipts import cf_submission_id, cf_submission_ids, record_receipt
 from .storage import read_json, state_directory
 from .submit_context import submission_configuration
+from .submission_confirmation import confirm_submission
 
 
 def compiler_id(form, source: Path, requested: str | None) -> str:
@@ -101,6 +102,9 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     if (urlsplit(target).scheme != "https" or urlsplit(target).netloc != "codeforces.com"
             or urlsplit(target).path.rstrip("/") != base_path + "/submit"):
         raise VPError("The platform returned an unexpected submission destination.")
+    language_name = form.select_one(f'select[name="programTypeId"] option[value="{payload["programTypeId"]}"]').get_text(' ', strip=True)
+    if not confirm_submission(source, config, label, language_name, target, config_path):
+        return None
     submitted_at = time.time()
     try:
         # A POST is sent once. A timeout can mean the server accepted it.

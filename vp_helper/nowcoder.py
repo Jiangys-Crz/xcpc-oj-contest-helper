@@ -127,6 +127,12 @@ class NowcoderLive:
             raise VPError("Nowcoder did not return contest information.")
         return data
 
+    def contest_name(self) -> str:
+        data = self.details()
+        if str(data.get('contestId')) != self.id:
+            raise VPError('牛客返回了其他比赛的信息，原目录保留。')
+        return data.get('name', '')
+
     def check_own_filter(self, basic: dict) -> None:
         # An expired cookie can still get code=0 with an empty "only mine"
         # list. Such a guest response must never finalize the local history.

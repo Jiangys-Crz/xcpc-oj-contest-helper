@@ -15,7 +15,6 @@ HELP = """XCPC 比赛终端助手
   vp qoj ID
   vp gym ID
   vp CONTEST_URL
-  vp CONTEST_URL --restart    明确重新 VP，复用原文件夹
 
 实时比赛（需已有原站参赛资格）
   live cf ID
@@ -26,7 +25,7 @@ HELP = """XCPC 比赛终端助手
 补题（支持牛客、CWNUOJ、Codeforces、Gym、QOJ）
   bt CONTEST_URL
   submit A.cpp     在比赛或补题目录中提交
-  优先恢复最新 VP/live 的原目录；补题不计时，不显示公共统计区。
+  优先恢复最新 VP/live 的原目录；补题不计时，Rank 固定，不显示公共统计区。
 
 历史记录
   vp history
@@ -34,9 +33,12 @@ HELP = """XCPC 比赛终端助手
   vp history 轮次ID --open
   vp history --live
 
+恢复当前比赛面板
+  xcpc dashboard    在比赛目录或子目录运行；已结束的比赛进入补题界面
+
 手动结束本地 VP
   xcpc end             优先结束当前目录对应的本地 VP，不操作原站
-  xcpc end 轮次ID      结束指定轮次；保留代码，后续提交计为蓝色补题
+  xcpc end 轮次ID      结束指定轮次；保留代码，后续提交计为补题，新 AC 方格变蓝
 
 路径设置
   xcpc path              显示当前目录并输入新目录
@@ -58,10 +60,10 @@ Codeforces API 设置
 
 只有原站允许并确认启动，vp 才创建有效轮次；原站拒绝则取消本次命令。
 不同比赛可同时进行 VP / live，各轮计分与提交互不混用；补题不占用 VP。
-同场命令恢复会话；--restart 才重新 VP，不新建比赛文件夹。
+每场比赛只支持一次 VP；同场命令恢复会话，不重复报名。
 目录按比赛名称命名；BT/live 不下载题面。
 VP 标题含 CCPC 时使用 CCPC 新赛制，否则按 ICPC。
-比赛结束后仍可提交补题，补题记录显示蓝色。
+比赛结束后仍可补题；原 AC 绿色，补题新 AC 方格蓝色，记录沿用 VP 判定颜色。
 新建目录默认保存在桌面，可用 xcpc path 修改。
 修改保存目录后，已有轮次保留在原位置，可从历史记录恢复。"""
 
@@ -103,10 +105,13 @@ def main() -> None:
             from .sessions import end_attempt
             _, state = end_attempt(args[1] if len(args) == 2 else None)
             print("本地 VP 已结束：" + state.get("attempt_id", "") + " · " + state["directory"])
-            print("代码与历史记录已保留；已开始轮次的后续提交显示为蓝色补题。")
+            print("代码与历史记录已保留；已开始轮次的后续提交计为补题，新 AC 方格显示蓝色，记录保留判定颜色。")
         elif args == ["update"]:
             from .updater import main as update
             update()
+        elif args == ['dashboard']:
+            from .cli import dashboard
+            dashboard()
         else:
             raise VPError("请运行 xcpc --help 查看命令。")
     except (VPError, OSError, EOFError) as exc:

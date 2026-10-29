@@ -1,0 +1,48 @@
+import importlib.util
+import io
+from pathlib import Path
+import tempfile
+from types import SimpleNamespace
+import unittest
+from unittest.mock import Mock, patch
+
+from bs4 import BeautifulSoup
+
+from vp_helper.submission_confirmation import confirm_submission
+
+
+class ConfirmationTests(unittest.TestCase):
+    def test_blank_eof_and_interrupt_cancel_and_invalid_input_does_not_confirm(self):
+        for answers in ([''],[EOFError()],[KeyboardInterrupt()],['invalid','n']):
+            with patch('builtins.input',side_effect=answers),patch('sys.stdout',io.StringIO()):
+                self.assertFalse(confirm_submission(Path('A.cpp'),{'name':'Contest'},'A','C++20','https://example.invalid/submit'))
+
+    def test_bundled_cf_and_gym_vp_use_real_confirmation_before_submit_form(self):
+        path=Path(__file__).resolve().parents[1]/'third_party/cf_submit/cf_submit.py'
+        spec=importlib.util.spec_from_file_location('fixture_cf_submit',path)
+        module=importlib.util.module_from_spec(spec)
+        with patch.dict('sys.modules',{'colours':Mock()}):
+            spec.loader.exec_module(module)
+        class Form(dict):
+            def __setitem__(self,key,value):
+                if key in self:
+                    self[key].value=value
+                else:
+                    super().__setitem__(key,SimpleNamespace(value=value))
+        for kind,ident in (('contest','123'),('gym','100123')):
+            for answer in ('n','y'):
+                with self.subTest(kind=kind,answer=answer),tempfile.TemporaryDirectory() as tmp:
+                    source=Path(tmp)/'A.cpp'
+                    source.write_text('int main(){}')
+                    form=Form(programTypeId=SimpleNamespace(options=['73'],labels=['GNU G++20']),
+                              submittedProblemIndex=SimpleNamespace(value='A'))
+                    browser=Mock(url=f'https://codeforces.com/{kind}/{ident}/submit/A')
+                    browser.get_form.return_value=form
+                    browser.parsed=BeautifulSoup('','html.parser')
+                    browser.submit_form.side_effect=lambda f: setattr(browser,'url',f'https://codeforces.com/{kind}/{ident}/my')
+                    with patch('builtins.input',return_value=answer),patch('sys.stdout',io.StringIO()) as out:
+                        result=module.submit_problem(browser,ident,'cpp',str(source),-1)
+                    self.assertEqual(result,answer=='y')
+                    self.assertEqual(browser.submit_form.call_count,int(answer=='y'))
+                    self.assertIn('GNU G++20',out.getvalue())
+                    self.assertIn(f'https://codeforces.com/{kind}/{ident}/submit/A',out.getvalue())

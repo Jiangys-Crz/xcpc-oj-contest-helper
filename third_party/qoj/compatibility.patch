@@ -1,14 +1,8 @@
 --- upstream/submit.py
 +++ installed/submit
-@@ -1,3 +1,4 @@
+@@ -0,0 +1 @@
 +#!/opt/vp-helper/current/venv/bin/python
- '''
- Requirements for contest.json
- 
-@@ -12,10 +13,30 @@
- '''
- 
- import sys
+@@ -15,2 +16,17 @@
 -import json
 -import requests
 +try:
@@ -28,20 +22,14 @@
 +    _IMPERSONATE = None
 +
 +import time
- from pathlib import Path
+@@ -17,0 +34 @@
 +from urllib.parse import urljoin, urlsplit
- from selectolax.lexbor import LexborHTMLParser
+@@ -18,0 +36,4 @@
 +from vp_helper.receipts import qoj_id_from_list, qoj_submission_id, qoj_submission_ids, record_receipt
 +from vp_helper.models import VPError
 +from vp_helper.submit_context import submission_configuration
 +from vp_helper.browser_login import refresh_submission_login
- 
- LANG_MAPPING = {
-     '.cpp': 'C++20',
-@@ -23,8 +44,28 @@
-     '.py': 'PyPy3',
- }
- 
+@@ -26,2 +47,22 @@
 -with open('contest.json', 'r') as f:
 -    contest = json.load(f)
 +if len(sys.argv) == 2 and sys.argv[1] in ('-h', '--help'):
@@ -66,13 +54,7 @@
 +    refresh_submission_login(config_path, contest, 'qoj')
 +except VPError as exc:
 +    raise SystemExit('submit: ' + str(exc)) from None
- 
- contest_name: str = contest['name']
- contest_base_url: str = contest['base_url']
-@@ -33,13 +74,52 @@
- user_agent: str = contest['user_agent']
- cookie: str = contest['cookie']
- 
+@@ -36,7 +77,46 @@
 -def submit(url: str, lang: str, code: str) -> None:
 -    session = requests.Session()
 -    session.headers.update({
@@ -126,13 +108,7 @@
 +    response.raise_for_status()
 +    if isinstance(response.url, str) and urlsplit(response.url).path in ('/login', '/enter'):
 +        raise SystemExit('QOJ login expired. Log in to QOJ in Firefox, then run submit again.')
- 
-     parser = LexborHTMLParser(response.text)
-     token_node = parser.css_first('input[name="_token"]')
-@@ -50,6 +130,15 @@
- 
-     if not dynamic_token:
-         raise RuntimeError('Failed to get token')
+@@ -52,0 +133,9 @@
 +
 +    # Some QOJ versions redirect to the submissions list instead of to an
 +    # assigned ID. Capture the old IDs so an old submission cannot look new.
@@ -142,13 +118,7 @@
 +        baseline = session.get(contest_base_url + '/submissions', params={'submitter': handle, 'locale': 'en'}, timeout=(10, 40))
 +        if baseline.status_code == 200 and urlsplit(baseline.url).path == urlsplit(contest_base_url).path + '/submissions':
 +            previous = qoj_submission_ids(baseline.text)
- 
- 
-     payload_files = {
-@@ -61,14 +150,29 @@
-         'submit-answer': (None, 'answer')
-     }
- 
+@@ -64,15 +153,23 @@
 -    submit_response = session.post(url, files=payload_files)
 -
 -    if submit_response.status_code == 200:
@@ -157,6 +127,13 @@
 -    else:
 -        print('Submission failed.')
 -        print('Status code', submit_response.status_code)
+-
+-
+-def confirm(message: str) -> bool:
+-    answer = ''
+-    while answer not in ['y', 'n']:
+-        answer = input(f'{message} (y/n) ').lower()
+-    return answer == 'y'
 +    submitted_at = time.time()
 +    try:
 +        submit_response = post_form(session, url, payload_files)
@@ -180,53 +157,46 @@
 +    except (VPError, OSError) as exc:
 +        print('Submitted, but the monitor notification failed: ' + str(exc))
 +    print(f'Check {origin}/submission/{sid} for the result.')
- 
- 
- def confirm(message: str) -> bool:
-@@ -82,7 +186,7 @@
-     if len(sys.argv) not in [2, 3]:
-         print('Usage: submit code.cpp [-y]')
-         sys.exit(-1)
+@@ -82,4 +179,4 @@
+-    if len(sys.argv) not in [2, 3]:
+-        print('Usage: submit code.cpp [-y]')
+-        sys.exit(-1)
+-    
++    if len(sys.argv) != 2:
++        print('Usage: submit code.cpp')
++        sys.exit(-1)
++
+@@ -87,3 +183,0 @@
+-    yes_by_default = False
+-    if len(sys.argv) == 3 and sys.argv[-1] == '-y':
+-        yes_by_default = True
+@@ -95 +189 @@
 -    
 +
-     file_name = sys.argv[1]
-     yes_by_default = False
-     if len(sys.argv) == 3 and sys.argv[-1] == '-y':
-@@ -92,22 +196,24 @@
-     if not code_path.exists():
-         print(f'Error: {file_name} does not exist')
-         sys.exit(-1)
+@@ -99 +193 @@
 -    
 +
-     if code_path.suffix not in LANG_MAPPING:
-         print(f'Error: unknown suffix {code_path.suffix}')
-         sys.exit(-1)
--    
-+
-     lang = LANG_MAPPING[code_path.suffix]
+@@ -101 +195 @@
 -    problem = code_path.stem[0].capitalize()    
 +    problem = code_path.stem[0].capitalize()
-     index = contest_problems.find(problem)
-     if index == -1:
-         print(f'Error: cannot find problem {problem}')
-         sys.exit(-1)
- 
+@@ -107,10 +201,5 @@
 -    url = contest_base_url + '/problem/' + str(contest_offset + index)
 -    
+-    print('Submission information:')
+-    print(f'  filename:    {file_name}')
+-    print(f'  contest:     {contest_name}')
+-    print(f'  problem:     {problem}')
+-    print(f'  language:    {lang}')
+-    print(f'  url:         {url}')
+-
+-    if yes_by_default or confirm('Do you want to continue?'):
 +    problem_id = contest.get('problem_ids', {}).get(problem, contest_offset + index)
 +    url = contest_base_url + '/problem/' + str(problem_id)
 +
-     print('Submission information:')
-     print(f'  filename:    {file_name}')
-+    print(f'  config:      {config_path}')
-     print(f'  contest:     {contest_name}')
-     print(f'  problem:     {problem}')
-     print(f'  language:    {lang}')
-@@ -115,6 +221,6 @@
- 
-     if yes_by_default or confirm('Do you want to continue?'):
-         code = code_path.read_text('utf8')
++    from vp_helper.submission_confirmation import confirm_submission
++    if confirm_submission(code_path, contest, problem, lang, url, config_path):
+@@ -118,3 +207 @@
 -        submit(url, lang, code)
+-    else:
+-        print('Aborted.')
 +        submit(url, lang, code, problem)
-     else:
-         print('Aborted.')

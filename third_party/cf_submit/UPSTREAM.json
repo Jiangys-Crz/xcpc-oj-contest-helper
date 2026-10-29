@@ -25,7 +25,8 @@
     "Server-confirmed submission IDs and immediate pending notifications to the VP monitor",
     "Translate RoboBrowser's files= upload payload into a CurlMime so the Codeforces source upload works on the curl_cffi session",
     "Refresh a verified same-account Firefox login before cookie-based submission",
-    "Use raw regex strings for Python 3.14 compatibility without invalid escape warnings"
+    "Use raw regex strings for Python 3.14 compatibility without invalid escape warnings",
+    "Show the common VP submission preview and require y/n confirmation before the source upload"
   ],
   "excluded_files": [
     "cf_test.py"

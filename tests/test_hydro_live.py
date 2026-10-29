@@ -288,6 +288,7 @@ class LocalTests(IsolatedState):
 class SubmitTests(IsolatedState):
     def setUp(self):
         super().setUp()
+        self.stack.enter_context(patch('builtins.input', return_value='y'))
         self.source = self.root / "A.cpp"
         self.source.write_text("int main() {}\n")
         self.config = {"platform": "cwnuoj", "mode": "live", "base_url": URL, "contest_id": TID,
@@ -314,6 +315,14 @@ class SubmitTests(IsolatedState):
         self.assertEqual(call.kwargs["data"]["tid"], TID)
         self.assertFalse(call.kwargs["allow_redirects"])
         self.assertEqual(ReceiptReader(self.path, self.state).read()[0].id, RID)
+
+    def test_declined_preview_never_posts_or_creates_a_receipt(self):
+        with patch('builtins.input',return_value='n'), patch('sys.stdout',io.StringIO()) as output:
+            self.assertIsNone(hydro_submit.submit(self.source))
+        self.api.web.session.post.assert_not_called()
+        self.assertIn('C++20',output.getvalue())
+        self.assertIn('/p/10/submit?tid=',output.getvalue())
+        self.assertFalse(self.path.with_suffix('.receipts').exists())
 
     def test_login_redirect_cannot_be_mistaken_for_submission_receipt(self):
         self.api.web.session.post.return_value.json.return_value = {"url": "/login"}

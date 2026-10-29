@@ -29,6 +29,8 @@ def latest_session(url: str, handle: str, *, include_practice: bool = False) -> 
     saved = [(p, s) for p, s in attempts(root) if s['url'] == url
              and s['handle'].casefold() == handle.casefold() and s.get('status') not in ('failed', 'cancelled')]
     native = [(p, s) for p, s in saved if s.get('mode', 'vp') in ('vp', 'live')]
+    if any(s.get('mode', 'vp') == 'vp' and s.get('status') != 'scheduled' for _, s in native):
+        native = [(p, s) for p, s in native if s.get('mode', 'vp') != 'vp' or s.get('status') != 'scheduled']
     candidates = native or (saved if include_practice else [])
     return max(candidates, key=lambda item: (item[1].get('created_at', item[1]['start_time']), item[1]['start_time'])) if candidates else None
 
@@ -90,8 +92,16 @@ def save_state(path: Path, state: dict) -> None:
             state["workspace_managed"] = True
             if "workspace_target" not in previous:
                 state.pop("workspace_target", None)
+        if previous.get('workspace_name'):
+            state['workspace_name'] = previous['workspace_name']
+            state['contest'].update(name=state['workspace_name'], directory_name=state['workspace_name'])
+            if state.get('mode', 'vp') == 'vp':
+                from .parsing import ccpc_reveal_count
+                state['contest']['rules']['problem_reveal_count'] = ccpc_reveal_count(state['workspace_name'])
         if previous.get("practice_view"):
             state["practice_view"] = True
+        if 'practice_rank' in previous:
+            state['practice_rank'] = previous['practice_rank']
         combined = {str(e["id"]): e for e in previous.get("submissions", [])}
         combined.update({str(e["id"]): e for e in state.get("submissions", [])})
         state["submissions"] = merge_records(path, state, list(combined.values()))

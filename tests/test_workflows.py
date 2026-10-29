@@ -53,37 +53,46 @@ class Isolated(unittest.TestCase):
         self.stack.enter_context(patch.object(cli, "load_account", return_value={"qoj": self.api.account}))
         self.stack.enter_context(patch.object(cli, "adapter", return_value=self.api))
 
+    def legacy_round(self, previous_path, scheduled_start=None):
+        """Load the shape of an older version's history without starting another VP."""
+        old=read_json(previous_path)
+        state=deepcopy(old)
+        state.update(start_time=scheduled_start or self.clock, requested_start=scheduled_start or self.clock,
+                     created_at=self.clock, attempt=old.get('attempt',1)+1, attempt_id='legacy'+str(int(self.clock)),
+                     submissions=[],recent=[],status='scheduled' if scheduled_start else 'running',
+                     previous_current={'state_path':str(previous_path)})
+        state['contest']['extra'].update(attempt=state['attempt'],attempt_id=state['attempt_id'])
+        path=previous_path.with_name('vp-qoj-123-'+state['attempt_id']+'.json')
+        state['tmux_session']=path.stem
+        write_json(path,state)
+        if scheduled_start is None:
+            vp._publish_started(path,state,self.api)
+        else:
+            write_json(path.parent/'current.json',{'state_path':str(path)})
+        return path,state
+
 
 class AttemptTests(Isolated):
-    def test_explicit_restart_has_new_clock_in_same_directory_and_preserves_code(self):
+    def test_second_vp_is_rejected_without_touching_original_context_or_code(self):
         p1, s1 = cli.prepare_start(URL)
         original = Path(s1["directory"])/"A.cpp"
         original.write_text("saved solution")
         self.clock = 2000
-        p2, s2 = cli.prepare_start(URL)
-        s1 = read_json(p1)
-        original = Path(s1["directory"])/"A.cpp"
-        self.assertNotEqual(p1, p2)
-        self.assertEqual(s1["directory"], s2["directory"])
-        self.assertEqual(Path(s2["directory"]).name, "test contest")
-        self.assertEqual(s2["start_time"], 2000)
-        self.assertEqual(s2["attempt"], 2)
-        self.assertFalse(s2["contest"]["extra"].get("local_attempt"))
+        with self.assertRaisesRegex(VPError,'只支持一次'):
+            cli.prepare_start(URL)
         self.assertEqual(original.read_text(), "saved solution")
-        self.assertEqual(boundary(p1), 2000)
-        self.assertEqual(self.api.start.call_count, 2)
-        self.assertTrue(all(call.kwargs.get("fresh") for call in self.api.start.call_args_list))
-        self.assertEqual(read_json(original.parent/"contest.json")["vp_context"]["state_path"], str(p2))
-        self.assertEqual(read_json(original.parent/"contest.json")["platform"], "qoj")
-        self.assertEqual(len(attempts()), 2)
+        self.assertIsNone(boundary(p1))
+        self.api.start.assert_called_once()
+        self.assertEqual(read_json(original.parent/"contest.json")["vp_context"]["state_path"],str(p1))
+        self.assertEqual(len(attempts()),1)
 
-    def test_prior_practice_is_blue_and_preserved_as_history_after_restart(self):
+    def test_prior_practice_keeps_verdict_color_and_history_after_restart(self):
         p1, s1 = cli.prepare_start(URL)
         close_attempt(p1, 1500)
         cfg = read_json(Path(s1["directory"])/"contest.json")
         record_receipt(cfg, "77", "A", 1700)
         self.clock = 2000
-        p2, s2 = cli.prepare_start(URL)
+        p2, s2 = self.legacy_round(p1)
         s1 = read_json(p1)
         event = {"id": "77", "team": "me", "problem": "A", "time": 700, "verdict": "CORRECT"}
         old = merge_records(p1, s1, [event])
@@ -96,12 +105,12 @@ class AttemptTests(Isolated):
         self.assertTrue(received.practice)
         table = Dashboard.records(SimpleNamespace(submissions=old, _record_table=Dashboard._record_table))
         segments = list(Console(color_system="truecolor").render(table))
-        self.assertTrue(any(s.style and s.style.color and s.style.color.get_truecolor() == (0, 0, 255) for s in segments))
+        self.assertTrue(any(s.style and s.style.color and s.style.color.get_truecolor() == (0, 128, 0) for s in segments))
 
     def test_new_attempt_excludes_old_server_history_and_accepts_new_unowned_records(self):
         p1, s1 = cli.prepare_start(URL)
         self.clock = 2000
-        p2, s2 = cli.prepare_start(URL)
+        p2, s2 = self.legacy_round(p1)
         old = Submission("7", "me", "A", 1500, "CORRECT")
         self.assertEqual(merge_submissions(p1, s1, [old]), [])
         new = Submission("8", "me", "A", 10, "CORRECT")
@@ -118,14 +127,15 @@ class AttemptTests(Isolated):
         vp.activate(path, state)
         self.api.start.assert_called_once()
 
-    def test_replaced_scheduled_attempt_never_starts_later(self):
+    def test_second_reservation_is_rejected_and_original_timer_starts_once(self):
         path, state = cli.prepare_start(URL, scheduled_start=3000)
         self.clock = 2000
-        _, newer = cli.prepare_start(URL)
+        with self.assertRaisesRegex(VPError,'只支持一次'):
+            cli.prepare_start(URL)
         self.clock = 3000
-        self.assertEqual(vp.activate(path, state)["status"], "cancelled")
+        self.assertEqual(vp.activate(path, state)["status"], "running")
         self.api.start.assert_called_once()
-        self.assertEqual(newer["start_time"], 2000)
+        self.assertEqual(read_json(path)["start_time"], 3000)
 
     def test_start_timeout_only_queries_registration_afterwards(self):
         def timeout(*args, **kwargs):
@@ -168,7 +178,7 @@ class AttemptTests(Isolated):
         close_attempt(p1, 1500)
         record_receipt(read_json(Path(s1["directory"])/"contest.json"), "77", "A", 1700)
         self.clock = 2000
-        _, s2 = cli.prepare_start(URL)
+        _, s2 = self.legacy_round(p1)
         s1 = read_json(p1)
         self.clock = 2200
         out = io.StringIO()
@@ -184,7 +194,7 @@ class AttemptTests(Isolated):
     def test_shared_source_uses_latest_restart_submission_context(self):
         p1, s1 = cli.prepare_start(URL)
         self.clock = 2000
-        _, s2 = cli.prepare_start(URL)
+        _, s2 = self.legacy_round(p1)
         s1 = read_json(p1)
         source = Path(s1["directory"])/"A.cpp"
         source.write_text("source")
@@ -278,7 +288,7 @@ class PracticeTests(Isolated):
     def test_bt_chooses_latest_ended_vp_and_reopens_the_same_attempt(self):
         old_path, old = cli.prepare_start(URL)
         self.clock = 20000
-        path, state = cli.prepare_start(URL)
+        path, state = self.legacy_round(old_path)
         self.clock = 40000
         for _ in range(2):
             resumed_path, resumed = practice.prepare(URL)
@@ -377,6 +387,7 @@ class PracticeTests(Isolated):
     def test_qoj_practice_needs_no_native_vp_and_reopens_its_own_folder(self):
         html = '<ul class="nav-pills"><a href="/user/profile/tester">me</a></ul><h1>Open practice</h1><table><tr><td>A</td><td><a href="/contest/123/problem/10">problem</a></td></tr></table>'
         self.api._page.return_value = BeautifulSoup(html, "html.parser")
+        self.api.contest_name.return_value = 'Open practice'
         p1, s1 = practice.prepare(URL)
         self.clock = 3000
         p2, s2 = practice.prepare(URL)

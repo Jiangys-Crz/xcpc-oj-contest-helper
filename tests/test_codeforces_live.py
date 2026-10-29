@@ -198,6 +198,19 @@ class IsolatedState(unittest.TestCase):
 
 
 class LocalStateTests(IsolatedState):
+    def test_practice_rank_does_not_change_when_official_rank_refreshes(self):
+        self.state.update(practice_view=True,snapshot={'own':{'rank':7}})
+        write_json(self.path,self.state)
+        api=CodeforcesLive(URL,{'handle':'tester'})
+        api.api=Mock(return_value=standings(phase='FINISHED'))
+        for rank in (99,100):
+            snapshot=api.snapshot(contest())
+            snapshot['own']['rank']=rank
+            live.save_progress(self.path,self.state,contest(),snapshot,{},snapshot['at']+1)
+            self.assertEqual(read_json(self.path)['practice_rank'],'7')
+            rows=read_history(Path(self.state['history_path']),fields=live.HISTORY_FIELDS)
+            self.assertEqual(rows[0]['rank'],'7')
+
     def test_api_limit_shared_between_calls_and_retries_disabled(self):
         web = Mock()
         web.get.return_value.json.return_value = {"status": "OK", "result": []}
@@ -340,6 +353,7 @@ class LocalStateTests(IsolatedState):
 class SubmitTests(IsolatedState):
     def setUp(self):
         super().setUp()
+        self.stack.enter_context(patch('builtins.input', return_value='y'))
         self.directory = self.root / "contest"
         self.directory.mkdir()
         self.source = self.directory / "A.cpp"
@@ -374,6 +388,14 @@ class SubmitTests(IsolatedState):
         receipt = read_json(self.path.with_suffix(".receipts") / "77.json")
         self.assertEqual(receipt["verdict"], "PENDING")
         self.assertEqual(receipt["time"], 200)
+
+    def test_declined_preview_never_posts_or_creates_a_receipt(self):
+        with patch('builtins.input',return_value='n'), patch('sys.stdout',io.StringIO()) as output:
+            self.assertIsNone(live_submit.submit(self.source))
+        self.api.web.session.post.assert_not_called()
+        self.assertIn('GNU G++20',output.getvalue())
+        self.assertIn(URL+'/submit',output.getvalue())
+        self.assertFalse(self.path.with_suffix('.receipts').exists())
 
     def test_finished_before_and_system_tests_never_submit_practice(self):
         for phase in ("BEFORE", "PENDING_SYSTEM_TEST", "SYSTEM_TEST", "FINISHED"):

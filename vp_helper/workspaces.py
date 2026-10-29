@@ -8,7 +8,22 @@ from .models import Contest, VPError
 from .storage import file_lock, read_json, write_json
 
 
+def refresh_name(api, contest: Contest) -> None:
+    if not callable(getattr(type(api), 'contest_name', None)):
+        return
+    title = api.contest_name()
+    if not isinstance(title, str) or not title.strip():
+        raise VPError('原站未返回实际比赛名称，原文件夹保留。')
+    contest.name = title.strip()
+    contest.directory_name = contest.name
+    if contest.platform in ('qoj', 'cf', 'gym') and contest.extra.get('mode') not in ('live', 'practice'):
+        from .parsing import ccpc_reveal_count
+        contest.rules.problem_reveal_count = ccpc_reveal_count(contest.name)
+
+
 def name(contest: Contest) -> str:
+    if not isinstance(contest.name, str) or not contest.name.strip():
+        raise VPError('原站未提供实际比赛名称，未建立编号或站点名称目录。')
     value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', ' ', contest.name)
     value = ' '.join(value.split()).strip(' .')
     if not value:
@@ -60,17 +75,33 @@ def promote(path: Path, state: dict) -> None:
             for old_path, _ in owners:
                 with file_lock(old_path.with_suffix('.save.lock')):
                     old = read_json(old_path)
-                    old.update(directory=str(target), workspace_managed=True)
+                    old.update(directory=str(target), workspace_managed=True, workspace_name=state['contest']['name'])
+                    old['contest'].update(name=state['contest']['name'], directory_name=state['contest']['name'])
                     old.pop('workspace_target', None)
                     write_json(old_path, old)
-        state.update(directory=str(target), workspace_managed=True)
+        state.update(directory=str(target), workspace_managed=True, workspace_name=state['contest']['name'])
         state.pop('workspace_target', None)
-        write_json(path, state)
+        # A monitor may have received verdicts while the command refreshed the
+        # contest title. Renaming must never replace those with a stale snapshot.
+        with file_lock(path.with_suffix('.save.lock')):
+            current = read_json(path)
+            combined = {str(record['id']): record for record in state.get('submissions', [])}
+            combined.update({str(record['id']): record for record in current.get('submissions', [])})
+            state['submissions'] = list(combined.values())
+            for key in ('summary', 'medal_lines', 'recent', 'submission_history', 'snapshot', 'last_sync_time', 'ended_at', 'last_rank', 'practice_rank'):
+                if key in current:
+                    state[key] = current[key]
+            if current.get('practice_view'):
+                state['practice_view'] = True
+            if current.get('status') in ('archived', 'cancelled', 'failed'):
+                state['status'] = current['status']
+            write_json(path, state)
 
 
 def rename_existing(path: Path, state: dict, contest: Contest) -> None:
     source = Path(state['directory'])
     target = source.parent / name(contest)
+    state['contest'] = contest.to_dict()
     if source.resolve() != target.resolve():
         state['workspace_target'] = str(target)
-        promote(path, state)
+    promote(path, state)

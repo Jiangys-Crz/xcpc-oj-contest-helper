@@ -175,22 +175,12 @@ def submit(url: str, lang: str, code: str, problem: str) -> None:
     print(f'Check {origin}/submission/{sid} for the result.')
 
 
-def confirm(message: str) -> bool:
-    answer = ''
-    while answer not in ['y', 'n']:
-        answer = input(f'{message} (y/n) ').lower()
-    return answer == 'y'
-
-
 if __name__ == '__main__':
-    if len(sys.argv) not in [2, 3]:
-        print('Usage: submit code.cpp [-y]')
+    if len(sys.argv) != 2:
+        print('Usage: submit code.cpp')
         sys.exit(-1)
 
     file_name = sys.argv[1]
-    yes_by_default = False
-    if len(sys.argv) == 3 and sys.argv[-1] == '-y':
-        yes_by_default = True
 
     code_path = Path(file_name)
     if not code_path.exists():
@@ -211,16 +201,7 @@ if __name__ == '__main__':
     problem_id = contest.get('problem_ids', {}).get(problem, contest_offset + index)
     url = contest_base_url + '/problem/' + str(problem_id)
 
-    print('Submission information:')
-    print(f'  filename:    {file_name}')
-    print(f'  config:      {config_path}')
-    print(f'  contest:     {contest_name}')
-    print(f'  problem:     {problem}')
-    print(f'  language:    {lang}')
-    print(f'  url:         {url}')
-
-    if yes_by_default or confirm('Do you want to continue?'):
+    from vp_helper.submission_confirmation import confirm_submission
+    if confirm_submission(code_path, contest, problem, lang, url, config_path):
         code = code_path.read_text('utf8')
         submit(url, lang, code, problem)
-    else:
-        print('Aborted.')

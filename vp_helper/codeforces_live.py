@@ -131,6 +131,15 @@ class CodeforcesLive:
             self.verify_registration(page, contest)
         return contest, snapshot
 
+    def contest_name(self) -> str:
+        if self.platform == 'gym':
+            return self.api('contest.standings', contestId=self.id)['contest']['name']
+        data = self.api('contest.list', gym='false')
+        raw = next((c for c in data if str(c['id']) == self.id), None)
+        if raw is None:
+            raise VPError('Codeforces 未返回这场比赛的名称，原目录保留。')
+        return raw['name']
+
     def verify_registration(self, page, contest: Contest) -> None:
         # A missing scoreboard row is not evidence of missing registration:
         # registered users may not have submitted, or may be out of competition.

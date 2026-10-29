@@ -109,6 +109,6 @@ def history(args: list[str]) -> None:
 
 
 def _records(records):
-    # Use the same renderer and blue practice styling as the live terminal.
+    # Use the same verdict colors and practice labels as the terminal.
     from types import SimpleNamespace
     return Dashboard.records(SimpleNamespace(submissions=records, _record_table=Dashboard._record_table))

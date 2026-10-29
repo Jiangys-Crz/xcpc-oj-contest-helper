@@ -23,20 +23,25 @@ class SessionReuseTests(Isolated):
         self.api.prepare.assert_not_called()
         self.assertEqual(len(attempts()),1)
 
-    def test_explicit_restart_reuses_folder_and_keeps_source_and_prior_history(self):
+    def test_repeated_vp_retains_folder_files_history_and_original_clock(self):
         first,old=cli.prepare_start(URL)
         source=Path(old['directory'])/'A.cpp'
         source.write_text('preserved code')
+        (source.parent/'nested').mkdir()
+        (source.parent/'nested'/'data.bin').write_bytes(bytes(range(256)))
+        (source.parent/'Statements.pdf').write_bytes(b'%PDF-existing')
         self.clock=2000
         with patch.object(cli,'open_state') as opened,patch('vp_helper.scheduling.prompt_start',return_value=2000):
-            cli.start(URL,restart=True)
+            cli.start(URL)
         new=opened.call_args.args[1]
-        self.assertNotEqual(opened.call_args.args[0],first)
+        self.assertEqual(opened.call_args.args[0],first)
         self.assertEqual(new['directory'],old['directory'])
         self.assertEqual(source.read_text(),'preserved code')
+        self.assertEqual((source.parent/'nested'/'data.bin').read_bytes(),bytes(range(256)))
+        self.assertEqual((source.parent/'Statements.pdf').read_bytes(),b'%PDF-existing')
         self.assertEqual(len(list((self.root/'desktop').iterdir())),1)
-        self.assertEqual(len(attempts()),2)
-        self.assertEqual(read_json(source.parent/'contest.json')['vp_context']['start_time'],2000)
+        self.assertEqual(len(attempts()),1)
+        self.assertEqual(read_json(source.parent/'contest.json')['vp_context']['start_time'],1000)
         self.assertEqual(read_json(first)['start_time'],1000)
 
     def test_bt_keeps_the_same_latest_vp_round_and_folder(self):
@@ -53,7 +58,7 @@ class SessionReuseTests(Isolated):
     def test_bt_selects_latest_round_even_if_current_pointer_is_older(self):
         first,_=cli.prepare_start(URL)
         self.clock=2000
-        latest,state=cli.prepare_start(URL)
+        latest,state=self.legacy_round(first)
         self.clock=2500
         end_attempt(state['attempt_id'])
         write_json(state_directory()/'current.json',{'state_path':str(first)})

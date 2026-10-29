@@ -140,6 +140,15 @@ def submit_problem(browser, contest, lang, source, guru):
     if guru != -1:
         submission["submittedProblemCode"] = guru
 
+    from pathlib import Path
+    from vp_helper.submission_confirmation import confirm_submission
+    config_path = Path('contest.json')
+    config = json.loads(config_path.read_text()) if config_path.is_file() else {'name': contest}
+    problem = str(guru) if guru != -1 else str(submission['submittedProblemIndex'].value)
+    if not confirm_submission(Path(source), config, problem, available[langcode], browser.url,
+                              config_path if config_path.is_file() else None):
+        return False
+    browser.vp_submitted_at = time.time()
     browser.submit_form(submission)
 
     """ check if good """
@@ -189,6 +198,7 @@ def submit(browser, handle, contest, problem, lang, source, show, guru):
     """ show submission """
     submitted_at = time.time()
     if submit_problem(browser, contest, lang, source, pid):
+        submitted_at = browser.vp_submitted_at
         if previous is not None:
             sid = cf_submission_id(browser.parsed, previous, contest, problem, handle)
             if sid is not None:

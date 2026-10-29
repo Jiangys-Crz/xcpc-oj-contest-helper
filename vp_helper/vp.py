@@ -1,4 +1,4 @@
-"""Create a fresh native VP; replace local counting only after confirmation."""
+"""Start a contest's single native VP only after platform confirmation."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -52,6 +52,17 @@ def _activate(path: Path) -> dict:
             write_json(path, state)
             return state
         contest = Contest.from_dict(state["contest"])
+        if not state.get('activation_uncertain') and any(
+                other_path != path and other.get('mode', 'vp') == 'vp'
+                and other.get('status') in ('running', 'complete', 'archived')
+                and other['url'] == state['url'] and other['handle'].casefold() == state['handle'].casefold()
+                for other_path, other in attempts(path.parent)):
+            error = StartRejected('这场比赛已有 VP，已取消旧版遗留的重复预约；不会再次启动原站 VP。')
+            _fail(path, state, error)
+            raise error
+        if (contest.platform == 'qoj' and not state.get('activation_uncertain')
+                and time.time() < state['requested_start']):
+            return state
         config = cli.load_account(contest.platform)
         api = cli.adapter(contest.url, config)
         if api.handle.casefold() != state["handle"].casefold():
@@ -112,6 +123,8 @@ def prepare(url: str, scheduled_start: float | None = None) -> tuple[Path, dict]
         if pending:
             raise VPError("上一轮启动结果尚未确认。请用 vp history " + pending["attempt_id"] +
                           " --open 继续核验；不会重复发送启动请求。")
+        if previous:
+            raise VPError('这场比赛已有 VP；每场比赛只支持一次。请重复运行原 vp 命令恢复会话，或使用 bt 链接补题。')
         cli.console.print("Reading contest information…", markup=False)
         contest = api.prepare()
         contest.directory_name = " ".join(contest.directory_name.split())

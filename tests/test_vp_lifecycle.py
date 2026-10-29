@@ -18,7 +18,7 @@ from test_workflows import Isolated, URL
 
 
 class LifecycleTests(Isolated):
-    def test_native_refusal_does_not_launch_or_replace_old_attempt(self):
+    def test_removed_restart_cannot_launch_or_replace_old_attempt(self):
         path, state = cli.prepare_start(URL)
         source = Path(state['directory'])/'A.cpp'
         source.write_text('saved solution')
@@ -26,7 +26,7 @@ class LifecycleTests(Isolated):
         self.clock = 2000
         self.api.start.side_effect = StartRejected('QOJ 拒绝再次 VP')
         with patch.object(cli, 'open_state') as open_state:
-            with self.assertRaisesRegex(StartRejected, '拒绝'):
+            with self.assertRaisesRegex(VPError, '只支持一次'):
                 cli.start(URL, restart=True, scheduled_start=self.clock)
             open_state.assert_not_called()
         self.assertEqual(path.read_bytes(), before)
@@ -34,8 +34,8 @@ class LifecycleTests(Isolated):
         self.assertEqual(read_json(state_directory()/'current.json')['state_path'], str(path))
         self.assertEqual(source.read_text(), 'saved solution')
         failed = [s for _, s in attempts() if s.get('status') == 'failed']
-        self.assertEqual(len(failed), 1)
-        self.assertFalse(failed[0]['contest']['extra'].get('local_attempt'))
+        self.assertEqual(len(failed), 0)
+        self.api.start.assert_called_once()
 
     def test_preflight_rejection_has_no_new_workspace(self):
         self.api.check_start.side_effect = StartRejected('not allowed')
@@ -45,10 +45,10 @@ class LifecycleTests(Isolated):
         self.assertFalse((self.root/'desktop').exists())
         self.api.start.assert_not_called()
 
-    def test_scheduled_refusal_restores_old_current_without_closing_it(self):
+    def test_legacy_duplicate_timer_is_rejected_without_another_native_post(self):
         old, original = cli.prepare_start(URL)
         self.clock = 2000
-        path, state = cli.prepare_start(URL, 3000)
+        path, state = self.legacy_round(old,scheduled_start=3000)
         self.assertIsNone(boundary(old))
         self.clock = 3000
         self.api.start.side_effect = StartRejected('no repeat')
@@ -57,6 +57,7 @@ class LifecycleTests(Isolated):
         self.assertEqual(read_json(path)['status'], 'failed')
         self.assertIsNone(boundary(old))
         self.assertEqual(read_json(state_directory()/'current.json')['state_path'], str(old))
+        self.api.start.assert_called_once()
 
     def test_scheduled_monitor_exits_on_definite_refusal(self):
         path, state = cli.prepare_start(URL, 3000)

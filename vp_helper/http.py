@@ -135,10 +135,10 @@ class WebSession:
         # The final iteration always returns or raises; this keeps the flow total.
         raise VPError(f"Connection failed: {host}")  # pragma: no cover
 
-    def post(self, url: str, data: dict):
+    def post(self, url: str, data: dict, *, headers: dict | None = None):
         try:
             # Never retry a native contest start automatically.
-            r = self.session.post(url, data=data, timeout=(10, 40))
+            r = self.session.post(url, data=data, timeout=(10, 40), **({'headers': headers} if headers else {}))
         except _RequestException:
             raise VPError("The server did not confirm starting the VP. Run the same URL to check the remote state.") from None
         return self.check(r)

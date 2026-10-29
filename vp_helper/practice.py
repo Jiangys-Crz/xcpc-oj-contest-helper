@@ -18,7 +18,7 @@ from .scoring import score_submissions
 from .sessions import attempts, boundary, merge_records, save_state, latest_session
 from .storage import file_lock, read_json, write_json
 from .tui import Dashboard, TerminalDashboard
-from .workspaces import allocate, promote, rename_existing
+from .workspaces import allocate, promote, refresh_name, rename_existing
 
 
 class Practice:
@@ -60,9 +60,7 @@ class Practice:
             if not self.account.get("_login_verified"):
                 from .browser_login import identity_from_page
                 identity_from_page("qoj", str(page), self.handle)
-            title = page.select_one("h1")
-            if title:
-                c.name = title.get_text(" ", strip=True)
+            c.name = self.api.contest_name(page)
             for row in page.select("tr"):
                 link = row.select_one(f'a[href*="/contest/{self.id}/problem/"]')
                 cells = row.select("td")
@@ -87,6 +85,13 @@ class Practice:
             self.api.save_statements(contest, directory)
 
 
+def saved_rank(state: dict) -> str:
+    candidates = ([state.get('snapshot', {}).get('own', {}).get('rank')]
+                  if isinstance(state.get('snapshot', {}).get('own'), dict) else [])
+    candidates += [state.get('last_rank'), state.get('summary', {}).get('rank')]
+    return next((str(value) for value in candidates if value is not None and str(value) not in ('', '?', '—')), '—')
+
+
 def _resume_vp(root: Path, url: str, handle: str, config: dict) -> tuple[Path, dict] | None:
     from . import cli
     previous = latest_session(url, handle)
@@ -108,9 +113,12 @@ def _resume_vp(root: Path, url: str, handle: str, config: dict) -> tuple[Path, d
         native = cli.adapter(url, config)
     if native.handle.casefold() != state["handle"].casefold():
         raise VPError("请恢复此 VP 使用的原账号后再补题。")
-    rename_existing(path, state, Contest.from_dict(state["contest"]))
+    contest = Contest.from_dict(state['contest'])
+    refresh_name(native, contest)
+    rename_existing(path, state, contest)
     directory = Path(state["directory"])
     state["practice_view"] = True
+    state.setdefault('practice_rank', saved_rank(state))
     save_state(path, state)
     cli.configure_contest(native, Contest.from_dict(state["contest"]), directory, path, state,
                           live=state.get("mode") == "live")
