@@ -2,7 +2,7 @@
 
 Ubuntu 上的比赛终端助手，支持 QOJ、Codeforces ICPC 虚拟参赛、Codeforces Gym，以及 Codeforces、CWNUOJ、牛客正式比赛实时接入，并提供各站补题工作区。上方显示成绩与完整提交记录，下方保留比赛目录中的普通 shell。
 
-当前版本：0.7.9。
+当前版本：0.7.10。
 
 ## 安装
 
@@ -303,6 +303,8 @@ xcpc doctor nk
 - 奖项采用原赛明确配置。资格、规则或榜单完整性无法验证时，保留未知结果。
 - `rank` 列保持在成绩表左侧，排名和奖项在同一格内分两行显示，例如上行 `=47`、下行 `Silver Prize`。
 - 内置 submit 在服务器确认新提交编号后立即通知面板显示 `PENDING`，随后用平台判定替换；本人提交与榜单查询独立执行。
+- CF / Gym 的 VP、live、BT 都持续查询该账号的原站提交，不依赖本地 submit 回执，网页提交也会同步。待判时约 2 秒再次查询（另加网络耗时和共享 API 限速）；待判持续 8 秒后，每隔至少 5 秒核对已登录账号的 My submissions 页面。仅当账号、比赛、题号和提交编号都匹配时采纳网页判定；网站核对失败会提示并继续查询，已有记录保留。网页判定先于 API 时暂存结果，API 追上后仍支持正常重测。
+- 历史后续分页失败时仍同步已经取到的最新判定，并提示稍后重查较早记录。并行的历史查询与面板按请求开始顺序合并，旧请求晚返回不能把较新判定覆盖为 Pending；最新一次原站重测仍可重新显示待判。
 - 各平台提交后统一显示英文提示 `Check judging results here: URL`，链接指向原站该条提交。请求超时或尚未取得编号时，提供对应提交列表链接，先查看原站记录再决定是否重试；取消确认不会产生该提示。
 - 题格在没有提交时保持紧凑，出现尝试、待判或通过后按内容增宽，保留 `1 try`、`2 tries`、`2 + 1 tries` 的显示。提交列表独立分配列宽，完整显示长提交编号；时间统一为 `YYYY-MM-DD HH:MM:SS`，采用 `TZ` 指定时区，默认 Asia/Shanghai，历史与补题界面一致。
 - 判定映射覆盖 [Codeforces 官方 Submission 枚举](https://codeforces.com/apiHelp/objects#Submission)，包括 `IDLENESS_LIMIT_EXCEEDED`；QOJ 的 `Dangerous Syscalls` 按运行错误处理，`Judgement Failed` 保留未知。CWNUOJ 对照 [Hydro 状态定义](https://github.com/hydro-dev/Hydro/blob/master/packages/common/status.ts)，牛客补齐[官方列出的运行错误与内部错误](https://www.nowcoder.com/html/faq)。系统错误、隐藏结果与无法识别的判定不会误算为错误提交；单条未知结果不会阻止其他记录同步。

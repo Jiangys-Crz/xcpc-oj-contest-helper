@@ -86,6 +86,23 @@ def merge_submissions(path: Path, state: dict, incoming: list[Submission]) -> li
     return [Submission(**event) for event in merge_records(path, state, [asdict(s) for s in incoming])]
 
 
+def reserve_submission_sync(path: Path) -> int:
+    """Order observations when requests begin, rather than when slow responses finish."""
+    with file_lock(path.with_suffix('.save.lock')):
+        cursor = path.with_suffix('.sync-sequence')
+        revision = max(read_json(cursor).get('revision', 0), read_json(path).get('sync_revision', 0)) + 1
+        write_json(cursor, {'revision': revision})
+        return revision
+
+
+def apply_submission_sync(path: Path, state: dict, incoming: list[dict], revision: int) -> list[dict]:
+    state['submissions'] = merge_records(path, state, incoming)
+    state['sync_revision'] = revision
+    state['last_sync_time'] = platform_now(state)
+    save_state(path, state)
+    return state['submissions']
+
+
 def _rebase_start(state: dict, started: float) -> None:
     old = state['start_time']
     delta = old - started

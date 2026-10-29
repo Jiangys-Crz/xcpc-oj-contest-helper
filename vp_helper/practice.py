@@ -16,7 +16,7 @@ from .platform_clock import platform_now
 from .models import Contest, Rules, Submission, VPError
 from .parsing import contest_url
 from .scoring import score_submissions
-from .sessions import attempts, boundary, merge_records, save_state, latest_session
+from .sessions import attempts, boundary, merge_records, save_state, latest_session, apply_submission_sync, reserve_submission_sync
 from .storage import file_lock, read_json, write_json
 from .tui import Dashboard, TerminalDashboard
 from .workspaces import allocate, promote, refresh_name, rename_existing
@@ -76,9 +76,15 @@ class Practice:
         self.handle = self.api.handle
         return c
 
+    def seed_submissions(self, records) -> None:
+        if hasattr(self.api, 'seed_submissions'):
+            self.api.seed_submissions([Submission(**e) for e in records] if self.platform == 'qoj' else records)
+
     def submissions(self, contest: Contest, started: float) -> list[dict]:
         self.api.start_time = started
         values = self.api.submissions(contest)
+        message = getattr(self.api, 'submission_message', '')
+        self.submission_message = message if isinstance(message, str) else ''
         return [{**(asdict(s) if self.platform == "qoj" else s), "practice": True} for s in values]
 
     def statements(self, contest: Contest, directory: Path):
@@ -199,15 +205,19 @@ def monitor(path: Path) -> None:
             while view.input():
                 if future is not None and future.done():
                     try:
-                        state["submissions"] = merge_records(path, state, future.result())
-                        state['sync_revision'] = state.get('sync_revision', 0) + 1
-                        save_state(path, state)
-                        message = ""
+                        apply_submission_sync(path, state, future.result(), poll_revision)
+                        message = getattr(api, 'submission_message', '')
+                        if not isinstance(message, str):
+                            message = ''
                     except (VPError, OSError) as exc:
                         message = str(exc)
                     future = None
-                    next_poll = time.monotonic() + 5
+                    pending = any(s['verdict'] == 'PENDING' for s in state.get('submissions', []))
+                    next_poll = time.monotonic() + (2.1 if pending else 5)
                 if future is None and time.monotonic() >= next_poll:
+                    poll_revision = reserve_submission_sync(path)
+                    if contest.platform in ('cf', 'gym') and hasattr(api, 'seed_submissions'):
+                        api.seed_submissions(state.get('submissions', []))
                     future = pool.submit(api.submissions, contest, state["start_time"])
                 records = submission_records(merge_records(path, state, []), "FINISHED")
                 view.update(PracticeDashboard(contest, platform_now(state)-state["start_time"], records, message,

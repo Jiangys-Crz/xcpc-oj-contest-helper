@@ -124,7 +124,9 @@ def fetch(api, saved_contest: dict, directory: Path | None = None):
     try:
         contest = Contest.from_dict(saved_contest)
         if directory is None:
-            return api.submissions(contest), ""
+            records = api.submissions(contest)
+            message = getattr(api, 'submission_message', '')
+            return records, message if isinstance(message, str) else ''
         snapshot = api.snapshot(contest)
         return (contest.to_dict(), snapshot), ""
     except (VPError, OSError) as exc:
@@ -146,6 +148,7 @@ def save_progress(path: Path, state: dict, contest: Contest, snapshot: dict,
         state.setdefault('practice_rank', saved_rank(state))
     own = snapshot.get("own")
     final = (snapshot.get("phase") == "FINISHED" and not snapshot.get("frozen") and own is not None
+             and state.get('submissions_complete', True)
              and submissions_at >= snapshot.get("at", float("inf"))
              and not any(e["verdict"] in UNRESOLVED_VERDICTS | {"PENDING"} for e in events.values() if not e.get("practice")))
     from .sessions import merge_records, save_state
@@ -153,7 +156,6 @@ def save_progress(path: Path, state: dict, contest: Contest, snapshot: dict,
     state.update(contest=contest.to_dict(), start_time=contest.original_start, snapshot=snapshot,
                  submissions=merged, status="complete" if final else "running",
                  last_sync_time=submissions_at)
-    state['sync_revision'] = state.get('sync_revision', 0) + 1
     save_state(path, state)
     if snapshot:
         update_history(Path(state["history_path"]), {
@@ -202,13 +204,14 @@ def monitor_live(path: Path) -> None:
                     incoming, submission_error = submission_future.result()
                     submission_future = None
                     if incoming is not None and submission_start == contest.original_start:
-                        from .sessions import merge_records
+                        from .sessions import apply_submission_sync
                         state["submissions"] = list(events.values())
-                        events = {e["id"]: e for e in merge_records(path, state, incoming)}
+                        events = {e['id']: e for e in apply_submission_sync(path, state, incoming, poll_revision)}
+                        state['submissions_complete'] = getattr(api, 'submissions_complete', True) is not False
                         submissions_at = platform_now(contest.url)
                         changed = True
                     pending = any(e["verdict"] == "PENDING" for e in events.values())
-                    backoff = min(60.0, backoff * 2) if submission_error else 2.1 if pending else 5.0
+                    backoff = min(60.0, backoff * 2) if submission_error and incoming is None else 2.1 if pending else 5.0
                     next_submissions = now + backoff
                 if reference_future is not None and reference_future.done():
                     incoming, reference_error = reference_future.result()
@@ -231,6 +234,10 @@ def monitor_live(path: Path) -> None:
                 if reference_future is None and now >= next_reference:
                     reference_future = network.submit(fetch, reference_api, contest.to_dict(), Path(state["directory"]))
                 if submission_future is None and now >= next_submissions and platform_now(contest.url) >= contest.original_start:
+                    from .sessions import reserve_submission_sync
+                    poll_revision = reserve_submission_sync(path)
+                    if hasattr(api, 'seed_submissions'):
+                        api.seed_submissions(list(events.values()))
                     submission_start = contest.original_start
                     submission_future = network.submit(fetch, api, contest.to_dict())
                 if changed:

@@ -12,6 +12,7 @@ from .accounts import refresh_api_credentials
 from .parsing import contest_url
 from .storage import file_lock, read_json, state_directory, write_json
 from .scoring import codeforces_verdict
+from .cf_judgements import PendingJudgements
 
 PHASES = {"BEFORE", "CODING", "PENDING_SYSTEM_TEST", "SYSTEM_TEST", "FINISHED"}
 LIVE_TYPES = {"CONTESTANT", "OUT_OF_COMPETITION"}
@@ -25,7 +26,8 @@ def public_api(web: WebSession, method: str, **params):
         last = read_json(root / "cf-api.json").get("at", 0)
         time.sleep(max(0.0, min(2.1, 2.1 - (time.time() - last))))
         try:
-            response = web.get("https://codeforces.com/api/" + method, params=params, retry=False)
+            options = {'headers': {'Cache-Control': 'no-cache'}} if method == 'contest.status' else {}
+            response = web.get("https://codeforces.com/api/" + method, params=params, retry=False, **options)
         finally:
             write_json(root / "cf-api.json", {"at": time.time()})
     try:
@@ -105,6 +107,7 @@ class CodeforcesLive:
         # from this same user's shared configuration, including older folders.
         refresh_api_credentials(self.account, platform)
         self.handle = account.get("handle", "")
+        self.pending_judgements = PendingJudgements()
         self.web = WebSession("https://codeforces.com", self.account)
         # The public standings endpoint must receive exactly contestId and no
         # account cookies, API authentication, locale, or filter parameters.
@@ -182,12 +185,23 @@ class CodeforcesLive:
         return {"own": row, "stats": stats, "phase": contest.extra["phase"],
                 "frozen": contest.extra["frozen"], "at": platform_now(self.url)}
 
+    def seed_submissions(self, records) -> None:
+        self.pending_judgements.seed(records)
+
     def submissions(self, contest: Contest) -> list[dict]:
         result = {}
+        self.submissions_complete = False
+        self.submission_message = ''
         offset = 1
         while True:
-            data = self.api("contest.status", contestId=self.id, handle=self.handle,
-                            **{"from": offset, "count": 1000})
+            try:
+                data = self.api("contest.status", contestId=self.id, handle=self.handle,
+                                **{"from": offset, "count": 1000})
+            except VPError as exc:
+                if offset == 1:
+                    raise
+                self.submission_message = 'Recent submissions synced; older history will be retried: ' + str(exc)
+                break
             for raw in data:
                 author = raw["author"]
                 kind = author.get("participantType")
@@ -205,9 +219,10 @@ class CodeforcesLive:
                     "points": raw.get("points"), "practice": kind == "PRACTICE",
                 }
             if len(data) < 1000:
+                self.submissions_complete = True
                 break
             offset += 1000
-        return list(result.values())
+        return self.pending_judgements.update(self, list(result.values()))
 
     def save_statements(self, contest: Contest, directory) -> None:
         # HTML is the native statement format for ordinary rounds. Skip files

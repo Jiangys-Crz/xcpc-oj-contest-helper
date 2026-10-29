@@ -528,7 +528,7 @@ def monitor(path: Path) -> None:
             api.observed_start_time = state['start_time']
         reference_api = adapter(contest.url, config)
         reference_api.start_time = state["start_time"]
-        from .sessions import boundary, merge_submissions, save_state
+        from .sessions import boundary, apply_submission_sync, reserve_submission_sync, save_state
         submissions = {x["id"]: Submission(**x) for x in state.get("submissions", [])}
         final_score_key = (score_submissions(list(submissions.values()), list(contest.problems),
                                            contest.rules, contest.rules.duration).rank_key
@@ -580,7 +580,8 @@ def monitor(path: Path) -> None:
                         fresh_submissions = True
                         have_polled = True
                         state["submissions"] = [asdict(s) for s in submissions.values()]
-                        submissions = {s.id: s for s in merge_submissions(path, state, incoming)}
+                        synchronized = apply_submission_sync(path, state, [asdict(s) for s in incoming], poll_revision)
+                        submissions = {s['id']: Submission(**s) for s in synchronized}
                         last_poll = now
                     submission_error = error
                     pending = any(s.verdict == "PENDING" for s in submissions.values())
@@ -593,6 +594,9 @@ def monitor(path: Path) -> None:
                         reference = refreshed
                     next_reference = now + 30
                 if future is None and now >= next_poll:
+                    poll_revision = reserve_submission_sync(path)
+                    if contest.platform in ('cf', 'gym') and hasattr(api, 'seed_submissions'):
+                        api.seed_submissions(list(submissions.values()))
                     future = network.submit(poll, api, contest, elapsed)
                 if reference_future is None and now >= next_reference:
                     reference_future = network.submit(poll, reference_api, contest, scoring_elapsed, True)
@@ -654,7 +658,6 @@ def monitor(path: Path) -> None:
                     state.update(contest=contest.to_dict(), submissions=[asdict(x) for x in submissions.values()],
                                  recent=recent, submission_history=records, last_sync_time=platform_now(state),
                                  status="archived" if interrupted and elapsed >= cutoff-state["start_time"] else "complete" if finalized or preserve_final else "running")
-                    state['sync_revision'] = state.get('sync_revision', 0) + 1
                     state["summary"] = {"solved": private.solved,
                                         "penalty": private.penalty if private.results_complete else "",
                                         "rank": state.get('practice_rank', '—') if state['practice_view'] else rank if finalized else "", "prize": prize}

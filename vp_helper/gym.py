@@ -14,6 +14,7 @@ from .models import Cell, Contest, Medals, Reference, Rules, Submission, TeamSco
 from .originals import OriginalReplay, classify, load_metadata
 from .parsing import ccpc_reveal_count, medals_from_html
 from .scoring import codeforces_verdict, verdict
+from .cf_judgements import PendingJudgements
 
 def signed_parameters(method: str, params: dict, key: str, secret: str,
                       at: int | None = None, nonce: str | None = None) -> dict:
@@ -38,6 +39,7 @@ class Gym:
         self.start_time: float | None = None
         self._original = None
         self.submissions_complete = False
+        self.pending_judgements = PendingJudgements()
         self._replay = None
         self._next_replay_attempt = 0.0
         self._replay_error = ""
@@ -233,13 +235,24 @@ class Gym:
             raise StartRejected("Codeforces confirmed a different virtual start time. Check the original registration before retrying.")
         return self.start_time
 
+    def seed_submissions(self, records) -> None:
+        self.pending_judgements.seed(records)
+
     def submissions(self, contest: Contest) -> list[Submission]:
         if self.start_time is None:
             raise VPError("The native Gym VP start has not been verified.")
         result = {}
+        self.submissions_complete = False
+        self.submission_message = ''
         offset = 1
         while True:
-            data = self.api("contest.status", contestId=self.id, handle=self.handle, **{"from": offset, "count": 1000})
+            try:
+                data = self.api("contest.status", contestId=self.id, handle=self.handle, **{"from": offset, "count": 1000})
+            except VPError as exc:
+                if offset == 1:
+                    raise
+                self.submission_message = 'Recent submissions synced; older history will be retried: ' + str(exc)
+                break
             # HTTP Date + native countdown can differ from the API epoch by a
             # few seconds. Reconcile only this account's same-contest VP near
             # the confirmed reservation; never import a different participation.
@@ -285,7 +298,10 @@ class Gym:
                 self.submissions_complete = True
                 break
             offset += 1000
-        return list(result.values())
+        from dataclasses import asdict
+        events = self.pending_judgements.update(self, [asdict(s) for s in result.values()])
+        return [Submission(**{**event, 'verdict': 'UNAVAILABLE' if event['verdict'] == 'PARTIAL' else event['verdict']})
+                for event in events]
 
     @staticmethod
     def rows_from_api(data: dict, contest: Contest) -> list[TeamScore]:

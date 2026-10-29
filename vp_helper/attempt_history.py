@@ -12,7 +12,7 @@ from .codeforces_live import submission_records
 from .platform_clock import platform_now
 from .models import Contest, Submission, VPError
 from .scoring import score_submissions, submission_history
-from .sessions import attempts, boundary, merge_records, save_state
+from .sessions import attempts, boundary, merge_records, apply_submission_sync, reserve_submission_sync
 from .storage import config_directory, read_json
 from .tui import Dashboard
 
@@ -33,12 +33,15 @@ def refresh(path: Path, state: dict) -> str:
         else:
             api = live.live_adapter(state["url"], config) if state.get("mode") == "live" else cli.adapter(state["url"], config)
         api.start_time = state["start_time"]
+        revision = reserve_submission_sync(path)
+        if contest.platform in ('cf', 'gym') and hasattr(api, 'seed_submissions'):
+            records = state.get('submissions', [])
+            api.seed_submissions(records if state.get('mode') in ('live', 'practice') else [Submission(**e) for e in records])
         incoming = api.submissions(contest, state["start_time"]) if state.get("mode") == "practice" else api.submissions(contest)
         incoming = incoming if state.get("mode") in ("live", "practice") else [asdict(s) for s in incoming]
-        state["submissions"] = merge_records(path, state, incoming)
-        state['sync_revision'] = read_json(path).get('sync_revision', state.get('sync_revision', 0)) + 1
-        save_state(path, state)
-        return ""
+        apply_submission_sync(path, state, incoming, revision)
+        message = getattr(api, 'submission_message', '')
+        return message if isinstance(message, str) else ''
     except (VPError, OSError) as exc:
         return "Showing saved records: " + str(exc)
 

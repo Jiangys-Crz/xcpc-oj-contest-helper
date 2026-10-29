@@ -108,6 +108,7 @@ class WebSession:
         return True
 
     def get(self, url: str, *, retry: bool = True, **kwargs) -> object:
+        timeout = kwargs.pop('timeout', (10, 40))
         if not self._browser_checked:
             self._browser_checked = True
             self._refresh_browser()
@@ -126,7 +127,7 @@ class WebSession:
                 try:
                     from .platform_clock import tick
                     sent_at = tick()
-                    r = self.session.get(url, timeout=(10, 40), **request_options)
+                    r = self.session.get(url, timeout=timeout, **request_options)
                 except _RequestException as exc:
                     if not (_IMPERSONATE and host == 'codeforces.com' and not self._http1_only
                             and type(exc).__name__ == 'SSLError'):
@@ -137,14 +138,14 @@ class WebSession:
                         time.sleep(2.1)
                     request_options['http_version'] = CurlHttpVersion.V1_1
                     sent_at = tick()
-                    r = self.session.get(url, timeout=(10, 40), **request_options)
+                    r = self.session.get(url, timeout=timeout, **request_options)
                 if (not refreshed and r.status_code == 200
                         and urlsplit(r.url).path in ("/login", "/user/login", "/enter")):
                     refreshed = True
                     if self._refresh_browser(force=True):
                         # Only an idempotent GET is repeated after refreshing login.
                         sent_at = tick()
-                        r = self.session.get(url, timeout=(10, 40), **request_options)
+                        r = self.session.get(url, timeout=timeout, **request_options)
             except _RequestException as exc:
                 if attempt == retries:
                     detail = (str(exc).splitlines() or [''])[0][:500]
