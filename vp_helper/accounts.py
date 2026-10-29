@@ -18,6 +18,7 @@ def pasted_credential(value: str) -> str:
 
 
 def prompt_api_credentials() -> dict:
+    print('Get your Codeforces API key and secret at https://codeforces.com/settings/api (sign in first).')
     print('支持右键或 Ctrl+Shift+V 粘贴；secret 输入不回显，粘贴后按回车。')
     values = {}
     try:

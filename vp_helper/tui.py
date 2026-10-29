@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from rich import box
 from rich.cells import set_cell_size
@@ -9,6 +10,8 @@ from rich.table import Table
 from rich.text import Text
 
 from .models import Contest, Rules, Submission, TeamScore
+from .scheduling import user_zone
+from .scoring import NON_ATTEMPT_VERDICTS, UNRESOLVED_VERDICTS
 
 
 PRACTICE_ACCEPTED = "white on #0000ff"
@@ -42,6 +45,7 @@ class Dashboard:
     message: str = ""
     revealed: frozenset[str] | None = None
     practice: bool = False
+    start_time: float | None = None
 
     def fixed(self, width: int):
         # Equal side columns keep the contest title at the screen's center.
@@ -65,12 +69,12 @@ class Dashboard:
         heading.add_row(Text(" " + timer, style="bold default"), Text(label, style="bold"), Text(""))
         table = Table(box=SCORE_BOX, padding=(0, 1), style="default",
                       header_style="bold black on #eeeeee", border_style="#bbbbbb",
-                      show_edge=False, expand=True, collapse_padding=True)
+                      show_edge=False, expand=False, collapse_padding=True)
         for label in ("rank", "team", "solved", "penalty"):
             table.add_column(label, justify="left" if label == "team" else "center",
                              no_wrap=True)
         for label in self.contest.problems:
-            table.add_column(label, justify="center", ratio=1)
+            table.add_column(label, justify="center")
         cells = []
         corrections = recorded_cells(self.contest, self.submissions, practice=True)
         for label in self.contest.problems:
@@ -81,8 +85,6 @@ class Dashboard:
                 c = correction
             tries = (f"{c.tries} + {c.pending} tries" if c.pending else
                      f"{c.tries} {'try' if c.tries == 1 else 'tries'}" if c.tries else "—")
-            if width < 155:
-                tries = f"{c.tries}+{c.pending}" if c.pending else str(c.tries) if c.tries else "—"
             if c.unresolved:
                 tries = f"{c.tries}+?" if c.tries else "?"
             if c.solved:
@@ -132,23 +134,33 @@ class Dashboard:
 
     @staticmethod
     def _record_table():
-        results = Table.grid(expand=True, padding=(0, 1))
-        results.add_column(width=9, justify="center", no_wrap=True)
-        results.add_column(width=14, justify="center", no_wrap=True)
-        results.add_column(width=12, justify="center", no_wrap=True)
-        results.add_column(ratio=1, no_wrap=True)
+        results = Table.grid(expand=True, padding=(0, 2))
+        results.add_column(width=10, justify="center", no_wrap=True)
+        results.add_column(width=26, justify="center", no_wrap=True)
+        results.add_column(width=21, justify="center", no_wrap=True)
+        results.add_column(ratio=1, min_width=20, no_wrap=True)
         return results
 
     def records(self):
         results = self._record_table()
         for item in self.submissions:
             v = item["verdict"]
-            color = "#008000" if v == "CORRECT" else "#b8860b" if v == "PRETESTS-PASSED" else "#808080" if v in ("PENDING", "TOO-LATE", "UNAVAILABLE", "HIDDEN") else "#ff0000"
+            color = "#008000" if v == "CORRECT" else "#b8860b" if v == "PRETESTS-PASSED" else "#808080" if v in UNRESOLVED_VERDICTS | NON_ATTEMPT_VERDICTS | {"PENDING", "TOO-LATE"} else "#ff0000"
             text = "RESULT UNAVAILABLE" if v == "UNAVAILABLE" else v
             if item.get('practice'):
                 text += ' · practice'
+            started = getattr(self, 'start_time', None)
+            if started is None:
+                started = getattr(getattr(self, 'contest', None), 'original_start', None)
+            submitted_at = item.get('submitted_at')
+            if submitted_at is None and isinstance(started, (int, float)):
+                submitted_at = started + item['time']
+            try:
+                stamp = datetime.fromtimestamp(submitted_at, user_zone()).strftime('%Y-%m-%d %H:%M:%S') if submitted_at is not None else '—'
+            except (ValueError, OverflowError, OSError, TypeError):
+                stamp = '—'
             results.add_row(Text(item["problem"]), Text("#" + item["id"]),
-                            Text(clock(item["time"])), Text(text, style=color))
+                            Text(stamp), Text(text, style=color))
         if not self.submissions:
             results.add_row(Text("No submissions yet", style="#555555"))
         return results
@@ -191,7 +203,7 @@ class LiveDashboard:
         own = self.snapshot.get("own")
         table = Table(box=SCORE_BOX, padding=(0, 1), style="default",
                       header_style="bold black on #eeeeee", border_style="#bbbbbb",
-                      expand=True, show_edge=False, collapse_padding=True)
+                      expand=False, show_edge=False, collapse_padding=True)
         columns = ["rank", "team", "solved" if scoring == "ICPC" else "points"]
         if scoring == "ICPC":
             columns.append("penalty")
@@ -200,7 +212,7 @@ class LiveDashboard:
         for label in columns:
             table.add_column(label, justify="left" if label == "team" else "center", no_wrap=True)
         for label in self.contest.problems:
-            table.add_column(label, justify="center", ratio=1)
+            table.add_column(label, justify="center")
         results = own["problemResults"] if own else []
         cells = []
         corrections = recorded_cells(self.contest, self.submissions, practice=True)

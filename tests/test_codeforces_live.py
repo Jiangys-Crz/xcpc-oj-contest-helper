@@ -381,7 +381,9 @@ class SubmitTests(IsolatedState):
         self.stack.enter_context(patch("vp_helper.live_submit.time.time", return_value=1200))
 
     def test_success_sends_once_uses_source_text_dynamic_compiler_and_receipt(self):
-        self.assertEqual(live_submit.submit(self.source), "77")
+        with patch('sys.stdout', io.StringIO()) as output:
+            self.assertEqual(live_submit.submit(self.source), "77")
+        self.assertIn('Check judging results here: ' + URL + '/submission/77', output.getvalue())
         self.api.web.session.post.assert_called_once()
         self.assertEqual(self.api.web.session.post.call_args.kwargs["data"]["source"], "int main() {}\n")
         self.assertEqual(self.api.web.session.post.call_args.kwargs["data"]["programTypeId"], "73")
@@ -396,6 +398,7 @@ class SubmitTests(IsolatedState):
         self.assertIn('GNU G++20',output.getvalue())
         self.assertIn(URL+'/submit',output.getvalue())
         self.assertFalse(self.path.with_suffix('.receipts').exists())
+        self.assertNotIn('Check judging results here:', output.getvalue())
 
     def test_finished_before_and_system_tests_never_submit_practice(self):
         for phase in ("BEFORE", "PENDING_SYSTEM_TEST", "SYSTEM_TEST", "FINISHED"):
@@ -433,8 +436,9 @@ class SubmitTests(IsolatedState):
 
     def test_timeout_is_not_retried(self):
         self.api.web.session.post.side_effect = _RequestException("synthetic timeout")
-        with self.assertRaisesRegex(VPError, "outcome unknown"):
+        with patch('sys.stdout', io.StringIO()) as output, self.assertRaisesRegex(VPError, "outcome unknown"):
             live_submit.submit(self.source)
+        self.assertIn('Check judging results here: ' + URL + '/my', output.getvalue())
         self.api.web.session.post.assert_called_once()
 
     def test_wrong_login_and_insecure_form_target_block_post(self):

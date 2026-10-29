@@ -13,6 +13,7 @@ from .http import WebSession
 from .platform_clock import platform_now
 from .models import Contest, Rules, VPError
 from .parsing import NOWCODER_HOST, contest_url, js_value
+from .scoring import verdict as parse_verdict
 
 ORIGIN = "https://" + NOWCODER_HOST
 INFO = "/acm/contest/contest-info"
@@ -22,13 +23,15 @@ STATUS = "/acm-heavy/acm/contest/status-list"
 SCORING = {1: "ICPC", 2: "OI", 3: "IOI", 4: "WEEKLY"}
 VERDICTS = {"答案正确": "CORRECT", "已通过": "CORRECT", "通过": "CORRECT", "Accepted": "CORRECT",
             "答案错误": "WRONG-ANSWER", "Wrong Answer": "WRONG-ANSWER", "编译错误": "COMPILER-ERROR",
-            "运行错误": "RUN-ERROR", "执行出错": "RUN-ERROR", "运行超时": "TIMELIMIT", "运行时间超限": "TIMELIMIT",
+            "运行错误": "RUN-ERROR", "执行出错": "RUN-ERROR", "异常退出": "RUN-ERROR", "返回非零": "RUN-ERROR",
+            "浮点错误": "RUN-ERROR", "段错误": "RUN-ERROR", "多种错误": "MULTIPLE-ERRORS",
+            "运行超时": "TIMELIMIT", "运行时间超限": "TIMELIMIT",
             "部分正确": "PARTIAL", "部分通过": "PARTIAL",
             "内存超限": "MEMORY-LIMIT", "运行内存超限": "MEMORY-LIMIT", "输出超限": "OUTPUT-LIMIT",
             "格式错误": "FORMAT-ERROR", "等待评测": "PENDING", "等待编译": "PENDING", "正在评测": "PENDING",
             "评测中": "PENDING", "正在编译": "PENDING", "编译中": "PENDING", "运行中": "PENDING",
             "正在运行": "PENDING", "排队中": "PENDING", "提交中": "PENDING", "已提交": "PENDING",
-            "未判定": "PENDING", "结果隐藏": "HIDDEN", "系统错误": "SYSTEM-ERROR"}
+            "未判定": "PENDING", "结果隐藏": "HIDDEN", "系统错误": "SYSTEM-ERROR", "内部错误": "SYSTEM-ERROR"}
 
 
 def identity_from_html(html: str) -> dict:
@@ -281,7 +284,17 @@ class NowcoderLive:
                 if submitted_at < contest.original_start:
                     continue
                 value = raw.get("statusMessage")
-                verdict = VERDICTS.get(value, "HIDDEN" if value in (None, "", "--", "-") else "UNAVAILABLE")
+                if isinstance(value, str):
+                    value = value.strip()
+                verdict = VERDICTS.get(value)
+                if verdict is None:
+                    if value in (None, '', '--', '-'):
+                        verdict = 'HIDDEN'
+                    else:
+                        try:
+                            verdict = parse_verdict(value)
+                        except (VPError, AttributeError):
+                            verdict = 'UNAVAILABLE'
                 if (contest.extra["scoring"] != "ICPC" and verdict == "WRONG-ANSWER"
                         and type(raw.get("score")) in (int, float) and type(raw.get("fullScore")) in (int, float)
                         and 0 < raw["score"] < raw["fullScore"]):

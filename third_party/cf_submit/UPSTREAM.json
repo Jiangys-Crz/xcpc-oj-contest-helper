@@ -27,7 +27,8 @@
     "Refresh a verified same-account Firefox login before cookie-based submission",
     "Use raw regex strings for Python 3.14 compatibility without invalid escape warnings",
     "Show the common VP submission preview and require y/n confirmation before the source upload",
-    "Use the shared judge clock for submission receipt timestamps"
+    "Use the shared judge clock for submission receipt timestamps",
+    "Print a shared English judging-result link after submission, including unconfirmed outcomes"
   ],
   "excluded_files": [
     "cf_test.py"

@@ -15,6 +15,7 @@ from rich.table import Table
 
 from .codeforces_live import CodeforcesLive, submission_records
 from .platform_clock import platform_now
+from .scoring import UNRESOLVED_VERDICTS
 from .models import Contest, VPError
 from .accounts import account_key
 from .parsing import contest_url
@@ -146,7 +147,7 @@ def save_progress(path: Path, state: dict, contest: Contest, snapshot: dict,
     own = snapshot.get("own")
     final = (snapshot.get("phase") == "FINISHED" and not snapshot.get("frozen") and own is not None
              and submissions_at >= snapshot.get("at", float("inf"))
-             and not any(e["verdict"] in ("PENDING", "UNAVAILABLE", "HIDDEN", "SYSTEM-ERROR") for e in events.values() if not e.get("practice")))
+             and not any(e["verdict"] in UNRESOLVED_VERDICTS | {"PENDING"} for e in events.values() if not e.get("practice")))
     from .sessions import merge_records, save_state
     merged = merge_records(path, {**state, "contest": contest.to_dict()}, list(events.values()))
     state.update(contest=contest.to_dict(), start_time=contest.original_start, snapshot=snapshot,

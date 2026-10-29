@@ -12,11 +12,19 @@ _VERDICTS = {
     "COMPILATION ERROR": "COMPILER-ERROR", "TIME_LIMIT_EXCEEDED": "TIMELIMIT", "TLE": "TIMELIMIT", "TL": "TIMELIMIT",
     "TIME LIMIT EXCEEDED": "TIMELIMIT", "OUTPUT_LIMIT_EXCEEDED": "OUTPUT-LIMIT", "OLE": "OUTPUT-LIMIT", "OL": "OUTPUT-LIMIT",
     "OUTPUT LIMIT EXCEEDED": "OUTPUT-LIMIT", "NO OUTPUT": "NO-OUTPUT", "NO_OUTPUT": "NO-OUTPUT",
+    "IDLENESS_LIMIT_EXCEEDED": "IDLENESS-LIMIT", "IDLENESS LIMIT EXCEEDED": "IDLENESS-LIMIT", "ILE": "IDLENESS-LIMIT",
+    "PRESENTATION_ERROR": "FORMAT-ERROR", "PRESENTATION ERROR": "FORMAT-ERROR", "PE": "FORMAT-ERROR",
+    "SECURITY_VIOLATED": "SECURITY-VIOLATED", "DANGEROUS SYSCALLS": "RUN-ERROR",
+    "CHALLENGED": "CHALLENGED",
+    "JUDGEMENT FAILED": "UNAVAILABLE", "JUDGMENT FAILED": "UNAVAILABLE", "SYSTEM ERROR": "UNAVAILABLE",
     "TESTING": "PENDING", "SUBMITTED": "PENDING", "WAITING": "PENDING", "WAITING FOR JUDGING": "PENDING",
-    "JUDGING": "PENDING", "RUNNING": "PENDING", "": "PENDING", "QUEUE": "PENDING",
+    "JUDGING": "PENDING", "RUNNING": "PENDING", "COMPILING": "PENDING", "QUEUED": "PENDING",
+    "IN QUEUE": "PENDING", "": "PENDING", "QUEUE": "PENDING",
     "TOO LATE": "TOO-LATE", "TOO_LATE": "TOO-LATE",
 }
 _KNOWN = set(_VERDICTS.values())
+UNRESOLVED_VERDICTS = frozenset({"UNAVAILABLE", "HIDDEN", "SYSTEM-ERROR", "CANCELLED"})
+NON_ATTEMPT_VERDICTS = frozenset({"IGNORED", "HACK-SUCCESSFUL", "HACK-UNSUCCESSFUL"})
 
 
 def verdict(value: str | None, score: float | None = None) -> str:
@@ -34,6 +42,18 @@ def verdict(value: str | None, score: float | None = None) -> str:
         return "PENDING"
     # Infrastructure failures and unfamiliar results must never become a scored WA.
     raise VPError(f"Unrecognized judging result: {value!r}")
+
+
+def codeforces_verdict(value: str | None) -> str:
+    """Preserve supported CF outcomes; infrastructure/unknown outcomes stay unresolved."""
+    if value is not None and not isinstance(value, str):
+        return 'UNAVAILABLE'
+    if value == 'PARTIAL':
+        return 'PARTIAL'
+    try:
+        return verdict(value)
+    except VPError:
+        return 'UNAVAILABLE'
 
 
 def score_submissions(
@@ -55,9 +75,9 @@ def score_submissions(
             c.pending += 1
         elif s.verdict == "PENDING":
             c.pending += 1
-        elif s.verdict == "UNAVAILABLE":
+        elif s.verdict in UNRESOLVED_VERDICTS:
             c.unresolved += 1
-        elif s.verdict == "TOO-LATE":
+        elif s.verdict == "TOO-LATE" or s.verdict in NON_ATTEMPT_VERDICTS:
             continue
         elif s.verdict == "COMPILER-ERROR" and not rules.compile_penalty:
             continue

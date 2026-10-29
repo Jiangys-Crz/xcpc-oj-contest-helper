@@ -13,7 +13,7 @@ from .platform_clock import platform_now
 from .models import Cell, Contest, Medals, Reference, Rules, Submission, TeamScore, VPError, StartRejected
 from .originals import OriginalReplay, classify, load_metadata
 from .parsing import ccpc_reveal_count, medals_from_html
-from .scoring import verdict
+from .scoring import codeforces_verdict, verdict
 
 def signed_parameters(method: str, params: dict, key: str, secret: str,
                       at: int | None = None, nonce: str | None = None) -> dict:
@@ -279,7 +279,8 @@ class Gym:
                 sid = str(raw["id"])
                 relative = (raw["relativeTimeSeconds"] + native_start - self.start_time if native and not local
                             else raw["creationTimeSeconds"] - self.start_time)
-                result[sid] = Submission(sid, "me", label, float(relative), verdict(raw.get("verdict")))
+                parsed = codeforces_verdict(raw.get('verdict'))
+                result[sid] = Submission(sid, "me", label, float(relative), 'UNAVAILABLE' if parsed == 'PARTIAL' else parsed)
             if len(data) < 1000 or reached_start:
                 self.submissions_complete = True
                 break

@@ -19,6 +19,7 @@ from .receipts import cf_submission_id, cf_submission_ids, record_receipt
 from .storage import read_json, state_directory
 from .submit_context import submission_configuration
 from .submission_confirmation import confirm_submission
+from .submission_results import print_judging_link
 
 
 def compiler_id(form, source: Path, requested: str | None) -> str:
@@ -111,9 +112,11 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
         # A POST is sent once. A timeout can mean the server accepted it.
         response = api.web.session.post(target, data=payload, timeout=(10, 40))
     except _RequestException:
+        print_judging_link(api.url)
         raise VPError("Submission outcome unknown. Check Codeforces My submissions before retrying; the request was not repeated.") from None
     if (response.status_code != 200 or urlsplit(response.url).netloc != "codeforces.com"
             or urlsplit(response.url).path.rstrip("/") != base_path + "/my"):
+        print_judging_link(api.url)
         soup = BeautifulSoup(response.text, "html.parser")
         error = soup.select_one(".error, .error-message")
         detail = error.get_text(" ", strip=True) if error else f"HTTP {response.status_code}; check My submissions before retrying"
@@ -121,8 +124,10 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     sid = cf_submission_id(BeautifulSoup(response.text, "html.parser"), previous, api.id, label, api.handle)
     if sid is None:
         print("Codeforces returned My submissions; the new ID is not yet identifiable. Check the live panel before retrying.")
+        print_judging_link(api.url)
         return None
     print("Submission #" + sid + ": PENDING", flush=True)
+    print_judging_link(api.url, sid)
     try:
         record_receipt(config, sid, label, submitted_at)
     except (VPError, OSError) as exc:

@@ -13,6 +13,7 @@ Requirements for contest.json
 '''
 
 from vp_helper.platform_clock import platform_now
+from vp_helper.submission_results import print_judging_link
 import sys
 try:
     # qoj.ac sits behind Cloudflare, which fingerprints the TLS handshake;
@@ -155,6 +156,7 @@ def submit(url: str, lang: str, code: str, problem: str) -> None:
     try:
         submit_response = post_form(session, url, payload_files)
     except _RequestException:
+        print_judging_link(contest_base_url)
         raise SystemExit('Server confirmation unavailable. Check the submissions page before retrying.') from None
     origin = 'https://' + urlsplit(contest_base_url).netloc
     sid = qoj_submission_id(submit_response, origin)
@@ -163,17 +165,22 @@ def submit(url: str, lang: str, code: str, problem: str) -> None:
     if (sid is None and previous is not None and submit_response.status_code in (302, 303)
             and destination.netloc == urlsplit(origin).netloc and destination.scheme == 'https'
             and destination.path in ('/submissions', urlsplit(contest_base_url).path + '/submissions')):
-        current = session.get(contest_base_url + '/submissions', params={'submitter': handle, 'locale': 'en'}, timeout=(10, 40))
+        try:
+            current = session.get(contest_base_url + '/submissions', params={'submitter': handle, 'locale': 'en'}, timeout=(10, 40))
+        except _RequestException:
+            print_judging_link(contest_base_url)
+            raise SystemExit('Submission confirmation unavailable. Check the result link before retrying.') from None
         if current.status_code == 200:
             sid = qoj_id_from_list(current.text, previous, contest_base_url, urlsplit(url).path.rsplit('/', 1)[-1], handle)
     if sid is None:
+        print_judging_link(contest_base_url)
         raise SystemExit('Submission was not confirmed. Check the submissions page before retrying.')
     print(f'Submission #{sid}: PENDING', flush=True)
     try:
         record_receipt(contest, sid, problem, submitted_at)
     except (VPError, OSError) as exc:
         print('Submitted, but the monitor notification failed: ' + str(exc))
-    print(f'Check {origin}/submission/{sid} for the result.')
+    print_judging_link(contest_base_url, sid)
 
 
 if __name__ == '__main__':

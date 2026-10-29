@@ -11,6 +11,7 @@ from .models import Contest, Rules, VPError
 from .accounts import refresh_api_credentials
 from .parsing import contest_url
 from .storage import file_lock, read_json, state_directory, write_json
+from .scoring import codeforces_verdict
 
 PHASES = {"BEFORE", "CODING", "PENDING_SYSTEM_TEST", "SYSTEM_TEST", "FINISHED"}
 LIVE_TYPES = {"CONTESTANT", "OUT_OF_COMPETITION"}
@@ -197,8 +198,7 @@ class CodeforcesLive:
                 relative = float(raw["creationTimeSeconds"]) - contest.original_start
                 if relative < 0 or (kind == "PRACTICE" and relative < contest.rules.duration and not contest.extra.get("practice")):
                     continue
-                value = raw.get("verdict") or "PENDING"
-                value = {"OK": "CORRECT", "TESTING": "PENDING", "SUBMITTED": "PENDING"}.get(value, value)
+                value = codeforces_verdict(raw.get('verdict'))
                 result[str(raw["id"])] = {
                     "id": str(raw["id"]), "team": "me", "problem": raw["problem"]["index"],
                     "time": relative, "verdict": value, "testset": raw.get("testset", ""),

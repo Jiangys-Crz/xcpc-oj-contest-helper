@@ -21,6 +21,7 @@ from .receipts import record_receipt
 from .storage import read_json, state_directory
 from .submit_context import submission_configuration
 from .submission_confirmation import confirm_submission
+from .submission_results import print_judging_link
 
 # Standard input/output judge (codeJudgeType 0). These IDs and names are also
 # present in the site's editor. Other judge types need their own templates.
@@ -110,24 +111,29 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
                                                 "X-Requested-With": "XMLHttpRequest"},
                                        timeout=(10, 40), allow_redirects=False)
     except _RequestException:
+        print_judging_link(api.url)
         raise VPError("Submission outcome unknown. Check Nowcoder records before retrying; the request was not repeated.") from None
     try:
         data = response.json()
     except ValueError:
         data = {}
     if response.status_code != 200 or not isinstance(data, dict):
+        print_judging_link(api.url)
         raise VPError("Nowcoder did not confirm the submission. Check original records before retrying.")
     if data.get("code") != 0:
+        print_judging_link(api.url)
         if data.get("code") in (999, 1125, 499) or data.get("msg") == "请先登录":
             raise VPError("Nowcoder requires browser login or verification. Complete it in Firefox, then check records before retrying.")
-        raise VPError("Nowcoder rejected the submission: " + str(data.get("msg", "unknown response")))
+        raise VPError(f"Nowcoder rejected the submission (code {data.get('code')}). Check the result link before retrying.")
     # The reference client receives a numeric data value. Some site versions
     # wrap the same ID; never infer success merely from code=0 or local time.
     value = data.get("data")
     sid = str(value.get("submissionId", "") if isinstance(value, dict) else value)
     if not re.fullmatch(r"[1-9][0-9]*", sid):
+        print_judging_link(api.url)
         raise VPError("Nowcoder did not expose a new submission ID. Check original records before retrying; the request was not repeated.")
     print("Submission #" + sid + ": PENDING", flush=True)
+    print_judging_link(api.url, sid)
     try:
         record_receipt(config, sid, label, submitted_at)
     except (VPError, OSError) as exc:

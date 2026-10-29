@@ -437,7 +437,12 @@ class QOJ:
                             result[sid] = Submission(sid, "me", label, at, parsed)
                             continue
                         status = parsed
-                result[sid] = Submission(sid, "me", label, at, verdict(status, score))
+                try:
+                    parsed = verdict(status, score)
+                except VPError:
+                    parsed = 'UNAVAILABLE'
+                    unresolved.append(sid)
+                result[sid] = Submission(sid, "me", label, at, parsed)
             pages = [int(m[1]) for a in soup.select("a[href]") if (m := re.search(r"[?&]page=(\d+)", a["href"]))]
             if before or not found or page >= max(pages, default=page):
                 self.submissions_complete = True

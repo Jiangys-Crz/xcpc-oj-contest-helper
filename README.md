@@ -2,7 +2,7 @@
 
 Ubuntu 上的比赛终端助手，支持 QOJ、Codeforces ICPC 虚拟参赛、Codeforces Gym，以及 Codeforces、CWNUOJ、牛客正式比赛实时接入，并提供各站补题工作区。上方显示成绩与完整提交记录，下方保留比赛目录中的普通 shell。
 
-当前版本：0.7.8。
+当前版本：0.7.9。
 
 ## 安装
 
@@ -258,6 +258,8 @@ submit solution.cpp --problem A
 
 ### 重新设置 Codeforces API
 
+首次配置和重设时，输入框前都会显示英文获取说明：`Get your Codeforces API key and secret at https://codeforces.com/settings/api (sign in first).` 登录官网后在该页面生成一组 key / secret，再粘贴到终端。
+
 ```bash
 xcpc api cf
 ```
@@ -301,6 +303,9 @@ xcpc doctor nk
 - 奖项采用原赛明确配置。资格、规则或榜单完整性无法验证时，保留未知结果。
 - `rank` 列保持在成绩表左侧，排名和奖项在同一格内分两行显示，例如上行 `=47`、下行 `Silver Prize`。
 - 内置 submit 在服务器确认新提交编号后立即通知面板显示 `PENDING`，随后用平台判定替换；本人提交与榜单查询独立执行。
+- 各平台提交后统一显示英文提示 `Check judging results here: URL`，链接指向原站该条提交。请求超时或尚未取得编号时，提供对应提交列表链接，先查看原站记录再决定是否重试；取消确认不会产生该提示。
+- 题格在没有提交时保持紧凑，出现尝试、待判或通过后按内容增宽，保留 `1 try`、`2 tries`、`2 + 1 tries` 的显示。提交列表独立分配列宽，完整显示长提交编号；时间统一为 `YYYY-MM-DD HH:MM:SS`，采用 `TZ` 指定时区，默认 Asia/Shanghai，历史与补题界面一致。
+- 判定映射覆盖 [Codeforces 官方 Submission 枚举](https://codeforces.com/apiHelp/objects#Submission)，包括 `IDLENESS_LIMIT_EXCEEDED`；QOJ 的 `Dangerous Syscalls` 按运行错误处理，`Judgement Failed` 保留未知。CWNUOJ 对照 [Hydro 状态定义](https://github.com/hydro-dev/Hydro/blob/master/packages/common/status.ts)，牛客补齐[官方列出的运行错误与内部错误](https://www.nowcoder.com/html/faq)。系统错误、隐藏结果与无法识别的判定不会误算为错误提交；单条未知结果不会阻止其他记录同步。
 - QOJ 的 0 分提交会读取详情区的测试点判定，区分 WA、CE、RE 等结果；前面通过的测试点不会覆盖后面的失败。详情暂时无法读取时显示 `RESULT UNAVAILABLE`，按退避间隔重查，并继续更新其他提交。影响罚时的结果未确认时，罚时与排名暂不显示确定值。
 - 提交记录按时间从新到旧完整展开，`practice` 标注紧贴判定。5 小时后的补题不计入比赛成绩，原 AC 方格保留绿色，补题新 AC 的方格显示蓝色；下方记录按 VP 的判定颜色显示。
 - 空白、标题与提交列表继承终端默认背景，支持终端自身的透明效果。

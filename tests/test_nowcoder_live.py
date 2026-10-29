@@ -332,7 +332,9 @@ class SubmitTests(IsolatedState):
         self.stack.enter_context(patch("vp_helper.nowcoder_submit.time.time", return_value=1200))
 
     def test_form_protocol_and_numeric_receipt_match_reference(self):
-        self.assertEqual(nowcoder_submit.submit(self.source), "77")
+        with patch('sys.stdout', io.StringIO()) as output:
+            self.assertEqual(nowcoder_submit.submit(self.source), "77")
+        self.assertIn('Check judging results here: ' + ORIGIN + '/acm/contest/view-submission?submissionId=77', output.getvalue())
         call = self.api.web.session.post.call_args
         self.api.web.session.post.assert_called_once()
         self.assertEqual(call.args[0], ORIGIN + "/nccommon/submit_cd")
@@ -359,8 +361,9 @@ class SubmitTests(IsolatedState):
 
     def test_timeout_is_not_retried(self):
         self.api.web.session.post.side_effect = _RequestException("timeout")
-        with self.assertRaisesRegex(VPError, "outcome unknown"):
+        with patch('sys.stdout', io.StringIO()) as output, self.assertRaisesRegex(VPError, "outcome unknown"):
             nowcoder_submit.submit(self.source)
+        self.assertIn('Check judging results here: ' + URL + '#submit/', output.getvalue())
         self.api.web.session.post.assert_called_once()
 
     def test_finished_contest_accepts_practice(self):

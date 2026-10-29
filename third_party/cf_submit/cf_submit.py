@@ -1,4 +1,5 @@
 from vp_helper.platform_clock import platform_now
+from vp_helper.submission_results import print_judging_link
 import sys
 import time
 import json
@@ -150,12 +151,19 @@ def submit_problem(browser, contest, lang, source, guru):
                               config_path if config_path.is_file() else None):
         return False
     browser.vp_submitted_at = platform_now(browser.url)
-    browser.submit_form(submission)
+    prefix = 'gym' if len(contest) >= 6 else 'contest'
+    base_url = 'https://codeforces.com/' + prefix + '/' + contest
+    try:
+        browser.submit_form(submission)
+    except _SESSION_ERRORS:
+        print_judging_link(base_url)
+        raise
 
     """ check if good """
     if (guru != -1 and browser.url[-7:] != "/status") or (guru == -1 and browser.url[-3:] != "/my"):
         print("Failed to submit code")
         print(" @ " + str(browser.url))
+        print_judging_link(base_url)
         return False
     print("Code submitted properly")
 
@@ -200,6 +208,7 @@ def submit(browser, handle, contest, problem, lang, source, show, guru):
     submitted_at = platform_now(browser.url)
     if submit_problem(browser, contest, lang, source, pid):
         submitted_at = browser.vp_submitted_at
+        sid = None
         if previous is not None:
             sid = cf_submission_id(browser.parsed, previous, contest, problem, handle)
             if sid is not None:
@@ -210,6 +219,8 @@ def submit(browser, handle, contest, problem, lang, source, show, guru):
                         record_receipt(json.loads(config.read_text()), sid, problem.upper(), submitted_at)
                     except (VPError, OSError) as exc:
                         print('Submitted, but the monitor notification failed: ' + str(exc))
+        if not guru:
+            print_judging_link('https://codeforces.com/' + prefix + '/' + contest, sid)
         if show:
             watch(handle)
 

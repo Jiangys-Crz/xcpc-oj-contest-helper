@@ -17,6 +17,7 @@ from .receipts import record_receipt, valid_submission_id
 from .storage import read_json, state_directory
 from .submit_context import submission_configuration
 from .submission_confirmation import confirm_submission
+from .submission_results import print_judging_link
 
 
 def language_id(options: dict, source: Path, requested: str | None) -> str:
@@ -121,25 +122,28 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
                                                  "Referer": submit_url},
                                         timeout=(10, 40), allow_redirects=False)
     except _RequestException:
+        print_judging_link(api.url)
         raise VPError("Submission outcome unknown. Check CWNUOJ records before retrying; the request was not repeated.") from None
     try:
         data = response.json()
     except ValueError:
         data = {}
     if response.status_code not in (200, 302, 303) or not isinstance(data, dict) or data.get("error"):
-        raise VPError(f"CWNUOJ 提交未获确认（HTTP {response.status_code}）。请先检查原站记录；请求不会自动重发。")
+        print_judging_link(api.url)
+        raise VPError(f"CWNUOJ did not confirm the submission (HTTP {response.status_code}). Check the records before retrying.")
     sid = submission_id(data, response.headers.get("Location", ""), api.prefix)
     if sid is None:
+        print_judging_link(api.url)
         if data.get("tid") == api.id and response.status_code == 200:
             print("CWNUOJ accepted the submission; this contest hides judging records. Check the original site before retrying.")
             return None
         raise VPError("CWNUOJ did not expose a new submission ID. Check the original records before retrying; the request was not repeated.")
+    print_judging_link(api.url, sid)
     # Confirm the assignment without reading or printing anyone's source code.
     try:
         record = api.get_json(ORIGIN + api.prefix + "/record/" + sid).get("rdoc", {})
     except VPError as exc:
-        raise VPError("提交已返回编号 #" + sid + "，但读取判定详情失败：" + str(exc) +
-                      "。请先查看原站记录；代码不会自动重发。") from None
+        raise VPError("Submission #" + sid + " was assigned, but judging details could not be read. Check the result link before retrying.") from None
     if (record.get("_id") != sid or record.get("uid") != config["uid"] or str(record.get("pid")) != pid
             or record.get("contest") not in ((None, "") if correction else (api.id,))
             or record.get("domainId", api.domain) != api.domain):

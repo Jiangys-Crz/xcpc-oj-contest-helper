@@ -126,6 +126,8 @@ class CodeforcesAPISettingsTests(unittest.TestCase):
         self.assertEqual(result['api_key'],'new-key')
         self.assertEqual(result['api_secret'],'new-secret')
         self.assertNotIn('new-secret',self.output.getvalue())
+        self.assertIn('Get your Codeforces API key and secret at https://codeforces.com/settings/api (sign in first).',
+                      self.output.getvalue())
 
     def test_live_and_bt_authenticated_queries_pick_up_reset_keys_in_memory(self):
         write_json(self.path,{'gym':self.original})

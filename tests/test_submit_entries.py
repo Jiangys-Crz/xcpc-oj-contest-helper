@@ -72,6 +72,7 @@ else:
                     self.assertEqual(declined.returncode,0,declined.stdout+declined.stderr)
                     self.assertIn('Do you want to continue?',declined.stdout)
                     self.assertIn('Aborted.',declined.stdout)
+                    self.assertNotIn('Check judging results here:',declined.stdout)
                     self.assertFalse(state_path.with_suffix('.receipts').exists())
                 result = subprocess.run([str(ENTRY),str(source)],input='y\n',
                                         cwd=root,env=env,capture_output=True,text=True,timeout=30)
@@ -80,6 +81,7 @@ else:
                     receipt=json.loads((state_path.with_suffix(".receipts")/"12345.json").read_text())
                     self.assertTrue(receipt["practice"])
                     self.assertIn("Submission #12345",result.stdout)
+                    self.assertIn('Check judging results here: https://qoj.ac/submission/12345',result.stdout)
                 else:
                     self.assertIn("OFFLINE_CF_PARSER 100123 A",result.stdout)
                     self.assertIn(str(source),result.stdout)

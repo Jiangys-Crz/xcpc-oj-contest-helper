@@ -39,10 +39,15 @@ class ConfirmationTests(unittest.TestCase):
                     browser=Mock(url=f'https://codeforces.com/{kind}/{ident}/submit/A')
                     browser.get_form.return_value=form
                     browser.parsed=BeautifulSoup('','html.parser')
+                    browser.session.get.return_value=SimpleNamespace(status_code=200,
+                        url=f'https://codeforces.com/{kind}/{ident}/my',text='')
                     browser.submit_form.side_effect=lambda f: setattr(browser,'url',f'https://codeforces.com/{kind}/{ident}/my')
                     with patch('builtins.input',return_value=answer),patch('sys.stdout',io.StringIO()) as out:
-                        result=module.submit_problem(browser,ident,'cpp',str(source),-1)
-                    self.assertEqual(result,answer=='y')
+                        module.submit(browser,'tester',ident,'A','cpp',str(source),False,False)
                     self.assertEqual(browser.submit_form.call_count,int(answer=='y'))
                     self.assertIn('GNU G++20',out.getvalue())
                     self.assertIn(f'https://codeforces.com/{kind}/{ident}/submit/A',out.getvalue())
+                    if answer == 'y':
+                        self.assertIn(f'Check judging results here: https://codeforces.com/{kind}/{ident}/my',out.getvalue())
+                    else:
+                        self.assertNotIn('Check judging results here:',out.getvalue())

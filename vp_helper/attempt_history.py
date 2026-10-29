@@ -103,14 +103,15 @@ def history(args: list[str]) -> None:
         console.print(" · ".join(f"{k}: {v}" for k, v in state["summary"].items()), markup=False)
     if state.get("medal_lines"):
         console.print(" · ".join(f"{k}: {v}" for k, v in state["medal_lines"].items()), markup=False)
-    console.print(Dashboard._record_table() if not records else _records(records))
+    console.print(Dashboard._record_table() if not records else _records(records, state['start_time']))
     if not records:
         console.print("No submissions yet.")
     if message:
         console.print(message, markup=False)
 
 
-def _records(records):
+def _records(records, start_time=None):
     # Use the same verdict colors and practice labels as the terminal.
     from types import SimpleNamespace
-    return Dashboard.records(SimpleNamespace(submissions=records, _record_table=Dashboard._record_table))
+    return Dashboard.records(SimpleNamespace(submissions=records, start_time=start_time,
+                                             _record_table=Dashboard._record_table))

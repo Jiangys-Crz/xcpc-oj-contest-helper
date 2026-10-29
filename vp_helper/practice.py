@@ -172,7 +172,7 @@ def prepare(url: str) -> tuple[Path, dict]:
 
 
 class PracticeDashboard(Dashboard):
-    def __init__(self, contest, elapsed, records, message="", handle=""):
+    def __init__(self, contest, elapsed, records, message="", handle="", *, start_time=None):
         # This summary is only a view of the practice workspace. Original
         # records remain practice and never enter a VP's saved score.
         rules = Rules(max(1, int(elapsed) + 1), penalty_minutes=contest.rules.penalty_minutes,
@@ -180,7 +180,7 @@ class PracticeDashboard(Dashboard):
         events = [Submission(str(s["id"]), "me", s["problem"], s["time"], s["verdict"]) for s in records]
         me = score_submissions(events, list(contest.problems), rules, elapsed, name=handle or "me")
         super().__init__(contest, elapsed, me, "—", "", None,
-                         [{**s, "practice": True} for s in records], message, practice=True)
+                         [{**s, "practice": True} for s in records], message, practice=True, start_time=start_time)
 
 
 def monitor(path: Path) -> None:
@@ -210,7 +210,8 @@ def monitor(path: Path) -> None:
                 if future is None and time.monotonic() >= next_poll:
                     future = pool.submit(api.submissions, contest, state["start_time"])
                 records = submission_records(merge_records(path, state, []), "FINISHED")
-                view.update(PracticeDashboard(contest, platform_now(state)-state["start_time"], records, message, state["handle"]))
+                view.update(PracticeDashboard(contest, platform_now(state)-state["start_time"], records, message,
+                                             state["handle"], start_time=state['start_time']))
                 time.sleep(0.2)
 
 

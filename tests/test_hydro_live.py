@@ -401,8 +401,9 @@ class SubmitTests(IsolatedState):
 
     def test_record_permission_error_after_acknowledgement_does_not_repeat_code(self):
         self.api.get_json.side_effect=[{"langRange":{"cc":"C++"}},VPError("HTTP 403")]
-        with self.assertRaisesRegex(VPError,"提交已返回编号"):
+        with patch('sys.stdout', io.StringIO()) as output, self.assertRaisesRegex(VPError,"was assigned"):
             hydro_submit.submit(self.source)
+        self.assertIn('Check judging results here: ' + ORIGIN + '/record/' + RID, output.getvalue())
         self.api.web.session.post.assert_called_once()
 
 

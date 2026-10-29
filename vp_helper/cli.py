@@ -641,6 +641,7 @@ def monitor(path: Path) -> None:
                     dashboard = display(contest, max(0, scoring_elapsed) if interrupted else elapsed,
                                         private, shown_rank, prize, stats, records, shown_message)
                     dashboard.practice = state["practice_view"]
+                    dashboard.start_time = state['start_time']
                     dashboard.revealed = revealed_problems(contest, scoring_elapsed, current_reference)
                     view.update(dashboard)
                     next_render = now + 0.25
