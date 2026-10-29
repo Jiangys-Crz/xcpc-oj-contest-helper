@@ -49,13 +49,14 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     if not source.is_file():
         raise VPError("Source file not found: " + str(source))
     config_path, config = submission_configuration(source)
-    if config.get("platform") != "nowcoder" or config.get("mode") != "live":
+    practice_mode = config.get("mode") == "practice"
+    if config.get("platform") != "nowcoder" or config.get("mode") not in ("live", "practice"):
         raise VPError("Run submit from a Nowcoder contest directory prepared by live URL.")
     context = config.get("vp_context", {})
     if not context.get("state_path") or Path(context["state_path"]).resolve().parent != state_directory().resolve():
         raise VPError("This submission context is outside the live state directory. Reconnect with live URL.")
     state = read_json(Path(context["state_path"]))
-    if (state.get("mode") != "live" or any(context.get(key) != state.get(key) for key in ("url", "handle", "start_time"))
+    if (state.get("mode") != config["mode"] or any(context.get(key) != state.get(key) for key in ("url", "handle", "start_time"))
             or state.get("url") != config.get("base_url") or state.get("handle") != config.get("handle")):
         raise VPError("The Nowcoder account or contest context changed. Reconnect with live URL.")
     refresh_submission_login(config_path, config, "nowcoder")
@@ -64,10 +65,12 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
         raise VPError("The Nowcoder contest or user ID changed. Reconnect with live URL.")
     api.identity()
     contest = Contest.from_dict(state["contest"])
-    api.apply_metadata(contest, api.details())
-    if contest.extra["phase"] != "CODING":
-        raise VPError("The Nowcoder contest is not active. No code was sent; use the original site for practice.")
-    if contest.original_start != state["start_time"]:
+    api.apply_metadata(contest, api.details(), **({"require_registration": False} if practice_mode else {}))
+    if practice_mode and contest.extra["phase"] != "FINISHED":
+        raise VPError("This practice workspace requires a finished contest.")
+    if contest.extra["phase"] == "BEFORE":
+        raise VPError("The Nowcoder contest has not started. No code was sent.")
+    if not practice_mode and contest.original_start != state["start_time"]:
         raise VPError("The official start time changed. Reconnect with live URL before submitting.")
     label = (problem or source.stem).upper()
     # Refresh the authoritative mapping before reading the problem's submit IDs.
@@ -94,8 +97,8 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     payload = {key: fields[key] for key in ("questionId", "tagId", "subTagId", "doneQuestionId")}
     payload.update(content=source.read_text(encoding="utf8"), language=lang, languageName=LANGUAGES[lang])
     submitted_at = time.time()
-    if not contest.original_start <= submitted_at < contest.extra["end_time"]:
-        raise VPError("The Nowcoder contest ended while preparing this submission. No code was sent.")
+    if submitted_at < contest.original_start:
+        raise VPError("The Nowcoder contest has not started. No code was sent.")
     try:
         response = api.web.session.post(ORIGIN + "/nccommon/submit_cd", data=payload,
                                        headers={"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",

@@ -39,9 +39,14 @@ def record_receipt(config: dict, submission_id: str, problem: str, submitted_at:
     relative = submitted_at - state["start_time"]
     if relative < 0:
         raise VPError("The submission precedes this native VP.")
+    from .sessions import boundary
+    cutoff = boundary(path)
+    practice = (state.get("mode") == "practice" or relative >= state["contest"]["rules"]["duration"]
+                or cutoff is not None and submitted_at >= cutoff)
     write_json(receipt_directory(path) / (sid + ".json"), {
         "id": sid, "team": "me", "problem": problem, "time": relative,
         "verdict": "PENDING", "start_time": state["start_time"], "url": state["url"],
+        "handle": state["handle"], "practice": practice,
     })
     return True
 
@@ -70,7 +75,8 @@ class ReceiptReader:
                     and valid_submission_id(str(data.get("id", "")), self.platform)
                     and isinstance(data.get("time"), (int, float)) and math.isfinite(data["time"])
                     and data["time"] >= 0):
-                result.append(Submission(**{key: data[key] for key in ("id", "team", "problem", "time", "verdict")}))
+                result.append(Submission(**{key: data[key] for key in ("id", "team", "problem", "time", "verdict")},
+                                         practice=bool(data.get("practice"))))
         self.stamp = stamp
         return result
 

@@ -284,7 +284,7 @@ class LocalTests(IsolatedState):
     def test_resume_preserves_source_and_selects_nowcoder_submit(self):
         from vp_helper import cli
         self.path.unlink()
-        native = self.root / "venv/bin/vp-nowcoder-submit"
+        native = self.root / "venv/bin/vp-submit"
         native.parent.mkdir(parents=True)
         native.write_text("#!/bin/sh\n")
         native.chmod(0o755)
@@ -354,6 +354,21 @@ class SubmitTests(IsolatedState):
             nowcoder_submit.submit(self.source)
         self.api.web.session.post.assert_called_once()
 
+    def test_finished_contest_accepts_practice(self):
+        self.api.details.return_value = details(now=9000)
+        with patch("vp_helper.nowcoder_submit.time.time", return_value=9000):
+            self.assertEqual(nowcoder_submit.submit(self.source), "77")
+        self.assertTrue(ReceiptReader(self.path, self.state).read()[0].practice)
+
+    def test_bt_without_registration_preserves_original_submit_fields(self):
+        self.config["mode"] = self.state["mode"] = "practice"
+        self.state["start_time"] = self.config["vp_context"]["start_time"] = 8500
+        write_json(self.path, self.state)
+        self.api.details.return_value = {**details(now=9000), "isSignUp": False}
+        with patch("vp_helper.nowcoder_submit.time.time", return_value=9000):
+            self.assertEqual(nowcoder_submit.submit(self.source), "77")
+        self.assertEqual(self.api.web.session.post.call_args.kwargs["data"]["doneQuestionId"], "123")
+
     def test_captcha_login_and_missing_id_do_not_create_receipt(self):
         for response in ({"code": 1125, "msg": "验证码不正确"}, {"code": 1, "msg": "请先登录"}, {"code": 0, "data": None}):
             self.api.web.session.post.return_value.json.return_value = response
@@ -370,7 +385,7 @@ class SubmitTests(IsolatedState):
                 nowcoder_submit.submit(self.source)
         self.api.web.session.post.assert_not_called()
 
-    def test_changed_context_problem_and_closed_contest_block_post(self):
+    def test_changed_context_problem_and_before_contest_block_post(self):
         self.config["problem_ids"]["A"] = "99"
         with self.assertRaisesRegex(VPError, "problem list"):
             nowcoder_submit.submit(self.source)
@@ -379,8 +394,8 @@ class SubmitTests(IsolatedState):
         with self.assertRaisesRegex(VPError, "context changed"):
             nowcoder_submit.submit(self.source)
         self.config["vp_context"]["handle"] = "42"
-        self.api.details.return_value = details(now=9000)
-        with self.assertRaisesRegex(VPError, "not active"):
+        self.api.details.return_value = details(now=900)
+        with self.assertRaisesRegex(VPError, "not started"):
             nowcoder_submit.submit(self.source)
         self.api.web.session.post.assert_not_called()
 

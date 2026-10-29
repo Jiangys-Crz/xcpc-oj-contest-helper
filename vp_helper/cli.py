@@ -98,7 +98,8 @@ def configure_submit(api, contest: Contest, directory: Path) -> None:
         ids = [int(value) for value in contest.problems.values()]
         if not bundled and ids != list(range(ids[0], ids[0] + len(ids))):
             raise VPError("This QOJ contest has nonconsecutive problem IDs. Use the installed submit script with problem_ids support.")
-        write_json(directory / "contest.json", {**api.submit_configuration(contest), **browser_fields(api.account)})
+        write_json(directory / "contest.json", {**api.submit_configuration(contest), "platform": "qoj",
+                                               **browser_fields(api.account)})
     elif bundled:
         write_json(directory / "contest.json", {"name": contest.name, "platform": "gym",
                    "contest_id": int(contest.contest_id), "handle": api.handle,
@@ -117,7 +118,7 @@ def configure_submit(api, contest: Contest, directory: Path) -> None:
         else:
             raise VPError("The Gym submit script's configuration format must be connected before a native VP is started.")
     if bundled:
-        tool = Path(sys.prefix).parent / "third_party" / ("qoj" if contest.platform == "qoj" else "cf_submit") / "submit"
+        tool = Path(sys.prefix) / "bin" / "vp-submit"
         if not tool.is_file() or not os.access(tool, os.X_OK):
             raise VPError(f"The bundled {contest.platform} submit script is missing; reinstall vp.")
         temporary = selected.with_name("submit.new")
@@ -179,7 +180,7 @@ def check_terminal() -> None:
         raise VPError("tmux is missing; run the installer.")
 
 
-def prepare_start(url: str) -> tuple[Path, dict]:
+def prepare_resume(url: str) -> tuple[Path, dict]:
     check_terminal()
     platform, _, canonical = contest_url(url)
     if platform in ("cwnuoj", "nowcoder"):
@@ -241,13 +242,25 @@ def prepare_start(url: str) -> tuple[Path, dict]:
         return path, state
 
 
-def start(url: str, *, live: bool = False) -> None:
+def prepare_start(url: str, scheduled_start: float | None = None) -> tuple[Path, dict]:
+    from .vp import prepare
+    return prepare(url, scheduled_start)
+
+
+def start(url: str, *, live: bool = False, practice: bool = False, resume: bool = False, scheduled_start: float | None = None) -> None:
     # Release the cross-shell preparation lock before entering an attached TUI.
-    if live:
+    if practice:
+        from .practice import prepare
+        path, state = prepare(url)
+    elif live:
         from .live import prepare_live
         path, state = prepare_live(url)
     else:
-        path, state = prepare_start(url)
+        path, state = prepare_resume(url) if resume else prepare_start(url, scheduled_start)
+    open_state(path, state)
+
+
+def open_state(path: Path, state: dict) -> None:
     bind_submit_context(Path(state["directory"]), path, state)
     if tmux_exists(state["tmux_session"]):
         pane = state["tmux_session"] + ":0.0"
@@ -281,6 +294,41 @@ def monitor(path: Path) -> None:
         from .live import monitor_live
         monitor_live(path)
         return
+    if read_json(path).get("mode") == "practice":
+        from .practice import monitor as practice_monitor
+        practice_monitor(path)
+        return
+    # Scheduled QOJ and repeated VPs wait in the persistent tmux monitor.
+    waiting = read_json(path)
+    if waiting.get("status") == "scheduled":
+        from .vp import activate
+        error = ""
+        retry_at = 0.0
+        with TerminalDashboard() as view:
+            while waiting.get("status") == "scheduled":
+                if not view.input():
+                    return
+                from .sessions import boundary
+                cutoff = boundary(path)
+                if cutoff is not None and time.time() >= cutoff:
+                    waiting["status"] = "cancelled"
+                    write_json(path, waiting)
+                    return
+                remaining = waiting["start_time"] - time.time()
+                if remaining <= 0 and time.monotonic() >= retry_at:
+                    try:
+                        waiting = activate(path, waiting)
+                    except (VPError, OSError) as exc:
+                        error = str(exc)
+                        retry_at = time.monotonic() + 15
+                    continue
+                from .scoring import score_submissions
+                c = Contest.from_dict(waiting["contest"])
+                view.update(display(c, -max(0, remaining), score_submissions([], list(c.problems), c.rules, 0),
+                                    "—", "", None, [], error or "Waiting for scheduled start"))
+                time.sleep(0.2)
+        if waiting.get("status") == "cancelled":
+            return
     with file_lock(path.with_suffix(".monitor.lock"), nonblocking=True):
         state = read_json(path)
         contest = Contest.from_dict(state["contest"])
@@ -291,6 +339,7 @@ def monitor(path: Path) -> None:
         api.start_time = state["start_time"]
         reference_api = adapter(contest.url, config)
         reference_api.start_time = state["start_time"]
+        from .sessions import boundary, merge_submissions, save_state
         submissions = {x["id"]: Submission(**x) for x in state.get("submissions", [])}
         final_score_key = (score_submissions(list(submissions.values()), list(contest.problems),
                                            contest.rules, contest.rules.duration).rank_key
@@ -309,6 +358,9 @@ def monitor(path: Path) -> None:
         with ThreadPoolExecutor(max_workers=2) as network, TerminalDashboard() as view:
             while view.input():
                 elapsed = time.time() - state["start_time"]
+                cutoff = boundary(path)
+                interrupted = cutoff is not None and cutoff < state["start_time"] + contest.rules.duration
+                scoring_elapsed = min(elapsed, cutoff-state["start_time"]) if interrupted else elapsed
                 now = time.monotonic()
                 fresh_submissions = False
                 for receipt in receipts.read():
@@ -322,8 +374,8 @@ def monitor(path: Path) -> None:
                     if incoming is not None:
                         fresh_submissions = True
                         have_polled = True
-                        for submission in incoming:
-                            submissions[submission.id] = submission
+                        state["submissions"] = [asdict(s) for s in submissions.values()]
+                        submissions = {s.id: s for s in merge_submissions(path, state, incoming)}
                         last_poll = now
                     submission_error = error
                     pending = any(s.verdict == "PENDING" for s in submissions.values())
@@ -338,22 +390,22 @@ def monitor(path: Path) -> None:
                 if future is None and now >= next_poll:
                     future = network.submit(poll, api, contest, elapsed)
                 if reference_future is None and now >= next_reference:
-                    reference_future = network.submit(poll, reference_api, contest, elapsed, True)
-                current_reference = (reference.replay.at(contest, elapsed, released=reference.released)
+                    reference_future = network.submit(poll, reference_api, contest, scoring_elapsed, True)
+                current_reference = (reference.replay.at(contest, scoring_elapsed, released=reference.released)
                                      if reference.replay is not None else reference)
-                frozen = contest.rules.frozen(elapsed, current_reference.released)
+                frozen = contest.rules.frozen(scoring_elapsed, current_reference.released)
                 # Rebuild from canonical submissions, including when resuming old
                 # state or offline. Discovery order is not submission chronology.
                 recent = recent_submissions(list(submissions.values()), list(contest.problems), contest.rules, elapsed)
                 records = submission_history(list(submissions.values()), list(contest.problems), contest.rules, elapsed)
                 private = score_submissions(list(submissions.values()), list(contest.problems), contest.rules,
-                                            elapsed, name=api.handle)
+                                            scoring_elapsed, name=api.handle)
                 public_elapsed = (math.nextafter(float(contest.rules.freeze_at), -math.inf)
-                                  if contest.rules.problem_reveal_count and frozen else elapsed)
+                                  if contest.rules.problem_reveal_count and frozen else scoring_elapsed)
                 public = score_submissions(list(submissions.values()), list(contest.problems), contest.rules,
                                            public_elapsed, public=True, released=current_reference.released, name=api.handle)
-                all_final = all(s.verdict not in ("PENDING", "UNAVAILABLE") for s in submissions.values() if 0 <= s.time < contest.rules.duration)
-                finalized = (elapsed >= contest.rules.duration and not frozen and current_reference.complete
+                all_final = all(s.verdict not in ("PENDING", "UNAVAILABLE") for s in submissions.values() if not s.practice and 0 <= s.time < contest.rules.duration)
+                finalized = (not interrupted and elapsed >= contest.rules.duration and not frozen and current_reference.complete
                              and api.submissions_complete and have_polled and all_final)
                 rank = "?" if frozen else str(rank_of(private, current_reference.rows)) if current_reference.complete and private.results_complete else "—"
                 shown_rank = rank_label(private, current_reference.rows) if current_reference.complete and private.results_complete and not frozen else rank
@@ -370,6 +422,8 @@ def monitor(path: Path) -> None:
                     shown_message = "Scoreboard frozen"
                 if last_poll and now - last_poll > 15:
                     shown_message = "Results stale · " + shown_message
+                if boundary(path) is not None and time.time() >= boundary(path):
+                    shown_message = "Archived VP · new submissions from this directory are practice"
                 if now >= next_render:
                     dashboard = display(contest, elapsed, private, shown_rank, prize, stats, records, shown_message)
                     dashboard.revealed = revealed_problems(contest, elapsed, current_reference)
@@ -383,8 +437,11 @@ def monitor(path: Path) -> None:
                         state["medal_lines"] = medal_lines(current_reference.rows, contest.medals)
                     state.update(contest=contest.to_dict(), submissions=[asdict(x) for x in submissions.values()],
                                  recent=recent, submission_history=records, last_sync_time=time.time(),
-                                 status="complete" if finalized or preserve_final else "running")
-                    write_json(path, state)
+                                 status="archived" if interrupted and elapsed >= cutoff-state["start_time"] else "complete" if finalized or preserve_final else "running")
+                    state["summary"] = {"solved": private.solved,
+                                        "penalty": private.penalty if private.results_complete else "",
+                                        "rank": rank if finalized else "", "prize": prize}
+                    save_state(path, state)
                     row = {"start_time": datetime.fromtimestamp(state["start_time"], timezone.utc).isoformat(),
                            "contest": contest.name, "url": contest.url, "solved": private.solved,
                            "penalty": private.penalty if private.results_complete else "", "rank": rank if finalized else "", "prize": prize}
@@ -396,25 +453,24 @@ def monitor(path: Path) -> None:
 def main() -> None:
     args = sys.argv[1:]
     try:
-        if args == ["history"]:
-            history()
-        elif args == ["history", "--live"]:
-            from .live import history as live_history
-            live_history()
-        elif len(args) == 3 and args[:2] == ["live", "cf"]:
-            start(contest_id_url("cf", args[2]), live=True)
-        elif len(args) == 2 and args[0] == "live":
-            start(args[1], live=True)
+        if args and args[0] == "history":
+            from .attempt_history import history as attempts_history
+            attempts_history(args[1:])
         elif len(args) == 2 and args[0] == "_monitor":
             monitor(Path(args[1]))
         elif len(args) == 2 and args[0] in ("cf", "qoj", "gym"):
-            start(contest_id_url(*args))
+            from .scheduling import prompt_start
+            start(contest_id_url(*args), scheduled_start=prompt_start())
         elif len(args) == 1 and args[0] not in ("-h", "--help"):
-            start(args[0])
+            platform, _, url = contest_url(args[0])
+            if platform not in ("qoj", "cf", "gym"):
+                raise VPError("Use live CONTEST_URL for CWNUOJ or Nowcoder.")
+            from .scheduling import prompt_start
+            start(url, scheduled_start=prompt_start())
         elif args in ([], ["-h"], ["--help"]):
-            console.print("Usage: vp cf ID\n       vp qoj ID\n       vp gym ID\n       vp CONTEST_URL\n       vp live cf ID\n       vp live CONTEST_URL\n       vp history [--live]", markup=False)
+            console.print("Usage: vp cf ID\n       vp qoj ID\n       vp gym ID\n       vp CONTEST_URL\nHistory: vp history [ATTEMPT_ID | --live]", markup=False)
         else:
-            raise VPError("Usage: vp cf ID, vp qoj ID, vp gym ID, vp live cf ID or vp history [--live]")
+            raise VPError("Usage: vp cf ID, vp qoj ID, vp gym ID, vp CONTEST_URL or vp history [ATTEMPT_ID]")
     except (VPError, OSError, subprocess.CalledProcessError) as exc:
         console.print("vp: " + str(exc), style="red", markup=False)
         raise SystemExit(1) from None

@@ -127,13 +127,17 @@ class Gym:
                    and r["party"].get("startTimeSeconds") is not None]
         return max(parties, key=lambda p: p["startTimeSeconds"], default=None)
 
-    def start(self, contest: Contest) -> float:
+    def start(self, contest: Contest, requested_start: float | None = None) -> float:
         soup = self.web.soup(self.url, params={"locale": "en"})
         profile = soup.select_one("#header")
         if not profile or not any(urlsplit(a.get("href", "")).path.lower() == f"/profile/{self.handle}".lower() for a in profile.select("a")):
             raise VPError("The Codeforces login cookie does not belong to the configured handle.")
         old = self._virtual_party()
         if old and time.time() < old["startTimeSeconds"] + contest.rules.duration:
+            if requested_start is not None and abs(requested_start - old["startTimeSeconds"]) > 60:
+                contest.extra.update(local_attempt=True, native_start_time=old["startTimeSeconds"])
+                self.start_time = requested_start
+                return self.start_time
             self.start_time = float(old["startTimeSeconds"])
             return self.start_time
         registration = self.web.soup(self.origin + f"/contestRegistration/{self.id}/virtual/true", params={"locale": "en"})
@@ -148,13 +152,19 @@ class Gym:
             payload[submit["name"]] = submit.get("value", "")
         if not payload.get("csrf_token"):
             raise VPError("Codeforces did not provide a registration CSRF token.")
+        if requested_start is not None:
+            from .scheduling import registration_time
+            registration_time(form, payload, requested_start)
         # Preserve the platform's observed start/timezone fields. In particular,
         # never use a local-clock guess for the native VP start.
+        self.native_post_sent = True
         self.web.post(urljoin(self.origin, form.get("action") or f"/contestRegistration/{self.id}/virtual/true"), payload)
         party = self._virtual_party()
         if not party or (old and party["startTimeSeconds"] == old["startTimeSeconds"]):
             raise VPError("Codeforces did not confirm a new native VIRTUAL participation and start time.")
         self.start_time = float(party["startTimeSeconds"])
+        if requested_start is not None and abs(self.start_time - requested_start) > 60:
+            raise VPError("Codeforces confirmed a different virtual start time. Check the original registration before retrying.")
         return self.start_time
 
     def submissions(self, contest: Contest) -> list[Submission]:
@@ -175,13 +185,14 @@ class Gym:
                 native = author["participantType"] == "VIRTUAL" and author.get("startTimeSeconds") == self.start_time
                 practice = (author["participantType"] == "PRACTICE"
                             and raw["creationTimeSeconds"] >= self.start_time + contest.rules.duration)
-                if not (native or practice):
+                local = contest.extra.get("local_attempt") and author.get("participantType") in ("VIRTUAL", "PRACTICE")
+                if str(raw.get("contestId", self.id)) != self.id or author.get("ghost") or not (native or practice or local):
                     continue
                 label = raw["problem"]["index"]
                 if label not in contest.problems:
                     continue
                 sid = str(raw["id"])
-                relative = raw["relativeTimeSeconds"] if native else raw["creationTimeSeconds"] - self.start_time
+                relative = raw["creationTimeSeconds"] - self.start_time if local else raw["relativeTimeSeconds"] if native else raw["creationTimeSeconds"] - self.start_time
                 result[sid] = Submission(sid, "me", label, float(relative), verdict(raw.get("verdict")))
             if len(data) < 1000 or reached_start:
                 self.submissions_complete = True
@@ -216,6 +227,8 @@ class Gym:
         if self._original is None:
             self._original = self.api("contest.standings", contestId=self.id, showUnofficial=False, participantTypes="CONTESTANT")
         released = contest.rules.freeze_at is None
+        if contest.extra.get("local_attempt") and elapsed >= contest.rules.duration:
+            released = True
         if not released and elapsed >= contest.rules.duration:
             # Original historic 'frozen=false' cannot release the current VP.
             soup = self.web.soup(self.url + "/standings", params={"locale": "en"})

@@ -1,8 +1,8 @@
 # VP Helper
 
-Ubuntu 上的比赛终端助手，支持 QOJ、Codeforces ICPC 虚拟参赛、Codeforces Gym，以及 Codeforces、CWNUOJ、牛客正式比赛实时接入。上方显示成绩与完整提交记录，下方保留比赛目录中的普通 shell。
+Ubuntu 上的比赛终端助手，支持 QOJ、Codeforces ICPC 虚拟参赛、Codeforces Gym，以及 Codeforces、CWNUOJ、牛客正式比赛实时接入，并提供各站补题工作区。上方显示成绩与完整提交记录，下方保留比赛目录中的普通 shell。
 
-当前版本：0.4.0。
+当前版本：0.5.0。
 
 ## 安装
 
@@ -21,6 +21,7 @@ bash install.sh --local
 export PATH="$PWD/bin:$PATH"
 vp --help
 live --help
+bt --help
 submit --help
 ```
 
@@ -32,23 +33,62 @@ macOS / Ubuntu 双系统用户需要先将本文件夹或随附安装包放到 U
 
 ## 使用
 
-将 `ID` 替换为对应平台的数字比赛编号：
+启动比赛保留以下入口，`paa` 表示 CWNUOJ，`nk` 表示牛客：
 
 ```text
 vp cf ID
 vp qoj ID
 vp gym ID
+vp CONTEST_URL
+live cf ID
+live paa ID
+live nk ID
+live CONTEST_URL
+bt CONTEST_URL
 ```
 
-例如：
+CF、QOJ、Gym 的 ID 为数字；CWNUOJ 的 ID 为链接中的 24 位比赛 ID。有域路径的 CWNUOJ 比赛使用完整链接。`vp` 的计分范围仍限定 ICPC；`live` 按原站赛制显示。
+
+### VP 开始时间与多轮记录
+
+执行 `vp` 后会提示开始时间，默认时区为 `Asia/Shanghai`（可通过 `TZ` 修改）：
+
+- 回车或 `now`：立即准备开始。
+- `20:30` 或 `20:30:15`：下一次到达该时刻时开始；当天已过则安排到次日。
+- `2026-11-01 20:30`：指定未来日期和时间，也支持带时区的 ISO 时间。
+
+首次原生 VP 会核对并使用原站开始时间。Codeforces / Gym 自动填写原站虚拟参赛表单的开始时间与时区，提交报名并核验返回的开始时间；分钟精度的表单向上取整到下一分钟。QOJ 在倒计时到点后，由后台监控自动读取登录状态并开始原生 VP。无需再到网页手动点击开始。启动请求超时后只查询是否已成功，不重复发送 POST。
+
+每次再次执行 `vp` 都创建新的轮次 ID、代码目录和独立计时；已结束、已中断和补题记录保留。已有轮次后的重复 VP 使用**本地独立计时**，提交仍交给原站评测，面板标注 `local timer`；不会把它冒充原站新建的原生虚拟参赛。旧轮次在新轮开始时停止计分，旧目录继续提交的记录归入旧轮补题并显示蓝色，不进入新轮成绩。被替换、尚未开始的 QOJ 预约不会在稍后意外启动。
+
+等待期间请保持 Ubuntu 开机联网，后台任务运行在 tmux 中。脱离面板不会暂停计时；重启系统后可通过历史轮次恢复监控。
 
 ```bash
-vp qoj 3169
-submit A.cpp
-vp history
+vp history                       # 所有 VP、实时比赛与补题工作区
+vp history 轮次ID                 # 查看该轮成绩、代码目录、完整提交及补题记录
+vp history 轮次ID --open          # 恢复该轮面板；不新建 VP
+vp history --live                # 只看实时比赛
 ```
 
-也支持 `vp CONTEST_URL`。上述 VP 命令的计分范围限定为 ICPC；普通 Codeforces Round 的 CF / IOI 计分请使用下面的 `live` 模式。
+历史列表读取本地保存内容；查看具体轮次时会尝试同步原站判定，登录或网络不可用时保留并显示缓存记录。原有 CSV 不删除。
+
+### 补题
+
+比赛或 VP 结束后，可在原目录继续使用 `submit A.cpp`。所有补题判定（含待判和未通过）统一显示蓝色，不影响比赛正式成绩。
+
+也可以直接为任一支持站点创建补题目录，无需先在本程序启动过比赛：
+
+```bash
+bt https://codeforces.com/contest/比赛编号
+bt https://codeforces.com/gym/比赛编号
+bt https://qoj.ac/contest/比赛编号
+bt https://oj.cwnupaa.com/contest/比赛ID
+bt https://ac.nowcoder.com/acm/contest/比赛编号
+```
+
+`bt` 复用该账号、该比赛已有的补题工作区，使用原站允许的补题权限；不自动报名。CWNUOJ 使用比赛内的补题提交入口，保留 `tid`，记录仍关联该比赛。Codeforces 账号若仍有该场未结束的原生 VP，需在其结束后使用 `bt`，防止补题改变那场原生 VP。其他平台也由原站决定题目和补题提交权限。
+
+在工作区中提交代码，或明确指定该目录中的源文件。统一 `submit` 根据源文件绑定的比赛和轮次选择提交器，切换平台后旧目录仍可使用。不同轮次配置冲突时会拒绝提交。题面下载是可选步骤，PDF / HTML 下载失败不阻止看板、提交与补题。
 
 ## Codeforces 实时比赛
 
@@ -70,7 +110,7 @@ submit solution.cpp --problem A
 submit A.cpp --lang 73
 ```
 
-默认按文件扩展名从本场实际提供的编译器中选择，可用 `--lang` 指定编译器 ID 或唯一匹配的名称。当前目录与源码目录绑定不同比赛时拒绝提交。提交前核对账号、比赛、官方时间和 `CODING` 状态；结束后不会自动当作练习提交。POST 不自动重发，超时或无法确认新提交编号时，请先检查原站 My submissions 或面板，再决定是否重试。服务器确认编号后，本地面板立即显示 `PENDING`。
+默认按文件扩展名从本场实际提供的编译器中选择，可用 `--lang` 指定编译器 ID 或唯一匹配的名称。当前目录与源码目录绑定不同比赛时拒绝提交。提交前核对账号、比赛和官方时间；开赛前拒绝提交，比赛结束后使用原站补题表单，记录标为蓝色补题。POST 不自动重发，超时或无法确认新提交编号时，请先检查原站 My submissions 或面板，再决定是否重试。服务器确认编号后，本地面板立即显示 `PENDING`。
 
 成绩以原站公开榜单为准：CF/IOI 显示总分与每题分数，ICPC 显示过题数与官方罚时；同时显示官方排名及 Hack 成功/失败数量。CF 预测试通过显示 `PRETESTS-PASSED`，题目暂定分以 `*` 标记；系统测试、Hack 和重测后的降分会继续同步，不按本地 ICPC 规则重算。等待系统测试和系统测试中均不视为最终完赛。封榜时明确标注，保留原站公开榜单的可见结果。
 
@@ -84,7 +124,7 @@ submit A.cpp --lang 73
 vp history --live
 ```
 
-也保留 `vp live cf ID` 和 `vp live CONTEST_URL` 作为等价入口。所有入口均使用同一个实时模式。接口依据：[Codeforces API 方法](https://codeforces.com/apiHelp/methods)、[返回对象](https://codeforces.com/apiHelp/objects)。
+实时参赛仅使用独立 `live` 入口，不再提供 `vp live` 别名。接口依据：[Codeforces API 方法](https://codeforces.com/apiHelp/methods)、[返回对象](https://codeforces.com/apiHelp/objects)。
 
 ## CWNUOJ 实时比赛（HydroOJ）
 
@@ -147,13 +187,13 @@ submit solution.cpp --problem A
 
 自动读取支持 Firefox 的普通安装及 Ubuntu Snap 目录，读取该网站的持久 Cookie 和最新会话恢复记录；其他网站及容器、隐私会话不参与导入。程序只读取浏览器文件。验证通过后将登录数据保存到本地配置，账号不匹配或网络验证失败时保留原配置。GET 遇到登录过期会重新读取并验证一次；启动 VP 和提交代码的 POST 不自动重发。Firefox 尚未保存新会话时稍候再运行命令，或登录时勾选“记住我”。
 
-登录过期时，在 Firefox 重新登录同一个账号，再运行原命令即可，无需复制 Cookie。多 Firefox 配置可在对应平台账号中指定 `firefox_profile` 为该 profile 的完整路径；sudo 启动时默认使用原普通用户的 Firefox。root 与普通用户的应用配置仍分别保存，root 使用 `/root/.config/vp/config.json`，普通用户使用自己的 `~/.config/vp/config.json`。
+登录过期时，在 Firefox 重新登录同一个账号后，通过历史轮次恢复已有 VP；live、bt 可重新执行原命令。无需复制 Cookie。多 Firefox 配置可在对应平台账号中指定 `firefox_profile` 为该 profile 的完整路径；sudo 启动时默认使用原普通用户的 Firefox。root 与普通用户的应用配置仍分别保存，root 使用 `/root/.config/vp/config.json`，普通用户使用自己的 `~/.config/vp/config.json`。
 
 已有手动配置也可继续使用。要固定使用手动 Cookie，在账号中设置 `"cookie_source": "manual"`；填写 `cookie` 时只复制请求中 `Cookie` 的值，省略 `Cookie:` 标签和其他请求头。
 
 每场比赛在桌面共用一个目录，例如 `2024 ICPC Nanjing Reg`。再次进入保留已有代码和输入数据，更新提交配置与题面；各次 VP 的开始时间和成绩状态独立保存。`submit A.cpp` 在对应比赛目录内运行。
 
-请用同一个 Linux 用户运行 `vp` 和 `submit`；root 与普通用户的桌面目录和 VP 状态互相独立。QOJ 提交器会在当前目录、源码所在目录及其上级目录查找 `contest.json`，因此也支持从子目录提交或在别处指定源码路径。当前目录与源码绑定不同比赛、账号或题号时会要求切换到源码的比赛目录；同场同账号的配置以当前目录为准。找不到配置时给出恢复指引。重新运行同一场 `vp` 命令会补齐或刷新提交配置，沿用已经确认的原站开始时间。
+请用同一个 Linux 用户运行 `vp` 和 `submit`；root 与普通用户的桌面目录和 VP 状态互相独立。QOJ 提交器会在当前目录、源码所在目录及其上级目录查找 `contest.json`，因此也支持从子目录提交或在别处指定源码路径。当前目录与源码绑定不同比赛、账号或题号时会要求切换到源码的比赛目录；同场同账号但不同轮次的配置同样会拒绝混用。找不到配置时给出恢复指引。重新运行同一场 `vp` 会新建轮次；恢复已有轮次使用 `vp history 轮次ID --open`。
 
 ## 成绩与界面
 
@@ -164,14 +204,14 @@ submit solution.cpp --problem A
 - `rank` 列保持在成绩表左侧，排名和奖项在同一格内分两行显示，例如上行 `=47`、下行 `Silver Prize`。
 - 内置 submit 在服务器确认新提交编号后立即通知面板显示 `PENDING`，随后用平台判定替换；本人提交与榜单查询独立执行。
 - QOJ 的 0 分提交会读取详情区的测试点判定，区分 WA、CE、RE 等结果；前面通过的测试点不会覆盖后面的失败。详情暂时无法读取时显示 `RESULT UNAVAILABLE`，按退避间隔重查，并继续更新其他提交。影响罚时的结果未确认时，罚时与排名暂不显示确定值。
-- 提交记录按时间从新到旧完整展开，`practice` 标注紧贴判定。5 小时后的补题不计入比赛成绩，未通过显示橙色，通过显示紫色。
+- 提交记录按时间从新到旧完整展开，`practice` 标注紧贴判定。5 小时后的补题不计入比赛成绩，所有补题判定统一显示蓝色。
 - 空白、标题与提交列表继承终端默认背景，支持终端自身的透明效果。
 - 最终成绩保存到桌面的 `vp_history.csv`。
-- `vp history` 增加 `gold`、`silver`、`bronze` 三列，显示原赛正式队终榜的金、银、铜线。每格上行是过题数/罚时，下行是名次界限，例如 `9/1200` 与 `(≤30)`；并列成绩使用相同分界，打星队不计入奖线。比赛完成后保存奖线，旧记录从本地 VP 状态和已核验的原赛缓存补齐。只有奖项名额时过题数/罚时显示 `—`，资格或数据缺失时整格显示 `—`。历史查询不联网，也不改写原有 CSV。
+- `vp history 轮次ID` 显示已保存的原赛正式队终榜金、银、铜线。每格上行是过题数/罚时，下行是名次界限，例如 `9/1200` 与 `(≤30)`；并列成绩使用相同分界，打星队不计入奖线。比赛完成后保存奖线，旧记录从本地 VP 状态和已核验的原赛缓存补齐。只有奖项名额时过题数/罚时显示 `—`，资格或数据缺失时整格显示 `—`。轮次成绩与奖线保存在独立状态文件中，补题不会改写正式赛内成绩。
 
-在上方面板用方向键、`PgUp` / `PgDn`、`Home` / `End` 或鼠标滚轮查看提交。`Ctrl+B`、`D` 脱离 tmux 后继续同步；再次运行同一场比赛命令可恢复。按 `q` 关闭评分面板。
+在上方面板用方向键、`PgUp` / `PgDn`、`Home` / `End` 或鼠标滚轮查看提交。`Ctrl+B`、`D` 脱离 tmux 后继续同步；`live` 和 `bt` 可再次运行原命令恢复；VP 使用 `vp history 轮次ID --open` 恢复。按 `q` 关闭评分面板。
 
-如果终端关闭或重启导致 tmux 会话消失，再次运行同一场比赛命令也会重建面板，沿用本地记录中的原始开始时间、比赛目录及提交记录，不会重新向原站申请 VP。比赛计时不会因面板关闭而暂停。此恢复针对 `current.json` 指向的比赛记录。
+如果终端关闭或重启导致 tmux 会话消失，使用 `vp history 轮次ID --open` 重建已有 VP 面板，保留其开始时间、目录及提交记录，不重新报名。`vp` 启动命令始终表示新建轮次。
 
 已安装的 0.1.15 如果在同场比赛恢复时提示 `A native VP is already running`，可使用该安装的 Python 运行随仓库提供的修复脚本（以原虚拟环境路径为例）：
 

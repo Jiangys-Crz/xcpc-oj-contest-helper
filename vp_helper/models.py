@@ -77,6 +77,7 @@ class Submission:
     problem: str
     time: float
     verdict: str
+    practice: bool = False
 
 
 @dataclass

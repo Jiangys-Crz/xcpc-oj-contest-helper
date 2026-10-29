@@ -68,6 +68,12 @@ if [[ -e "$vp_bin/live" || -L "$vp_bin/live" ]]; then
         exit 1
     fi
 fi
+if [[ -e "$vp_bin/bt" || -L "$vp_bin/bt" ]]; then
+    if [[ ! -L "$vp_bin/bt" || "$(readlink -- "$vp_bin/bt")" != "$vp_prefix/current/venv/bin/bt" ]]; then
+        printf '%s already exists and is not managed by this installation.\n' "$vp_bin/bt" >&2
+        exit 1
+    fi
+fi
 if [[ -n "$vp_submit_path" && ( -e "$vp_bin/submit" || -L "$vp_bin/submit" ) ]] && \
         [[ "$(readlink -f -- "$vp_bin/submit")" != "$vp_submit_path" ]]; then
     printf '%s\n' 'A different submit already exists. It was left in place.' >&2
@@ -172,9 +178,11 @@ fi
 "${vp_pip[@]}" check
 "$vp_release/venv/bin/vp" --help
 "$vp_release/venv/bin/live" --help
+"$vp_release/venv/bin/bt" --help
 "$vp_release/venv/bin/vp-cf-submit" --help
 "$vp_release/venv/bin/vp-hydro-submit" --help
 "$vp_release/venv/bin/vp-nowcoder-submit" --help
+"$vp_release/venv/bin/vp-submit" --help
 if [[ -d "$vp_release/third_party" ]]; then
     "$vp_release/third_party/qoj/submit" --help
     "$vp_release/third_party/cf_submit/submit" --help >/dev/null
@@ -190,19 +198,25 @@ if [[ -z "$vp_submit_path" && -L "$vp_selected" && ! -e "$vp_selected" ]]; then
     vp_previous="$(readlink -- "$vp_selected")"
     case "$vp_previous" in
         /opt/vp-helper/*/third_party/qoj/submit|*/.vp-install/*/third_party/qoj/submit)
-            ln -sfn "$vp_prefix/current/third_party/qoj/submit" "$vp_selected" ;;
+            ln -sfn "$vp_prefix/current/venv/bin/vp-submit" "$vp_selected" ;;
         /opt/vp-helper/*/third_party/cf_submit/submit|*/.vp-install/*/third_party/cf_submit/submit)
-            ln -sfn "$vp_prefix/current/third_party/cf_submit/submit" "$vp_selected" ;;
+            ln -sfn "$vp_prefix/current/venv/bin/vp-submit" "$vp_selected" ;;
         *) printf 'Preserved external submit link: %s -> %s\n' "$vp_selected" "$vp_previous" ;;
     esac
 fi
 if [[ -z "$vp_submit_path" && -d "$vp_release/third_party" && ! -e "$vp_selected" && ! -L "$vp_selected" ]]; then
     install -d -m 700 "$(dirname -- "$vp_selected")"
-    ln -s "$vp_prefix/current/third_party/qoj/submit" "$vp_selected"
+    ln -s "$vp_prefix/current/venv/bin/vp-submit" "$vp_selected"
     if [[ $EUID -eq 0 ]]; then
         chown "$vp_owner:$vp_owner_group" "$(dirname -- "$vp_selected")"
         chown -h "$vp_owner:$vp_owner_group" "$vp_selected"
     fi
+fi
+if [[ -z "$vp_submit_path" && -L "$vp_selected" ]]; then
+    case "$(readlink -- "$vp_selected")" in
+        "$vp_prefix"/*/third_party/qoj/submit|"$vp_prefix"/*/third_party/cf_submit/submit|"$vp_prefix"/*/venv/bin/vp-*)
+            ln -sfn "$vp_prefix/current/venv/bin/vp-submit" "$vp_selected" ;;
+    esac
 fi
 # Publish only after the new environment and both submitters have passed checks.
 ln -s "$vp_release" "$vp_prefix/.current-new-$$"
@@ -210,6 +224,7 @@ mv -Tf "$vp_prefix/.current-new-$$" "$vp_prefix/current"
 vp_installed=true
 ln -sfn "$vp_prefix/current/venv/bin/vp" "$vp_bin/vp"
 ln -sfn "$vp_prefix/current/venv/bin/live" "$vp_bin/live"
+ln -sfn "$vp_prefix/current/venv/bin/bt" "$vp_bin/bt"
 if [[ ! -e "$vp_bin/submit" && ! -L "$vp_bin/submit" ]]; then
     if [[ -n "$vp_submit_path" ]]; then
         ln -s -- "$vp_submit_path" "$vp_bin/submit"
@@ -220,7 +235,7 @@ elif [[ -z "$vp_submit_path" && "$(readlink -- "$vp_bin/submit" || true)" != "$v
     printf '%s\n' 'Preserved the previously installed submit.'
 fi
 printf 'Installed VP Helper using %s (%s).\n' "$("$vp_release/venv/bin/python" --version)" "$(uname -m)"
-printf 'Commands: %s/vp, %s/live and %s/submit\n' "$vp_bin" "$vp_bin" "$vp_bin"
+printf 'Commands: %s/vp, %s/live, %s/bt and %s/submit\n' "$vp_bin" "$vp_bin" "$vp_bin" "$vp_bin"
 if $vp_local; then
     printf 'For commands in any directory, add this to your shell configuration:\n  export PATH=%q:"$PATH"\n' "$vp_bin"
 fi

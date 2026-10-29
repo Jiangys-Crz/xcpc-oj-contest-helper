@@ -25,6 +25,7 @@ VP Helper · Ubuntu 26.04 ARM64 安装说明
    export PATH="$PWD/bin:$PATH"
    vp --help
    live --help
+   bt --help
    submit --help
 
    请使用日常 Linux 用户运行，不要在安装命令前加 sudo。
@@ -42,8 +43,15 @@ VP Helper · Ubuntu 26.04 ARM64 安装说明
    vp qoj 比赛编号
    vp cf 比赛编号
    vp gym 比赛编号
+   三种 VP 命令均提示开始时间，回车立即或输入 HH:MM / YYYY-MM-DD HH:MM。
+   CF/Gym 自动填写原站开始时间，QOJ 到点自动发起 VP。等待时保持开机联网。
+   每次 vp 都新建独立轮次；重复 VP 使用本地独立计时，原站继续评测代码。
+   vp history 列出轮次，vp history 轮次ID 查看，附加 --open 恢复已有面板。
 
-   Codeforces 已报名的正式比赛使用：
+   已报名的正式比赛使用：
+   live cf 比赛编号
+   live paa 比赛ID
+   live nk 比赛编号
    live https://codeforces.com/contest/比赛编号
    live https://oj.cwnupaa.com/contest/比赛ID
    live https://ac.nowcoder.com/acm/contest/比赛编号
@@ -51,7 +59,10 @@ VP Helper · Ubuntu 26.04 ARM64 安装说明
    CWNUOJ 请先在 Ubuntu Firefox 登录并在网站报名，配置使用 cwnuoj 项。
    牛客同样读取 Ubuntu Firefox Cookie，配置使用 nowcoder 项，不填写密码。
    牛客提交参考 vscode-nowcoderac 的表单协议，验证码或结果不明时不会自动重发。
-   比赛目录内 submit A.cpp 提交，vp history --live 查看实时比赛历史。
+   比赛目录内 submit A.cpp 提交；结束后仍可补题，补题记录统一蓝色。
+   bt 比赛链接 直接创建补题工作区，支持 CF、Gym、QOJ、CWNUOJ、牛客。
+   CWNUOJ 保留比赛 ID，使用比赛内的补题提交入口。
+   vp history --live 查看实时比赛历史。
    PDF 或 HTML 题面下载失败时仍可使用比赛面板和提交。
 
    CF / Gym 的 VP 模式首次运行还需要填写 Codeforces API key 和 secret。

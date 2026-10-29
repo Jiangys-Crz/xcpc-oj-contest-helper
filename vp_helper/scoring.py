@@ -46,7 +46,7 @@ def score_submissions(
     # Latest polling response replaces previous verdicts; callers deduplicate by ID.
     unique = {s.id: s for s in submissions if s.team == team_id}
     for s in sorted(unique.values(), key=lambda s: (s.time, s.id.zfill(24))):
-        if s.problem not in cells or not 0 <= s.time < rules.duration or s.time > elapsed:
+        if s.practice or s.problem not in cells or not 0 <= s.time < rules.duration or s.time > elapsed:
             continue
         c = cells[s.problem]
         if c.solved:
@@ -86,7 +86,7 @@ def submission_history(submissions: list[Submission], problems: list[str], rules
               if s.team == team_id and s.problem in problems and 0 <= s.time <= elapsed}
     ordered = sorted(unique.values(), key=lambda s: (s.time, s.id.zfill(24)), reverse=True)
     return [{"id": s.id, "problem": s.problem, "time": s.time, "verdict": s.verdict,
-             "practice": s.time >= rules.duration} for s in ordered]
+             "practice": s.practice or s.time >= rules.duration} for s in ordered]
 
 
 def recent_submissions(submissions: list[Submission], problems: list[str], rules: Rules,
@@ -94,7 +94,7 @@ def recent_submissions(submissions: list[Submission], problems: list[str], rules
     """Latest submissions in this VP, independent of poll order or verdict changes."""
     unique = {s.id: s for s in submissions
               if s.team == team_id and s.problem in problems
-              and 0 <= s.time < rules.duration and s.time <= elapsed}
+              and not s.practice and 0 <= s.time < rules.duration and s.time <= elapsed}
     latest = sorted(unique.values(), key=lambda s: (s.time, s.id.zfill(24)), reverse=True)
     return [{"id": s.id, "problem": s.problem, "time": s.time, "verdict": s.verdict}
             for s in latest[:max(0, limit)]]

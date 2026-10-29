@@ -162,6 +162,7 @@ class QOJ:
         post_error = None
         site_message = ""
         try:
+            self.native_post_sent = True
             response = self.web.post(urljoin(self.url, form.get("action", self.url)), payload)
             site_message = self._start_message(response)
         except VPError as exc:
@@ -255,12 +256,18 @@ class QOJ:
                         urlsplit(a.get("href", "")).path == f"/contest/{self.id}" for a in row.select("sup a[href]")):
                     # QOJ emits relative time only for submissions explicitly
                     # attached to this native contest, marked by the # link.
-                    if self._relative_start_verified != self.start_time:
+                    native_start = contest.extra.get("native_start_time", self.start_time)
+                    if contest.extra.get("practice") and "native_start_time" not in contest.extra:
                         current = self._registration(duration=contest.rules.duration)
-                        if not current or current[0] != self.start_time:
+                        if not current:
+                            raise VPError("QOJ did not expose the native clock for this relative practice timestamp.")
+                        native_start = contest.extra["native_start_time"] = current[0]
+                    if self._relative_start_verified != native_start:
+                        current = self._registration(duration=contest.rules.duration)
+                        if not current or current[0] != native_start:
                             raise VPError("The current native QOJ VP start no longer matches this session.")
-                        self._relative_start_verified = self.start_time
-                    at = seconds(cells[-1].get_text(strip=True))
+                        self._relative_start_verified = native_start
+                    at = seconds(cells[-1].get_text(strip=True)) + native_start - self.start_time
                 else:
                     raise VPError("QOJ did not provide the submission timestamp.")
                 if at < 0:
@@ -419,7 +426,7 @@ class QOJ:
         soup = self._page("/standings", show_unofficial="true")
         html = str(soup)
         released = False
-        if elapsed >= contest.rules.duration:
+        if elapsed >= contest.rules.duration and not contest.extra.get("local_attempt"):
             # Require the current account's own native VP end/unfreeze evidence.
             my_name = js_value(html, "my_name", "")
             text = soup.get_text(" ", strip=True)
@@ -447,6 +454,8 @@ class QOJ:
             no_hidden = all(isinstance(col, list) and len(col) >= 6 and not col[5] for col in values)
             released = (self.start_time is not None and self._finished_start == self.start_time
                         and js_value(html, "my_name", "") == self.handle and no_hidden)
+        if contest.extra.get("local_attempt") and elapsed >= contest.rules.duration:
+            released = True
         # Keep the public archive connection across metadata and event downloads.
         # This session carries none of the judge account's cookies.
         with requests.Session() as public_web:

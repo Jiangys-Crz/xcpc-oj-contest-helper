@@ -135,15 +135,15 @@ class NowcoderLive:
             self.web._refresh_browser(force=True)
             raise VPError("Nowcoder did not confirm this account's private view. Refresh the Firefox login and retry.")
 
-    def apply_metadata(self, contest: Contest, data: dict) -> None:
+    def apply_metadata(self, contest: Contest, data: dict, *, require_registration: bool = True) -> None:
         if (str(data.get("contestId")) != self.id or data.get("type") not in SCORING
                 or not isinstance(data.get("name"), str)):
             raise VPError("Nowcoder returned an unsupported contest identity or scoring rule.")
         if contest.extra.get("uid") is not None and contest.extra["uid"] != self.uid:
             raise VPError("The Nowcoder user ID changed. Restore this contest's account.")
-        if data.get("isTeamSignUp"):
+        if require_registration and data.get("isTeamSignUp"):
             raise VPError("Nowcoder team contests are not supported yet.")
-        if not data.get("isSignUp"):
+        if require_registration and not data.get("isSignUp"):
             raise VPError("Nowcoder did not confirm an existing registration. Join this contest on the website first.")
         if data.get("contestType") == 1:
             raise VPError("This link is a replay contest. Live mode requires the original contest registration.")

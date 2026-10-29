@@ -11,8 +11,8 @@ from rich.text import Text
 from .models import Contest, TeamScore
 
 
-PRACTICE_WRONG = "#d75f00"
-PRACTICE_ACCEPTED = "#8700d7"
+PRACTICE_WRONG = "#0000ff"
+PRACTICE_ACCEPTED = "#0000ff"
 SCORE_BOX = box.Box("    \n    \n ── \n    \n ── \n ── \n    \n    \n")
 
 
@@ -44,8 +44,11 @@ class Dashboard:
         prize = {"Gold": "Gold Prize", "Silver": "Silver Prize", "Bronze": "Bronze Prize",
                  "None": "No Prize", "Unknown": "Unknown"}.get(self.prize, self.prize)
         result = self.rank + (f"\n{prize}" if prize else "")
-        heading.add_row(Text(f" {clock(min(self.elapsed, self.contest.rules.duration))} / {clock(self.contest.rules.duration)}", style="bold default"),
-                        Text(self.contest.name, style="bold"), Text(""))
+        timer = "Starts in " + clock(-self.elapsed) if self.elapsed < 0 else f"{clock(min(self.elapsed, self.contest.rules.duration))} / {clock(self.contest.rules.duration)}"
+        label = self.contest.name + (f" · VP #{self.contest.extra['attempt']}" if self.contest.extra.get("attempt") else "")
+        if self.contest.extra.get("local_attempt"):
+            label += " · local timer"
+        heading.add_row(Text(" " + timer, style="bold default"), Text(label, style="bold"), Text(""))
         table = Table(box=SCORE_BOX, padding=(0, 1), style="default",
                       header_style="bold black on #eeeeee", border_style="#bbbbbb",
                       show_edge=False, expand=True)

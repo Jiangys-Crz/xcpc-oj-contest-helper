@@ -77,7 +77,7 @@ class ResumeTests(unittest.TestCase):
 
     def test_missing_session_recreates_panel_and_preserves_participation(self):
         before = self.path.read_bytes()
-        cli.start(self.state["url"])
+        cli.start(self.state["url"], resume=True)
         self.launch.assert_called_once_with(self.path, self.state)
         self.attach.assert_not_called()
         self.assert_preserved(before)
@@ -88,7 +88,7 @@ class ResumeTests(unittest.TestCase):
     def test_existing_session_attaches(self):
         self.tmux.return_value = True
         before = self.path.read_bytes()
-        cli.start(self.state["url"])
+        cli.start(self.state["url"], resume=True)
         self.attach.assert_called_once_with(self.state["tmux_session"])
         self.launch.assert_not_called()
         self.assert_preserved(before)
@@ -96,7 +96,7 @@ class ResumeTests(unittest.TestCase):
     def test_dead_monitor_respawns(self):
         self.tmux.return_value = True
         self.run.return_value.stdout = "1\n"
-        cli.start(self.state["url"])
+        cli.start(self.state["url"], resume=True)
         commands = [call.args[0] for call in self.run.call_args_list]
         self.assertTrue(any(command[:2] == ["tmux", "respawn-pane"] for command in commands))
         self.attach.assert_called_once()
@@ -108,12 +108,12 @@ class ResumeTests(unittest.TestCase):
                 self.state.update(start_time=-20000, status=status)
                 self.save_state()
                 before = self.path.read_bytes()
-                self.assertEqual(cli.prepare_start(self.state["url"]), (self.path, self.state))
+                self.assertEqual(cli.prepare_resume(self.state["url"]), (self.path, self.state))
                 self.assert_preserved(before)
 
     def test_other_active_contest_still_blocks(self):
         with self.assertRaisesRegex(VPError, "A native VP is already running"):
-            cli.start("https://qoj.ac/contest/4539")
+            cli.start("https://qoj.ac/contest/4539", resume=True)
         self.adapter.assert_not_called()
         self.launch.assert_not_called()
 
@@ -121,7 +121,7 @@ class ResumeTests(unittest.TestCase):
         self.api.handle = "someone_else"
         before = self.path.read_bytes()
         with self.assertRaisesRegex(VPError, "configured account changed"):
-            cli.start(self.state["url"])
+            cli.start(self.state["url"], resume=True)
         self.assert_preserved(before)
         self.launch.assert_not_called()
         self.api.submit_configuration.assert_not_called()
@@ -130,12 +130,13 @@ class ResumeTests(unittest.TestCase):
         self.api.account["submit_script"] = str(self.root / "missing")
         before = self.path.read_bytes()
         with self.assertRaisesRegex(VPError, "submit script is not installed"):
-            cli.start(self.state["url"])
+            cli.start(self.state["url"], resume=True)
         self.assert_preserved(before)
         self.launch.assert_not_called()
 
     def test_pdf_download_failure_does_not_prevent_starting_contest(self):
         (self.root / "current.json").unlink()
+        self.path.unlink()
         contest = Contest.from_dict(self.state["contest"])
         contest.pdfs = {"Statements.pdf": "https://qoj.ac/statement.pdf"}
         self.api.prepare.side_effect = None
@@ -145,8 +146,8 @@ class ResumeTests(unittest.TestCase):
         self.api.web.pdf.side_effect = VPError("download failed")
         with patch.object(cli, "desktop", return_value=self.root):
             path, state = cli.prepare_start(self.state["url"])
-        self.api.start.assert_called_once_with(contest)
-        self.assertEqual(state["start_time"], 1000)
+        self.api.start.assert_called_once()
+        self.assertEqual(state["start_time"], 2000)
         self.assertTrue(path.is_file())
 
     @unittest.skipUnless(HAVE_TMUX, "tmux is required for the integration check")
@@ -162,7 +163,7 @@ class ResumeTests(unittest.TestCase):
                 for attempt in range(2):
                     with self.subTest(attempt=attempt):
                         self.assertFalse(REAL_TMUX_EXISTS(name))
-                        cli.start(self.state["url"])
+                        cli.start(self.state["url"], resume=True)
                         self.assertTrue(REAL_TMUX_EXISTS(name))
                         panes = REAL_RUN(["tmux", "list-panes", "-t", name, "-F", "#{pane_dead}"],
                                          check=True, capture_output=True, text=True).stdout.splitlines()

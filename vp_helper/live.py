@@ -47,7 +47,7 @@ def configure_submission(api, contest: Contest, directory: Path) -> None:
     from .browser_login import browser_fields
     selected = state_directory() / "submit"
     script = api.account.get("submit_script") or shutil.which("submit")
-    native = Path(sys.prefix) / "bin" / PLATFORMS[contest.platform][1]
+    native = Path(sys.prefix) / "bin" / "vp-submit"
     if not native.is_file() or not os.access(native, os.X_OK):
         raise VPError("The live submit command is missing. Install this version with bash install.sh, then retry.")
     if not script or not Path(script).is_symlink() or Path(os.readlink(script)) != selected:
@@ -136,8 +136,10 @@ def save_progress(path: Path, state: dict, contest: Contest, snapshot: dict,
     final = (snapshot.get("phase") == "FINISHED" and not snapshot.get("frozen") and own is not None
              and submissions_at >= snapshot.get("at", float("inf"))
              and not any(e["verdict"] in ("PENDING", "UNAVAILABLE", "HIDDEN", "SYSTEM-ERROR") for e in events.values() if not e.get("practice")))
+    from .sessions import merge_records
+    merged = merge_records(path, {**state, "contest": contest.to_dict()}, list(events.values()))
     state.update(contest=contest.to_dict(), start_time=contest.original_start, snapshot=snapshot,
-                 submissions=list(events.values()), status="complete" if final else "running",
+                 submissions=merged, status="complete" if final else "running",
                  last_sync_time=submissions_at)
     write_json(path, state)
     if snapshot:
@@ -186,8 +188,9 @@ def monitor_live(path: Path) -> None:
                     incoming, submission_error = submission_future.result()
                     submission_future = None
                     if incoming is not None and submission_start == contest.original_start:
-                        for event in incoming:
-                            events[event["id"]] = event
+                        from .sessions import merge_records
+                        state["submissions"] = list(events.values())
+                        events = {e["id"]: e for e in merge_records(path, state, incoming)}
                         submissions_at = time.time()
                         changed = True
                     pending = any(e["verdict"] == "PENDING" for e in events.values())
@@ -257,12 +260,21 @@ def history() -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Attach to an existing Codeforces, CWNUOJ or Nowcoder contest registration")
-    parser.add_argument("url", help="Codeforces, CWNUOJ or https://ac.nowcoder.com/acm/contest/ID contest URL")
+    parser = argparse.ArgumentParser(usage="live cf ID | live paa ID | live nk ID | live CONTEST_URL",
+                                     description="Attach to an existing Codeforces, CWNUOJ or Nowcoder contest registration")
+    parser.add_argument("target", help="cf ID, paa ID (CWNUOJ), nk ID (Nowcoder), or CONTEST_URL")
+    parser.add_argument("id", nargs="?")
     args = parser.parse_args()
     from . import cli
     try:
-        cli.start(args.url, live=True)
+        from .parsing import contest_id_url
+        if args.id is not None:
+            if args.target not in ("cf", "paa", "nk"):
+                raise VPError("Usage: live cf ID, live paa ID, live nk ID or live CONTEST_URL")
+            url = contest_id_url(args.target, args.id)
+        else:
+            url = args.target
+        cli.start(url, live=True)
     except (VPError, OSError, cli.subprocess.CalledProcessError) as exc:
         cli.console.print("live: " + str(exc), style="red", markup=False)
         raise SystemExit(1) from None

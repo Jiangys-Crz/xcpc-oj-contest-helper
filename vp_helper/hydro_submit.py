@@ -51,13 +51,14 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     if not source.is_file():
         raise VPError("Source file not found: " + str(source))
     config_path, config = submission_configuration(source)
-    if config.get("platform") != "cwnuoj" or config.get("mode") != "live":
+    practice_mode = config.get("mode") == "practice"
+    if config.get("platform") != "cwnuoj" or config.get("mode") not in ("live", "practice"):
         raise VPError("Run submit from a CWNUOJ contest directory prepared by live URL.")
     context = config.get("vp_context", {})
     if not context.get("state_path") or Path(context["state_path"]).resolve().parent != state_directory().resolve():
         raise VPError("This submission context is outside the live state directory. Reconnect with live URL.")
     state = read_json(Path(context["state_path"]))
-    if (state.get("mode") != "live" or any(context.get(key) != state.get(key) for key in ("url", "handle", "start_time"))
+    if (state.get("mode") != config["mode"] or any(context.get(key) != state.get(key) for key in ("url", "handle", "start_time"))
             or state.get("url") != config.get("base_url") or state.get("handle") != config.get("handle")):
         raise VPError("The CWNUOJ account or contest context changed. Reconnect with live URL.")
     refresh_submission_login(config_path, config, "cwnuoj")
@@ -66,10 +67,12 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
         raise VPError("The CWNUOJ contest or user ID changed. Reconnect with live URL.")
     api.identity()
     contest = Contest.from_dict(state["contest"])
-    api.apply_metadata(contest, api.details())
-    if contest.extra["phase"] != "CODING":
-        raise VPError("The CWNUOJ contest is not active. No code was sent; use the original site for practice.")
-    if contest.original_start != state["start_time"]:
+    api.apply_metadata(contest, api.details(), **({"require_registration": False} if practice_mode else {}))
+    if practice_mode and contest.extra["phase"] != "FINISHED":
+        raise VPError("This practice workspace requires a finished contest.")
+    if contest.extra["phase"] == "BEFORE":
+        raise VPError("The CWNUOJ contest has not started. No code was sent.")
+    if not practice_mode and contest.original_start != state["start_time"]:
         raise VPError("The official start time changed. Reconnect with live URL before submitting.")
     label = (problem or source.stem).upper()
     if label not in contest.problems:
@@ -79,10 +82,11 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
         raise VPError("CWNUOJ changed the problem list. Reconnect with live URL before submitting.")
     path = api.prefix + "/p/" + pid + "/submit"
     url = ORIGIN + path
-    options = api.get_json(url, tid=api.id).get("langRange")
+    query = {"tid": api.id}
+    options = api.get_json(url, **query).get("langRange")
     if not isinstance(options, dict) or not options:
         raise VPError("CWNUOJ did not offer any submission languages for this participation.")
-    page = api.web.soup(url, params={"tid": api.id})
+    page = api.web.soup(url, params=query)
     if identity_from_html(str(page))["uid"] != config["uid"]:
         raise VPError("CWNUOJ returned a submission form for another account.")
     code_field = page.select_one('textarea[name="code"]')
@@ -93,15 +97,17 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     if target.scheme != "https" or target.netloc != urlsplit(ORIGIN).netloc or target.path.rstrip("/") != path:
         raise VPError("CWNUOJ returned an unexpected submission destination.")
     payload = form_values(form)
-    payload.update(tid=api.id, lang=language_id(options, source, language), code=source.read_text(encoding="utf8"))
+    payload.update(lang=language_id(options, source, language), code=source.read_text(encoding="utf8"))
+    payload["tid"] = api.id
     payload.pop("pretest", None)
     submitted_at = time.time()
-    if not contest.original_start <= submitted_at < contest.extra["end_time"]:
-        raise VPError("The CWNUOJ contest ended while preparing this submission. No code was sent.")
+    if submitted_at < contest.original_start:
+        raise VPError("The CWNUOJ contest has not started. No code was sent.")
+    submit_url = url + ("?" + urlencode(query) if query else "")
     try:
-        response = api.web.session.post(url + "?" + urlencode({"tid": api.id}), data=payload,
+        response = api.web.session.post(submit_url, data=payload,
                                         headers={"Accept": "application/json", "Origin": ORIGIN,
-                                                 "Referer": url + "?" + urlencode({"tid": api.id})},
+                                                 "Referer": submit_url},
                                         timeout=(10, 40), allow_redirects=False)
     except _RequestException:
         raise VPError("Submission outcome unknown. Check CWNUOJ records before retrying; the request was not repeated.") from None

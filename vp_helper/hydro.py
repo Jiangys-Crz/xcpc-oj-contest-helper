@@ -117,23 +117,23 @@ class HydroLive:
                 data = self.get_json(self.url)
         return data
 
-    def apply_metadata(self, contest: Contest, data: dict) -> None:
+    def apply_metadata(self, contest: Contest, data: dict, *, require_registration: bool = True) -> None:
         tdoc, status = data.get("tdoc", {}), data.get("tsdoc") or {}
         if contest.extra.get("uid") is not None and contest.extra["uid"] != self.uid:
             raise VPError("The CWNUOJ user ID changed; restore the saved participation's account.")
         ident = str(tdoc.get("docId", tdoc.get("_id", "")))
         if ident != self.id or tdoc.get("domainId", "system") != self.domain or tdoc.get("rule") not in SCORING:
             raise VPError("CWNUOJ contest identity or scoring rule is unsupported. Use an ACM, OI, IOI or Codeforces contest.")
-        if not status.get("attend"):
+        if require_registration and not status.get("attend"):
             # A timed out/anonymous session must not be mistaken for an existing
             # participation, and no attend/start request is ever issued here.
             raise VPError("CWNUOJ did not confirm an existing registration. Log in and join this contest on CWNUOJ first.")
-        if tdoc.get("allowTeam"):
+        if require_registration and tdoc.get("allowTeam"):
             raise VPError("CWNUOJ team contests are not supported yet; use the original contest page.")
         if not all(isinstance(tdoc.get(key), str) and tdoc[key] for key in ("title", "beginAt", "endAt")):
             raise VPError("CWNUOJ did not provide a valid contest title and schedule.")
         start, end = timestamp(tdoc["beginAt"]), timestamp(tdoc["endAt"])
-        if tdoc.get("duration"):
+        if tdoc.get("duration") and (require_registration or status.get("startAt")):
             if not status.get("startAt"):
                 raise VPError("This timed participation has not started on CWNUOJ. Open it on the original site first, then reconnect.")
             start = timestamp(status["startAt"])

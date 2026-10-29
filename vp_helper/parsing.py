@@ -13,8 +13,10 @@ NOWCODER_HOST = "ac.nowcoder.com"
 
 
 def contest_id_url(platform: str, ident: str) -> str:
+    if platform == "paa":
+        return contest_url(f"https://{CWNUOJ_HOST}/contest/{ident}")[2]
     paths = {"cf": "https://codeforces.com/contest/", "qoj": "https://qoj.ac/contest/",
-             "gym": "https://codeforces.com/gym/"}
+             "gym": "https://codeforces.com/gym/", "nk": f"https://{NOWCODER_HOST}/acm/contest/"}
     if platform not in paths or not re.fullmatch(r"[0-9]+", ident) or int(ident) <= 0:
         raise VPError("Use vp cf ID, vp qoj ID or vp gym ID with a positive numeric contest ID.")
     return paths[platform] + str(int(ident))

@@ -246,7 +246,7 @@ class LocalTests(IsolatedState):
 
     def test_live_preparation_and_resume_select_hydro_entry_without_losing_sources(self):
         from vp_helper import cli
-        native = self.root / "venv/bin/vp-hydro-submit"
+        native = self.root / "venv/bin/vp-submit"
         native.parent.mkdir(parents=True)
         native.write_text("#!/bin/sh\n")
         native.chmod(0o755)
@@ -281,7 +281,7 @@ class LocalTests(IsolatedState):
         own = {"points": 0, "penalty": "0:00", "rank": "1"}
         live.save_progress(self.path, self.state, self.contest,
                            {"own": own, "phase": "FINISHED", "frozen": False, "at": 1},
-                           {RID: {"verdict": "HIDDEN"}}, 2)
+                           {RID: {"id": RID, "team": "me", "problem": "A", "time": 1, "verdict": "HIDDEN"}}, 2)
         self.assertEqual(read_json(self.path)["status"], "running")
 
 
@@ -327,7 +327,7 @@ class SubmitTests(IsolatedState):
             hydro_submit.submit(self.source)
         self.api.web.session.post.assert_called_once()
 
-    def test_changed_problem_or_account_or_ended_contest_blocks_post(self):
+    def test_changed_problem_or_account_or_before_contest_blocks_post(self):
         self.config["problem_ids"]["A"] = "999"
         with self.assertRaisesRegex(VPError, "problem list"):
             hydro_submit.submit(self.source)
@@ -336,8 +336,8 @@ class SubmitTests(IsolatedState):
         with self.assertRaisesRegex(VPError, "context changed"):
             hydro_submit.submit(self.source)
         self.config["vp_context"]["handle"] = "tester"
-        with patch("vp_helper.hydro.time.time", return_value=9000):
-            with self.assertRaisesRegex(VPError, "not active"):
+        with patch("vp_helper.hydro.time.time", return_value=900):
+            with self.assertRaisesRegex(VPError, "not started"):
                 hydro_submit.submit(self.source)
         self.api.web.session.post.assert_not_called()
 
@@ -346,6 +346,23 @@ class SubmitTests(IsolatedState):
         with self.assertRaisesRegex(VPError, "does not match"):
             hydro_submit.submit(self.source)
         self.assertFalse(self.path.with_suffix(".receipts").exists())
+
+    def test_finished_contest_uses_contest_practice_submission_with_tid(self):
+        with patch("vp_helper.hydro.time.time", return_value=9000):
+            self.assertEqual(hydro_submit.submit(self.source), RID)
+        call = self.api.web.session.post.call_args
+        self.assertEqual(call.kwargs["data"]["tid"], TID)
+        self.assertIn("?tid=" + TID, call.args[0])
+        self.assertTrue(ReceiptReader(self.path, self.state).read()[0].practice)
+
+    def test_bt_without_registration_still_uses_the_contest_form(self):
+        self.config["mode"] = self.state["mode"] = "practice"
+        self.state["start_time"] = self.config["vp_context"]["start_time"] = 8500
+        write_json(self.path, self.state)
+        self.api.details.return_value = details(attend=0)
+        with patch("vp_helper.hydro.time.time", return_value=9000):
+            self.assertEqual(hydro_submit.submit(self.source), RID)
+        self.assertEqual(self.api.web.session.post.call_args.kwargs["data"]["tid"], TID)
 
     def test_oi_hidden_receipt_does_not_trigger_second_submission(self):
         self.api.web.session.post.return_value.json.return_value = {"tid": TID}

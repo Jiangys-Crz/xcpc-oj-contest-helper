@@ -40,6 +40,17 @@ def verify_login(soup, handle: str) -> None:
         raise VPError("Codeforces login expired or belongs to another account. Log in to the configured account in Firefox.")
 
 
+def verify_practice(api, duration: int) -> None:
+    data = api.api("contest.standings", contestId=api.id, handles=api.handle, showUnofficial=True)
+    for row in data.get("rows", []):
+        party = row.get("party", {})
+        if (party.get("participantType") == "VIRTUAL"
+                and any(m.get("handle", "").casefold() == api.handle.casefold() for m in party.get("members", []))
+                and party.get("startTimeSeconds") is not None
+                and time.time() < party["startTimeSeconds"] + duration):
+            raise VPError("Codeforces still has an active or scheduled virtual participation. Use bt after it ends so practice cannot change that VP.")
+
+
 def own_row(rows: list[dict], handle: str) -> dict | None:
     matches = [row for row in rows if row["party"].get("participantType") == "CONTESTANT"
                and not row["party"].get("ghost")
@@ -64,18 +75,31 @@ def apply_metadata(contest: Contest, raw: dict, problems: list[dict] | None = No
 
 
 class CodeforcesLive:
-    def __init__(self, url: str, account: dict):
+    def __init__(self, url: str, account: dict, *, allow_gym: bool = False):
         platform, self.id, self.url = contest_url(url)
-        if platform != "cf":
+        if platform != "cf" and not (allow_gym and platform == "gym"):
             raise VPError("Live mode currently accepts regular Codeforces /contest/ links only.")
-        self.account = account
+        self.platform = platform
+        self.account = dict(account)
+        if platform == "gym":
+            # A private Gym may require the existing API credentials. Read
+            # them only for the same account; never copy them to contest.json.
+            from .storage import config_directory
+            saved = read_json(config_directory() / "config.json").get("gym", {})
+            if saved.get("handle", "").casefold() == account.get("handle", "").casefold():
+                for key in ("api_key", "api_secret"):
+                    if saved.get(key):
+                        self.account.setdefault(key, saved[key])
         self.handle = account.get("handle", "")
-        self.web = WebSession("https://codeforces.com", account)
+        self.web = WebSession("https://codeforces.com", self.account)
         # The public standings endpoint must receive exactly contestId and no
         # account cookies, API authentication, locale, or filter parameters.
         self.public = WebSession("https://codeforces.com", {}, auto_refresh=False)
 
     def api(self, method: str, **params):
+        if self.platform == "gym" and self.account.get("api_key") and self.account.get("api_secret"):
+            from .gym import Gym
+            return Gym(self.url, self.account).api(method, **params)
         return public_api(self.public, method, **params)
 
     def prepare(self) -> tuple[Contest, dict]:
@@ -143,10 +167,10 @@ class CodeforcesLive:
                 kind = author.get("participantType")
                 if (str(raw.get("contestId")) != self.id or author.get("ghost")
                         or not any(m["handle"].lower() == self.handle.lower() for m in author["members"])
-                        or kind not in LIVE_TYPES | {"PRACTICE"}):
+                        or kind not in LIVE_TYPES | {"PRACTICE"} | ({"VIRTUAL"} if contest.extra.get("practice") else set())):
                     continue
                 relative = float(raw["creationTimeSeconds"]) - contest.original_start
-                if relative < 0 or (kind == "PRACTICE" and relative < contest.rules.duration):
+                if relative < 0 or (kind == "PRACTICE" and relative < contest.rules.duration and not contest.extra.get("practice")):
                     continue
                 value = raw.get("verdict") or "PENDING"
                 value = {"OK": "CORRECT", "TESTING": "PENDING", "SUBMITTED": "PENDING"}.get(value, value)

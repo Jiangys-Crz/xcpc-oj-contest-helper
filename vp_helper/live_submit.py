@@ -11,7 +11,7 @@ from urllib.parse import urljoin, urlsplit
 from bs4 import BeautifulSoup
 
 from .browser_login import refresh_submission_login
-from .codeforces_live import CodeforcesLive, verify_login
+from .codeforces_live import CodeforcesLive, verify_login, verify_practice
 from .http import _RequestException, form_values
 from .models import VPError
 from .receipts import cf_submission_id, cf_submission_ids, record_receipt
@@ -45,37 +45,43 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     if not source.is_file():
         raise VPError("Source file not found: " + str(source))
     config_path, config = submission_configuration(source)
-    if config.get("platform") != "cf" or config.get("mode") != "live":
+    practice_mode = config.get("mode") == "practice"
+    if config.get("platform") not in ("cf", "gym") or config.get("mode") not in ("live", "practice"):
         raise VPError("Run submit from a Codeforces live contest directory prepared by live URL.")
-    api = CodeforcesLive(config["base_url"], config)
+    api = CodeforcesLive(config["base_url"], config, **({"allow_gym": True} if practice_mode else {}))
     if str(config.get("contest_id")) != api.id:
         raise VPError("The submission configuration contains conflicting contest IDs.")
     label = (problem or source.stem).upper()
     if not re.fullmatch(r"[A-Z][0-9]*", label):
         raise VPError("Use a filename such as A.cpp or specify the problem with --problem A.")
     refresh_submission_login(config_path, config, "cf")
-    api = CodeforcesLive(config["base_url"], config)
+    api = CodeforcesLive(config["base_url"], config, **({"allow_gym": True} if practice_mode else {}))
     context = config.get("vp_context", {})
     if not context.get("state_path") or Path(context["state_path"]).resolve().parent != state_directory().resolve():
         raise VPError("This submission context is outside the live state directory. Reconnect with live URL.")
     state = read_json(Path(context["state_path"]))
-    if (state.get("mode") != "live" or state.get("url") != api.url
+    if (state.get("mode") != config["mode"] or state.get("url") != api.url
             or state.get("handle", "").lower() != api.handle.lower()):
         raise VPError("This directory no longer has a valid live participation; run live URL for this contest again.")
-    # Check phase just before sending. After coding ends the same web form can
-    # become a practice form; never silently submit practice as a live entry.
+    # After coding ends the original form becomes a practice form.
     snapshot = api.api("contest.standings", contestId=api.id)
     raw = snapshot["contest"]
-    if (str(raw.get("id")) != api.id or raw.get("phase") != "CODING" or
+    if practice_mode and raw.get("phase") != "FINISHED":
+        raise VPError("This practice workspace requires a finished contest.")
+    if practice_mode:
+        verify_practice(api, raw["durationSeconds"])
+    if (str(raw.get("id")) != api.id or raw.get("phase") == "BEFORE" or
             not raw.get("startTimeSeconds") or
-            not raw["startTimeSeconds"] <= time.time() < raw["startTimeSeconds"] + raw["durationSeconds"]):
-        raise VPError("The coding phase is not active. No code was submitted; use Codeforces for practice submissions.")
+            time.time() < raw["startTimeSeconds"]
+            or raw.get("phase") != "CODING" and time.time() < raw["startTimeSeconds"] + raw["durationSeconds"]):
+        raise VPError("The coding phase has not started or practice is not open. No code was submitted.")
     if label not in {p["index"] for p in snapshot["problems"]}:
         raise VPError("This problem is not available in the current contest.")
     # Validate context before the irreversible POST, even if no receipt can be
     # recovered afterwards. Account/contest conflicts must not be discovered late.
     if (context.get("url") != state.get("url") or context.get("handle") != state.get("handle")
-            or context.get("start_time") != state.get("start_time") or state["start_time"] != raw["startTimeSeconds"]):
+            or context.get("start_time") != state.get("start_time")
+            or not practice_mode and state["start_time"] != raw["startTimeSeconds"]):
         raise VPError("The official start time changed; reconnect with live URL before submitting.")
     previous_page = api.web.soup(api.url + "/my", params={"locale": "en"})
     verify_login(previous_page, api.handle)
@@ -91,19 +97,18 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     payload.update(submittedProblemIndex=label, programTypeId=compiler_id(form, source, language),
                    source=source.read_text(encoding="utf8"))
     target = urljoin(api.url + "/submit", form.get("action") or api.url + "/submit")
+    base_path = urlsplit(api.url).path.rstrip("/")
     if (urlsplit(target).scheme != "https" or urlsplit(target).netloc != "codeforces.com"
-            or urlsplit(target).path.rstrip("/") != f"/contest/{api.id}/submit"):
+            or urlsplit(target).path.rstrip("/") != base_path + "/submit"):
         raise VPError("The platform returned an unexpected submission destination.")
     submitted_at = time.time()
-    if submitted_at >= raw["startTimeSeconds"] + raw["durationSeconds"]:
-        raise VPError("The coding phase ended while preparing this submission. No code was sent.")
     try:
         # A POST is sent once. A timeout can mean the server accepted it.
         response = api.web.session.post(target, data=payload, timeout=(10, 40))
     except _RequestException:
         raise VPError("Submission outcome unknown. Check Codeforces My submissions before retrying; the request was not repeated.") from None
     if (response.status_code != 200 or urlsplit(response.url).netloc != "codeforces.com"
-            or urlsplit(response.url).path.rstrip("/") != f"/contest/{api.id}/my"):
+            or urlsplit(response.url).path.rstrip("/") != base_path + "/my"):
         soup = BeautifulSoup(response.text, "html.parser")
         error = soup.select_one(".error, .error-message")
         detail = error.get_text(" ", strip=True) if error else f"HTTP {response.status_code}; check My submissions before retrying"

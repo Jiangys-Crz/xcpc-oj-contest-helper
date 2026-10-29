@@ -24,7 +24,7 @@ def submission_configuration(source: Path | None = None) -> tuple[Path, dict]:
             same_target = (isinstance(here, dict) and isinstance(there, dict)
                            and bool(here.get("base_url")) and bool(here.get("handle"))
                            and all(here.get(key) == there.get(key) for key in (
-                               "base_url", "handle", "problems", "problem_ids", "offset", "platform")))
+                               "base_url", "handle", "problems", "problem_ids", "offset", "platform", "vp_context")))
             if not same_target:
                 raise VPError("The current directory and source file have different contest configurations. "
                               "Run submit from the source file's contest directory.")

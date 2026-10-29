@@ -16,6 +16,7 @@ from rich.console import Console
 from vp_helper import cli, live, live_submit
 from vp_helper.codeforces_live import CodeforcesLive, own_row, public_api, submission_records
 from vp_helper.http import _RequestException
+from vp_helper.receipts import ReceiptReader
 from vp_helper.models import Contest, Rules, VPError
 from vp_helper.storage import read_history, read_json, write_json
 from vp_helper.tui import LiveDashboard
@@ -228,7 +229,7 @@ class LocalStateTests(IsolatedState):
     def test_frozen_or_pending_does_not_finalize(self):
         for frozen, verdict in ((True, "CORRECT"), (False, "PENDING")):
             snap = {"phase": "FINISHED", "frozen": frozen, "at": 1, "own": standings()["rows"][0]}
-            events = {"1": {"verdict": verdict}}
+            events = {"1": {"id": "1", "team": "me", "problem": "A", "time": 1, "verdict": verdict}}
             live.save_progress(self.path, self.state, contest(), snap, events, 2)
             self.assertEqual(read_json(self.path)["status"], "running")
 
@@ -270,7 +271,7 @@ class LocalStateTests(IsolatedState):
         self.assertNotIn("Gold", rendered)
 
     def test_installed_submit_dispatch_selects_live_entry_and_keeps_private_config(self):
-        native = self.root / "venv/bin/vp-cf-submit"
+        native = self.root / "venv/bin/vp-submit"
         native.parent.mkdir(parents=True)
         native.write_text("#!/bin/sh\n")
         native.chmod(0o755)
@@ -380,6 +381,22 @@ class SubmitTests(IsolatedState):
             with self.assertRaisesRegex(VPError, "coding phase"):
                 live_submit.submit(self.source)
         self.api.web.session.post.assert_not_called()
+
+    def test_after_end_can_submit_practice_and_receipt_is_blue_classified(self):
+        self.api.api.return_value = standings(phase="FINISHED")
+        with patch("vp_helper.live_submit.time.time", return_value=9000):
+            self.assertEqual(live_submit.submit(self.source), "77")
+        self.assertTrue(ReceiptReader(self.path, self.state).read()[0].practice)
+        self.api.web.session.post.assert_called_once()
+
+    def test_bt_context_can_have_its_own_start_time(self):
+        self.config["mode"] = self.state["mode"] = "practice"
+        self.state["start_time"] = self.config["vp_context"]["start_time"] = 8500
+        write_json(self.path, self.state)
+        self.api.api.return_value = standings(phase="FINISHED")
+        with patch("vp_helper.live_submit.time.time", return_value=9000):
+            self.assertEqual(live_submit.submit(self.source), "77")
+        self.assertTrue(ReceiptReader(self.path, self.state).read()[0].practice)
 
     def test_context_mismatch_or_outside_state_directory_blocks_post(self):
         for key, value in (("handle", "other"), ("start_time", 1001), ("state_path", str(self.root / "elsewhere.json"))):
