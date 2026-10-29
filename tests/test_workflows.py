@@ -19,7 +19,7 @@ from vp_helper.gym import Gym
 from vp_helper.models import Contest, Rules, Submission, VPError, StartRejected
 from vp_helper.parsing import contest_id_url
 from vp_helper.receipts import record_receipt, ReceiptReader
-from vp_helper.scheduling import parse_start, registration_time
+from vp_helper.scheduling import parse_start, prompt_start, registration_time
 from vp_helper.scoring import score_submissions, submission_history
 from vp_helper.sessions import attempts, boundary, close_attempt, merge_records, merge_submissions, end_attempt, save_state
 from vp_helper.storage import read_json, state_directory, write_json
@@ -208,12 +208,20 @@ class SchedulingTests(unittest.TestCase):
     def test_prompt_time_and_full_date_and_past_date_validation(self):
         now = datetime.fromisoformat("2026-10-29T19:00:00+08:00").timestamp()
         with patch.dict(os.environ, {"TZ": "Asia/Shanghai"}):
-            self.assertEqual(parse_start("", now), now)
+            self.assertEqual(parse_start("", now), now + 180)
+            self.assertEqual(parse_start("   ", now), now + 180)
+            self.assertEqual(parse_start("now", now), now)
+            self.assertEqual(parse_start("立即", now), now)
             self.assertEqual(parse_start("20:00", now)-now, 3600)
             self.assertEqual(parse_start("18:00", now)-now, 23*3600)
             self.assertEqual(parse_start("2026-10-30 19:00", now)-now, 86400)
             for value in ("25:00", "2026-10-29 18:00", "invalid"):
                 with self.assertRaises(VPError): parse_start(value, now)
+
+    def test_enter_prompt_schedules_three_minutes_after_input(self):
+        with patch('builtins.input', return_value='') as ask, patch('time.time', return_value=1000):
+            self.assertEqual(prompt_start(), 1180)
+        self.assertIn('回车三分钟后开始', ask.call_args.args[0])
 
     def test_codeforces_form_explicit_time_and_timezone_are_set_automatically(self):
         when = datetime.fromisoformat("2026-10-29T20:30:00+08:00").timestamp()

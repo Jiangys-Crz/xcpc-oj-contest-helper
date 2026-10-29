@@ -191,6 +191,15 @@ class Gym:
         if form is None:
             raise StartRejected("Codeforces did not allow a new virtual participation registration.")
         payload = form_values(form)
+        if form.select_one('[name="takePartAs"]'):
+            if form.select_one('input[name="takePartAs"][value="personal"]:not([disabled])') is None:
+                raise VPError("Codeforces 未提供个人参赛选项，本次未发送报名请求。")
+            payload["takePartAs"] = "personal"
+            for name in list(payload):
+                if name.startswith("teamMember#"):
+                    del payload[name]
+            if form.select_one('select[name="teamId"] option[value="-1"]'):
+                payload["teamId"] = "-1"
         submit = form.select_one('input[type="submit"][name], button[type="submit"][name]')
         if submit:
             payload[submit["name"]] = submit.get("value", "")
@@ -199,8 +208,8 @@ class Gym:
         if requested_start is not None:
             from .scheduling import registration_time
             registration_time(form, payload, requested_start)
-        # Preserve the platform's observed start/timezone fields. In particular,
-        # never use a local-clock guess for the native VP start.
+        # The requested time is only a reservation until the platform confirms
+        # the actual native VP start below.
         before_post = getattr(self, 'before_native_post', None)
         if callable(before_post):
             before_post(time.time())

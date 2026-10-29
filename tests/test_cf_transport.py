@@ -1,5 +1,6 @@
 from contextlib import ExitStack
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -87,9 +88,11 @@ class CFVirtualConfirmationTests(unittest.TestCase):
 
     def test_native_registration_sets_future_time_and_verifies_server_countdown(self):
         header='<div id="header"><a href="/profile/tester">me</a></div>'
-        form='<form id="registerForm" action="/contestRegistration/2181/virtual/true">' \
-             '<input name="csrf_token" value="fixture"><input name="startTime" value="Oct/29/2026 20:00">' \
-             '<input name="timezoneOffset" value="-480"></form>'
+        form='<form class="contestRegistration" action="">' \
+             '<input name="csrf_token" value="fixture"><input name="initialDatetime" value="Oct/29/2026 15:00">' \
+             '<input name="startDay" value=""><input name="startTime" value="">' \
+             '<input name="clientTimezoneOffset" value="">' \
+             '<input type="radio" name="takePartAs" value="personal" checked></form>'
         self.client.web.soup.side_effect=[BeautifulSoup(header,'html.parser'),BeautifulSoup(form,'html.parser')]
         posted=[]
         def get(*args,**kwargs):
@@ -101,9 +104,12 @@ class CFVirtualConfirmationTests(unittest.TestCase):
         self.client.web.get.side_effect=get
         self.client.web.post.side_effect=post
         contest=Contest('cf','2181',URL,'Native CF fixture','Native CF fixture',{'A':'A'},Rules(18000))
-        self.assertEqual(self.client.start(contest,requested_start=self.server+1800,fresh=True),self.server+1800)
+        with patch.dict(os.environ, {'TZ': 'Asia/Shanghai'}):
+            self.assertEqual(self.client.start(contest,requested_start=self.server+1800,fresh=True),self.server+1800)
         self.client.web.post.assert_called_once()
-        self.assertEqual(self.client.web.post.call_args.args[1]['startTime'],'Oct/29/2026 20:30')
+        payload=self.client.web.post.call_args.args[1]
+        self.assertEqual((payload['startDay'],payload['startTime'],payload['clientTimezoneOffset'],payload['takePartAs']),
+                         ('Oct/29/2026','20:30','480','personal'))
         self.assertTrue(all(call.args[0]=='contest.status' for call in self.client.api.call_args_list))
 
     def test_active_vp_native_finish_countdown_uses_server_time_and_duration(self):

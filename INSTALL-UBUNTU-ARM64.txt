@@ -44,8 +44,9 @@ VP Helper · Ubuntu 26.04 ARM64 安装说明
    vp qoj 比赛编号
    vp cf 比赛编号
    vp gym 比赛编号
-   三种 VP 命令均提示开始时间，回车立即或输入 HH:MM / YYYY-MM-DD HH:MM。
-   CF/Gym 自动填写原站预约开始时间；QOJ 到点才提交 /virtual/register 表单立即开始 VP。等待时保持开机联网。
+   三种 VP 命令均提示开始时间，回车预约三分钟后开始，或输入 HH:MM / YYYY-MM-DD HH:MM。
+   CF/Gym 默认个人参赛，自动填写原站预约日期、时间与时区；分钟精度向上取整。
+   QOJ 到点才提交 /virtual/register 表单立即开始 VP。等待时保持开机联网。
    每场比赛只支持一次 VP；重复 vp / live 命令恢复已有会话，不重新报名。
    在比赛文件夹或子目录执行 xcpc dashboard 恢复面板；结束后自动进入补题。
    新 VP 必须由原站允许并确认；原站拒绝就退出，不启动本地模拟 VP。

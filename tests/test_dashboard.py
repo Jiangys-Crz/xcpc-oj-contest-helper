@@ -1,14 +1,66 @@
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from vp_helper import cli, commands
-from vp_helper.models import Contest, Rules, VPError
+from vp_helper.models import Contest, Reference, Rules, VPError
 from vp_helper.storage import read_json, write_json
 from vp_helper.sessions import save_state
 from test_workflows import Isolated, URL
 
 
 class DashboardTests(Isolated):
+    def monitor_view(self):
+        self.api.submissions.return_value=[]
+        self.api.reference.return_value=Reference()
+        view=Mock()
+        view.__enter__=Mock(return_value=view)
+        view.__exit__=Mock(return_value=False)
+        return view
+
+    def test_started_qoj_monitor_renders_score_without_entering_schedule_branch(self):
+        path,state=cli.prepare_start(URL)
+        self.api.reset_mock()
+        view=self.monitor_view()
+        view.input.side_effect=[True,False]
+        with patch.object(cli,'TerminalDashboard',return_value=view),patch('time.sleep'):
+            cli.monitor(path)
+        dashboard=view.update.call_args.args[0]
+        self.assertEqual(dashboard.contest.name,'test contest')
+        self.assertEqual(dashboard.elapsed,0)
+        self.assertEqual(dashboard.me.name,'tester')
+        self.assertEqual(dashboard.me.solved,0)
+        self.api.start.assert_not_called()
+        self.assertEqual(read_json(path)['start_time'],1000)
+
+    def test_resumed_qoj_monitor_immediately_shows_saved_acceptance(self):
+        path,state=cli.prepare_start(URL)
+        state['submissions']=[{'id':'1','team':'me','problem':'A','time':60,'verdict':'CORRECT','practice':False}]
+        write_json(path,state)
+        self.clock=1120
+        self.api.reset_mock()
+        view=self.monitor_view()
+        view.input.side_effect=[True,False]
+        with patch.object(cli,'TerminalDashboard',return_value=view),patch('time.sleep'):
+            cli.monitor(path)
+        dashboard=view.update.call_args.args[0]
+        self.assertEqual(dashboard.elapsed,120)
+        self.assertEqual(dashboard.me.solved,1)
+        self.assertEqual(dashboard.submissions[0]['id'],'1')
+        self.api.start.assert_not_called()
+        self.assertEqual(read_json(path)['start_time'],1000)
+
+    def test_scheduled_qoj_monitor_transitions_to_running_scoreboard(self):
+        path,state=cli.prepare_start(URL,scheduled_start=1180)
+        self.clock=1180
+        view=self.monitor_view()
+        view.input.side_effect=[True,True,False]
+        with patch.object(cli,'TerminalDashboard',return_value=view),patch('time.sleep'):
+            cli.monitor(path)
+        self.api.start.assert_called_once()
+        self.assertEqual(view.update.call_args.args[0].me.name,'tester')
+        self.assertEqual(read_json(path)['status'],'running')
+        self.assertEqual(read_json(path)['start_time'],1180)
+
     def test_practice_rank_is_frozen_across_reopen_and_stale_monitor_writes(self):
         path,state=cli.prepare_start(URL)
         state.update(status='complete',summary={'rank':'3'})

@@ -54,7 +54,9 @@ def receipt_owners(path: Path, state: dict) -> dict[str, tuple[Path, dict]]:
 
 def merge_records(path: Path, state: dict, incoming: list[dict]) -> list[dict]:
     """Partition server records; explicit receipts keep old-directory practice."""
-    cutoff = boundary(path)
+    closed = read_json(path.with_suffix(".closed"))
+    cutoff = closed.get("capture_until")
+    manual_practice = closed.get("reason") == "manual" and state.get("status") != "cancelled"
     owners = receipt_owners(path, state)
     values = {str(e["id"]): dict(e) for e in state.get("submissions", [])}
     for event in incoming:
@@ -69,7 +71,7 @@ def merge_records(path: Path, state: dict, incoming: list[dict]) -> list[dict]:
         owner = owners.get(sid)
         if owner and owner[0] != path:
             continue
-        if cutoff is not None and at >= cutoff and not owner:
+        if cutoff is not None and at >= cutoff and not owner and not manual_practice:
             continue
         event["practice"] = bool(state.get("mode") == "practice" or event.get("practice")
                                  or owner and owner[1].get("practice") or event["time"] >= contest.rules.duration

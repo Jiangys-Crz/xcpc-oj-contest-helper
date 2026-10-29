@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 from vp_helper import cli, vp
 from vp_helper.models import Contest, Rules, StartRejected, VPError
 from vp_helper.qoj import QOJ
+from vp_helper.scheduling import prompt_start
 from vp_helper.storage import read_json
 from test_workflows import Isolated, URL
 
@@ -15,6 +16,32 @@ def page(body):
 
 
 class NativeQOJStartTests(Isolated):
+    def test_default_enter_reserves_cf_gym_now_but_qoj_posts_three_minutes_later(self):
+        self.api.account['submit_config_format']='contest.json'
+        self.api.web.session.headers={'User-Agent':'fixture'}
+        self.api.start.side_effect=lambda c,requested_start=None,**kw: requested_start or self.clock
+        for platform,segment,ident in (('cf','contest','123'),('gym','gym','100123'),('qoj','contest','123')):
+            url=f'https://{"qoj.ac" if platform == "qoj" else "codeforces.com"}/{segment}/{ident}'
+            self.api.prepare.side_effect=lambda p=platform,u=url,i=ident: Contest(
+                p,i,u,'Default '+p,'Default '+p,{'A':'10' if p == 'qoj' else 'A'},Rules(7200))
+            self.api.start.reset_mock()
+            with patch('builtins.input',return_value=''):
+                path,state=cli.prepare_start(url,scheduled_start=prompt_start())
+            self.assertEqual(state['requested_start'],1180)
+            if platform == 'qoj':
+                self.api.start.assert_not_called()
+                self.clock=1179
+                vp.activate(path,state)
+                self.api.start.assert_not_called()
+                self.clock=1180
+                state=vp.activate(path,state)
+                self.api.start.assert_called_once()
+                self.assertEqual(state['start_time'],1180)
+            else:
+                self.api.start.assert_called_once()
+                self.assertEqual(self.api.start.call_args.kwargs['requested_start'],1180)
+                self.assertEqual(state['start_time'],1180)
+
     def test_actual_qoj_register_vp_form_with_search_form_and_start_button(self):
         client=QOJ('https://qoj.ac/contest/3617',self.api.account)
         body=page('<title>The 2008 ACM-ICPC Asia Aizu Regional Contest - Virtual Contest Rules - QOJ.ac</title>'

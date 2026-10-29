@@ -493,7 +493,6 @@ def monitor(path: Path) -> None:
                         error = str(exc)
                         retry_at = time.monotonic() + 15
                     continue
-                from .scoring import score_submissions
                 c = Contest.from_dict(waiting["contest"])
                 view.update(display(c, -max(0, remaining), score_submissions([], list(c.problems), c.rules, 0),
                                     "—", "", None, [], error or "Waiting for scheduled start"))
