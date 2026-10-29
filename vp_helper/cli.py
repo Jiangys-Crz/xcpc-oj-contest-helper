@@ -18,6 +18,7 @@ from rich.table import Table
 from rich import box
 
 from .models import Contest, Reference, Submission, VPError, StartRejected
+from .accounts import account_key, api_credentials
 from .browser_login import browser_fields, refresh_browser_account, login_diagnostics, verify_stored_session
 from .history_lines import enrich_history
 from .parsing import contest_url, contest_id_url
@@ -37,7 +38,7 @@ def adapter(url: str, config: dict):
     if platform in ("cwnuoj", "nowcoder"):
         raise VPError("These contests use live " + canonical)
     from .gym import Gym
-    return Gym(canonical, config.get(platform, config.get("gym", {})))
+    return Gym(canonical, config.get(account_key(config, platform), {}))
 
 
 def load_account(platform: str, *, live: bool = False) -> dict:
@@ -48,11 +49,13 @@ def load_account(platform: str, *, live: bool = False) -> dict:
 
 def _load_account(path: Path, platform: str, *, live: bool = False) -> dict:
     config = read_json(path)
-    key = "gym" if platform == "cf" and "cf" not in config else platform
+    key = account_key(config, platform)
     account = config.setdefault(key, {})
     account.pop("_login_verified", None)
     before = dict(account)
     verified = refresh_browser_account(platform, account) or verify_stored_session(platform, account)
+    if platform in ("cf", "gym"):
+        account.update(api_credentials(account, config, platform))
     if account != before:
         write_json(path, config)
     if not verified and account.get("cookie_source") != "manual":
@@ -61,8 +64,10 @@ def _load_account(path: Path, platform: str, *, live: bool = False) -> dict:
         detail = "\n".join(login_diagnostics(platform, account))
         raise VPError(f"无法验证 {site} 的 Firefox 登录。\n{detail}\n"
                       f"可运行 xcpc doctor {alias} 查看检查结果。")
-    required = ("handle", "cookie") if platform in ("qoj", "cwnuoj", "nowcoder") or live else ("handle", "cookie", "api_key", "api_secret")
+    required = ("handle", "cookie", "api_key", "api_secret") if platform in ("cf", "gym") else ("handle", "cookie")
     missing = [key for key in required if not account.get(key)]
+    if platform in ("cf", "gym") and any(key in missing for key in ("api_key", "api_secret")):
+        missing = [key for key in missing if key not in ("api_key", "api_secret")] + ["api_key", "api_secret"]
     if missing and not sys.stdin.isatty():
         raise VPError(f"Missing {platform} account fields {', '.join(missing)} in {path}")
     if missing:

@@ -45,6 +45,10 @@ HELP = """XCPC 比赛终端助手
   xcpc doctor paa        检查 CWNUOJ 的 Firefox 登录
   xcpc doctor nk         检查牛客；也支持 cf / gym / qoj
 
+Codeforces API 设置
+  xcpc api cf           重新输入 key 和 secret，VP / BT / live 共用
+  xcpc api gym          配置 Gym 使用的 Codeforces 账号
+
 更新
   xcpc update           更新到 Gitee 最新版本，保留原安装位置及个人数据
 
@@ -75,15 +79,19 @@ def main() -> None:
             if not args[1].strip():
                 raise VPError("保存目录不能为空。")
             print("保存目录已设置为：" + str(set_workspace_directory(args[1])))
+        elif len(args) == 2 and args[0] == "api" and args[1] in ("cf", "gym"):
+            from .accounts import configure_api
+            configure_api(args[1])
         elif len(args) == 2 and args[0] == "doctor":
             aliases = {"paa":"cwnuoj", "nk":"nowcoder", "cf":"cf", "gym":"gym", "qoj":"qoj"}
             if args[1] not in aliases:
                 raise VPError("用法：xcpc doctor paa / nk / cf / gym / qoj")
             from .browser_login import login_diagnostics
+            from .accounts import account_key
             from .storage import config_directory, read_json
             platform = aliases[args[1]]
             config = read_json(config_directory() / "config.json")
-            account = config.get(platform, config.get("gym", {}) if platform == "cf" else {})
+            account = config.get(account_key(config, platform), {})
             print("XCPC " + __version__ + " · 此检查只显示配置位置和验证结果，不显示 Cookie 或密码。")
             for line in login_diagnostics(platform, account):
                 print(line)
@@ -97,7 +105,7 @@ def main() -> None:
             update()
         else:
             raise VPError("请运行 xcpc --help 查看命令。")
-    except (VPError, OSError) as exc:
+    except (VPError, OSError, EOFError) as exc:
         print("xcpc: " + str(exc), file=sys.stderr)
         raise SystemExit(1) from None
     except KeyboardInterrupt:

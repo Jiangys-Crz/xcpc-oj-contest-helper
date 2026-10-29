@@ -2,7 +2,7 @@
 
 Ubuntu 上的比赛终端助手，支持 QOJ、Codeforces ICPC 虚拟参赛、Codeforces Gym，以及 Codeforces、CWNUOJ、牛客正式比赛实时接入，并提供各站补题工作区。上方显示成绩与完整提交记录，下方保留比赛目录中的普通 shell。
 
-当前版本：0.7.1。
+当前版本：0.7.2。
 
 ## 安装
 
@@ -145,7 +145,7 @@ bt https://ac.nowcoder.com/acm/contest/比赛编号
 live https://codeforces.com/contest/比赛编号
 ```
 
-`live` 只接入当前账号已有的参赛资格，不报名、不取消报名、不启动虚拟参赛。Codeforces 支持普通 `/contest/` 比赛的 CF、ICPC、IOI 计分；Gym 和私有 Group 比赛暂不属于实时模式支持范围。CWNUOJ 的接入方式见下一节。可在开赛前接入等待，或比赛进行中接入；报名验证失败时会给出提示并退出。开赛前若原站尚未提供可验证的报名信息，可在开赛后再次执行同一命令。实时模式不要求 Codeforces API key/secret，现有 VP/Gym 的配置要求保持不变。
+`live` 只接入当前账号已有的参赛资格，不报名、不取消报名、不启动虚拟参赛。Codeforces 支持普通 `/contest/` 比赛的 CF、ICPC、IOI 计分；Gym 和私有 Group 比赛暂不属于实时模式支持范围。CWNUOJ 的接入方式见下一节。可在开赛前接入等待，或比赛进行中接入；报名验证失败时会给出提示并退出。开赛前若原站尚未提供可验证的报名信息，可在开赛后再次执行同一命令。Codeforces 的 VP、BT、live 共用同一账号的 API key/secret，首次缺少时会提示输入；CWNUOJ 和牛客无需此密钥。
 
 比赛目录位于保存目录（默认桌面）下的 `CF 比赛编号 live`。面板按官方开始时间计时，中途接入、关闭终端、重启后重新执行同一条 `live URL` 命令，都保留比赛文件和已保存的提交记录。原站修改开赛时间后会重新同步计时。题面尽量保存为各题的 HTML；PDF 不作为接入前提，题面下载失败不会阻止使用面板或提交。未公布的题面在公开后再尝试获取。已有同名题面文件不会覆盖。
 
@@ -230,7 +230,17 @@ submit solution.cpp --problem A
 
 测试覆盖分页、计分与封榜、正式榜/补题区分、Firefox 父域 Cookie 与身份验证、目录恢复、表单字段/编译器和单次提交行为。公开接口已联网核对；登录后的完整比赛流程及真实代码提交仍需在已登录 Firefox、已有参赛资格的比赛中验证。
 
-先在 Ubuntu 的 Firefox 登录 QOJ 或 Codeforces，再运行比赛命令。`vp`、`bt` 和内置 `submit` 自动读取 Firefox 的登录状态，并通过网站导航中的登录用户核对账号；未填写 handle 时也可以从已验证的浏览器登录自动取得。Codeforces / Gym 的 API key 与 API secret 仍在首次使用时配置。配置保存在 `~/.config/vp/config.json`，权限为 600；也可以参考 `config.example.json` 填写。`cf` 与 `gym` 默认共用 Codeforces 配置。
+先在 Ubuntu 的 Firefox 登录 QOJ 或 Codeforces，再运行比赛命令。`vp`、`bt` 和内置 `submit` 自动读取 Firefox 的登录状态，并通过网站导航中的登录用户核对账号；未填写 handle 时也可以从已验证的浏览器登录自动取得。Codeforces / Gym 的 API key 与 API secret 在首次使用 VP、BT 或 live 时配置。配置保存在 `~/.config/vp/config.json`，权限为 600；也可以参考 `config.example.json` 填写。`cf` 与 `gym` 默认共用 Codeforces 配置。
+
+### 重新设置 Codeforces API
+
+```bash
+xcpc api cf
+```
+
+按提示重新输入 `key` 和 `secret`，两项都输入完整后才替换旧值；输入过程不显示密钥。使用 [Codeforces API 设置页](https://codeforces.com/settings/api) 生成的同一组字段，不是账号密码。VP、BT、live 共用配置，后续 API 查询会自动读取新的密钥，已有目录无需重建。也支持 `xcpc api gym`；`cf` 与 `gym` 配置为同一 handle 时同步更新，配置为不同账号时分别保留，不会跨账号复制密钥。Firefox 登录、保存路径与比赛记录保留。
+
+普通 CF 的公共榜单仍通过匿名请求读取，仅传 `contestId`；不附加 API key 或筛选参数。本人提交和其他支持鉴权的接口使用共享 key/secret，Gym 的榜单使用鉴权接口；两类调用共用进程间限速。这遵循 [Codeforces 官方接口要求](https://codeforces.com/apiHelp/methods#contest.standings)。密钥只保存在全局个人配置，不复制到比赛文件夹。
 
 自动读取支持 Firefox 的传统目录、XDG 配置目录，以及 Ubuntu Snap / Flatpak 的新旧配置位置；可从 profiles.ini 和直接保存 Cookie 的配置文件夹发现登录资料。读取该网站的持久 Cookie 和最新会话恢复记录；其他网站及容器、隐私会话不参与导入。程序只读取浏览器文件。VP 与 BT 共用登录加载和账号核验；Firefox 暂未读到可用 Cookie 时，也会验证本项目已保存的同账号会话。验证通过后将登录数据保存到本地配置，账号不匹配或网络验证失败时保留原配置。GET 遇到登录过期会重新读取并验证一次；启动 VP 和提交代码的 POST 不自动重发。Firefox 尚未保存新会话时稍候再运行命令，或登录时勾选“记住我”。
 

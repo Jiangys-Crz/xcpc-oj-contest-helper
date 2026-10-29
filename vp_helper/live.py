@@ -15,6 +15,7 @@ from rich.table import Table
 
 from .codeforces_live import CodeforcesLive, submission_records
 from .models import Contest, VPError
+from .accounts import account_key
 from .parsing import contest_url
 from .receipts import ReceiptReader
 from .storage import workspace_directory as desktop, file_lock, read_history, read_json, state_directory, update_history, write_json
@@ -27,7 +28,7 @@ PLATFORMS = {"cf": ("Codeforces", "vp-cf-submit", "cf_live_history.csv"),
 
 
 def account_for(config: dict, platform: str) -> dict:
-    return config.get(platform, config.get("gym", {}) if platform == "cf" else {})
+    return config.get(account_key(config, platform), {})
 
 
 def live_adapter(url: str, config: dict):

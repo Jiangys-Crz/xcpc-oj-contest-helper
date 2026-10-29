@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 
 from .http import WebSession
 from .models import Contest, Rules, VPError
+from .accounts import refresh_api_credentials
 from .parsing import contest_url
 from .storage import file_lock, read_json, state_directory, write_json
 
@@ -41,14 +42,28 @@ def verify_login(soup, handle: str) -> None:
 
 
 def verify_practice(api, duration: int) -> None:
-    data = api.api("contest.standings", contestId=api.id, handles=api.handle, showUnofficial=True)
-    for row in data.get("rows", []):
-        party = row.get("party", {})
+    from .sessions import attempts, boundary, locally_ended
+    for path, state in attempts():
+        cutoff = boundary(path)
+        if (state.get("mode", "vp") == "vp" and state["url"] == api.url
+                and state["handle"].casefold() == api.handle.casefold()
+                and state.get("status") not in ("complete", "archived", "failed", "cancelled")
+                and (cutoff is None or time.time() < cutoff)
+                and time.time() < state["start_time"] + state["contest"]["rules"]["duration"]):
+            raise VPError("这场比赛的本地 VP 尚未结束。请先运行 xcpc end 或等待结束。")
+    if api.platform == "cf":
+        # Regular contest standings no longer accept handles/showUnofficial.
+        # Own submission parties still expose a verified native virtual start.
+        records = api.api("contest.status", contestId=api.id, handle=api.handle, **{"from": 1, "count": 100})
+        parties = [record.get("author", {}) for record in records]
+    else:
+        data = api.api("contest.standings", contestId=api.id, handles=api.handle, showUnofficial=True)
+        parties = [row.get("party", {}) for row in data.get("rows", [])]
+    for party in parties:
         if (party.get("participantType") == "VIRTUAL"
                 and any(m.get("handle", "").casefold() == api.handle.casefold() for m in party.get("members", []))
                 and party.get("startTimeSeconds") is not None
                 and time.time() < party["startTimeSeconds"] + duration):
-            from .sessions import locally_ended
             if locally_ended(api.url, api.handle, party["startTimeSeconds"]):
                 continue
             raise VPError("Codeforces still has an active or scheduled virtual participation. Use bt after it ends so practice cannot change that VP.")
@@ -84,15 +99,9 @@ class CodeforcesLive:
             raise VPError("Live mode currently accepts regular Codeforces /contest/ links only.")
         self.platform = platform
         self.account = dict(account)
-        if platform == "gym":
-            # A private Gym may require the existing API credentials. Read
-            # them only for the same account; never copy them to contest.json.
-            from .storage import config_directory
-            saved = read_json(config_directory() / "config.json").get("gym", {})
-            if saved.get("handle", "").casefold() == account.get("handle", "").casefold():
-                for key in ("api_key", "api_secret"):
-                    if saved.get(key):
-                        self.account.setdefault(key, saved[key])
+        # Workspace files contain cookies, never API secrets. Resolve the pair
+        # from this same user's shared configuration, including older folders.
+        refresh_api_credentials(self.account, platform)
         self.handle = account.get("handle", "")
         self.web = WebSession("https://codeforces.com", self.account)
         # The public standings endpoint must receive exactly contestId and no
@@ -100,7 +109,10 @@ class CodeforcesLive:
         self.public = WebSession("https://codeforces.com", {}, auto_refresh=False)
 
     def api(self, method: str, **params):
-        if self.platform == "gym" and self.account.get("api_key") and self.account.get("api_secret"):
+        if self.platform == "cf" and method == "contest.standings":
+            return public_api(self.public, method, contestId=params.get("contestId", self.id))
+        refresh_api_credentials(self.account, self.platform)
+        if self.account.get("api_key") and self.account.get("api_secret"):
             from .gym import Gym
             return Gym(self.url, self.account).api(method, **params)
         return public_api(self.public, method, **params)

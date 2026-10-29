@@ -4,19 +4,15 @@ from datetime import datetime, timezone
 import hashlib
 import re
 import secrets
-import threading
 import time
 from urllib.parse import urlencode, urljoin, urlsplit
 
 from .http import WebSession, form_values
+from .accounts import refresh_api_credentials
 from .models import Cell, Contest, Medals, Reference, Rules, Submission, TeamScore, VPError, StartRejected
 from .originals import OriginalReplay, classify, load_metadata
 from .parsing import ccpc_reveal_count, directory_name, medals_from_html
 from .scoring import verdict
-
-_api_lock = threading.Lock()
-_last_api_request = 0.0
-
 
 def signed_parameters(method: str, params: dict, key: str, secret: str,
                       at: int | None = None, nonce: str | None = None) -> dict:
@@ -45,28 +41,22 @@ class Gym:
         self._replay_error = ""
 
     def api(self, method: str, **params):
-        global _last_api_request
+        refresh_api_credentials(self.account, self.platform)
         if not self.account.get("api_key") or not self.account.get("api_secret"):
-            raise VPError("Gym standings require your Codeforces API key and secret in ~/.config/vp/config.json.")
-        with _api_lock:
-            remaining = 2.1 - (time.monotonic() - _last_api_request)
-            if remaining > 0:
-                time.sleep(remaining)
-            _last_api_request = time.monotonic()
-            p = signed_parameters(method, params, self.account["api_key"], self.account["api_secret"])
-            r = self.web.get(self.origin + "/api/" + method, params=p)
+            raise VPError("请先运行 xcpc api cf 设置 Codeforces API key 和 secret。")
+        p = signed_parameters(method, params, self.account["api_key"], self.account["api_secret"])
         try:
-            response = r.json()
-        except ValueError:
-            raise VPError("Codeforces API did not return JSON.") from None
-        if response.get("status") != "OK":
-            comment = str(response.get("comment", "request failed"))
+            # Use the same cross-process rate gate as anonymous standings.
+            from .codeforces_live import public_api
+            return public_api(self.web, method, **p)
+        except VPError as exc:
+            comment = str(exc)
+            credentials_error = any(word in comment.casefold() for word in ("apikey", "api key", "api_key", "apisig", "signature", "secret"))
             for field in ("api_key", "api_secret", "cookie"):
                 value = self.account.get(field)
                 if value:
                     comment = comment.replace(value, "[redacted]")
-            raise VPError("Codeforces API: " + comment)
-        return response["result"]
+            raise VPError(comment + ("；可运行 xcpc api cf 重新设置密钥。" if credentials_error else "")) from None
 
     def prepare(self) -> Contest:
         data = self.api("contest.standings", contestId=self.id, showUnofficial=False, participantTypes="CONTESTANT")

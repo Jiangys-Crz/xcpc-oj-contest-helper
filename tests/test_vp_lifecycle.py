@@ -178,12 +178,12 @@ class LifecycleTests(Isolated):
         write_json(path, state)
         self.clock = 1100
         end_attempt()
-        client = Mock(id='123', url=url, handle='tester')
-        client.api.return_value = {'rows':[{'party':{'participantType':'VIRTUAL','members':[{'handle':'tester'}],
-                                                   'startTimeSeconds':1000}}]}
+        client = Mock(id='123', url=url, handle='tester', platform='cf')
+        client.api.return_value = [{'author':{'participantType':'VIRTUAL','members':[{'handle':'tester'}],
+                                             'startTimeSeconds':1000}}]
         verify_practice(client, 18000)
         client.handle = 'other'
-        client.api.return_value['rows'][0]['party']['members'] = [{'handle':'other'}]
+        client.api.return_value[0]['author']['members'] = [{'handle':'other'}]
         with self.assertRaises(VPError):
             verify_practice(client, 18000)
 
