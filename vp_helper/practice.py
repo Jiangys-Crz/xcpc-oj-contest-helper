@@ -15,9 +15,10 @@ from .codeforces_live import CodeforcesLive, apply_metadata, submission_records,
 from .models import Contest, Rules, Submission, VPError
 from .parsing import contest_url
 from .scoring import score_submissions
-from .sessions import attempts, boundary, merge_records, save_state
+from .sessions import attempts, boundary, merge_records, save_state, latest_session
 from .storage import file_lock, read_json, write_json
 from .tui import Dashboard, TerminalDashboard
+from .workspaces import allocate, promote, rename_existing
 
 
 class Practice:
@@ -88,28 +89,33 @@ class Practice:
 
 def _resume_vp(root: Path, url: str, handle: str, config: dict) -> tuple[Path, dict] | None:
     from . import cli
-    previous = [(p, s) for p, s in attempts(root) if s.get("mode", "vp") == "vp" and s["url"] == url
-                and s["handle"].casefold() == handle.casefold() and s.get("status") not in ("failed", "cancelled")]
+    previous = latest_session(url, handle)
     if not previous:
         return None
-    path, state = previous[-1]
+    path, state = previous
     cutoff = boundary(path)
     ended = (state.get("status") in ("complete", "archived") or cutoff is not None and time.time() >= cutoff
              or time.time() >= state["start_time"] + state["contest"]["rules"]["duration"])
     if state.get("status") == "scheduled" or not ended:
-        raise VPError("这场比赛的本地 VP 尚未结束。请先运行 xcpc end，或等待 VP 结束后再补题。")
+        raise VPError("这场比赛尚未结束。VP 可先运行 xcpc end；live 请等待原站比赛结束后补题。")
     directory = Path(state["directory"])
     if not directory.is_dir():
         raise VPError("原 VP 文件夹不存在，请先恢复该文件夹：" + str(directory))
-    native = cli.adapter(url, config)
+    if state.get("mode") == "live":
+        from .live import live_adapter
+        native = live_adapter(url, config)
+    else:
+        native = cli.adapter(url, config)
     if native.handle.casefold() != state["handle"].casefold():
         raise VPError("请恢复此 VP 使用的原账号后再补题。")
-    cli.configure_submit(native, Contest.from_dict(state["contest"]), directory)
+    rename_existing(path, state, Contest.from_dict(state["contest"]))
+    directory = Path(state["directory"])
     state["practice_view"] = True
     save_state(path, state)
-    cli.bind_submit_context(directory, path, state)
+    cli.configure_contest(native, Contest.from_dict(state["contest"]), directory, path, state,
+                          live=state.get("mode") == "live")
     write_json(root / "current.json", {"state_path": str(path)})
-    cli.console.print("BT · 恢复 VP 原目录：" + str(directory), markup=False)
+    cli.console.print("BT · 恢复原比赛目录：" + str(directory), markup=False)
     return path, state
 
 
@@ -129,27 +135,29 @@ def prepare(url: str) -> tuple[Path, dict]:
                  and s["handle"].casefold() == api.handle.casefold()]
         if prior:
             path, state = prior[-1]
+            rename_existing(path, state, contest)
             directory = Path(state["directory"])
+            target = directory
             contest.original_start = state["start_time"]
         else:
             attempt_id = uuid4().hex[:10]
             path = root / f"bt-{platform}-{contest.contest_id}-{attempt_id}.json"
-            directory = cli.desktop() / f"{contest.directory_name} BT-{attempt_id}"
+            directory, target = allocate(cli.desktop(), contest, root, api.handle)
             state = {"mode": "practice", "attempt_id": attempt_id, "url": url,
                      "start_time": contest.original_start, "handle": api.handle, "submissions": [],
                      "directory": str(directory), "tmux_session": path.stem, "status": "running"}
+            state["created_at"] = time.time()
         directory.mkdir(parents=True, exist_ok=True)
-        if platform == "qoj":
-            cli.configure_submit(api.api, contest, directory)
-        else:
-            live.configure_submission(api, contest, directory)
-        submission_config = read_json(directory / "contest.json")
-        submission_config.update(mode="practice", base_url=url, platform=platform,
-                                 problem_ids=contest.problems,
-                                 problems="".join(contest.problems) if platform == "qoj" else list(contest.problems))
-        write_json(directory / "contest.json", submission_config)
         state["contest"] = contest.to_dict()
+        if directory != target:
+            state["workspace_target"] = str(target)
         write_json(path, state)
+        cli.configure_contest(api.api if platform == "qoj" else api, contest, directory, path, state,
+                              live=platform != "qoj", overrides={"mode":"practice", "base_url":url,
+                              "platform":platform, "problem_ids":contest.problems,
+                              "problems":"".join(contest.problems) if platform == "qoj" else list(contest.problems)})
+        promote(path, state)
+        directory = Path(state["directory"])
         cli.bind_submit_context(directory, path, state)
         write_json(root / "current.json", {"state_path": str(path)})
         cli.console.print("BT · " + str(directory), markup=False)
@@ -177,18 +185,11 @@ def monitor(path: Path) -> None:
         api = Practice(state["url"], config)
         if api.handle.casefold() != state["handle"].casefold():
             raise VPError("Restore this practice workspace's account before reopening it.")
-        future = statements = None
+        future = None
         next_poll = 0.0
         message = ""
         with ThreadPoolExecutor(max_workers=2) as pool, TerminalDashboard() as view:
-            statements = pool.submit(api.statements, contest, Path(state["directory"]))
             while view.input():
-                if statements is not None and statements.done():
-                    try:
-                        statements.result()
-                    except (VPError, OSError):
-                        pass
-                    statements = None
                 if future is not None and future.done():
                     try:
                         state["submissions"] = merge_records(path, state, future.result())

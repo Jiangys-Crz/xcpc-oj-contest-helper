@@ -253,7 +253,7 @@ class LocalStateTests(IsolatedState):
         self.assertEqual(path, self.path)
         self.assertEqual(state["start_time"], 1000)
         self.assertEqual(state["submissions"], [{"id": "1"}])
-        self.assertEqual((directory / "A.cpp").read_text(), "existing code")
+        self.assertEqual((Path(state["directory"]) / "A.cpp").read_text(), "existing code")
         account.assert_called_once_with("cf", live=True)
         api.start.assert_not_called()
 
@@ -290,7 +290,7 @@ class LocalStateTests(IsolatedState):
         self.assertEqual(config["mode"], "live")
         self.assertEqual((directory / "contest.json").stat().st_mode & 0o777, 0o600)
 
-    def test_monitor_keeps_running_when_statements_fail_and_persists_system_test_score_drop(self):
+    def test_monitor_does_not_download_statements_and_persists_system_test_score_drop(self):
         class ImmediatePool:
             def __init__(self, **kwargs):
                 pass
@@ -331,7 +331,7 @@ class LocalStateTests(IsolatedState):
         self.assertEqual(saved["snapshot"]["own"]["points"], 100)
         self.assertEqual(saved["status"], "complete")
         self.assertEqual((directory / "A.cpp").read_text(), "preserved solution")
-        self.assertTrue(any("Statement download skipped" in c.args[0].message for c in view.update.call_args_list))
+        reference_api.save_statements.assert_not_called()
         rows = read_history(Path(self.state["history_path"]), fields=live.HISTORY_FIELDS)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["points"], "100")

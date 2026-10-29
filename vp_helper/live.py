@@ -20,6 +20,7 @@ from .parsing import contest_url
 from .receipts import ReceiptReader
 from .storage import workspace_directory as desktop, file_lock, read_history, read_json, state_directory, update_history, write_json
 from .tui import LiveDashboard, TerminalDashboard
+from .workspaces import allocate, promote, rename_existing
 
 HISTORY_FIELDS = ["start_time", "contest", "url", "handle", "scoring", "points", "penalty", "rank", "phase", "frozen"]
 PLATFORMS = {"cf": ("Codeforces", "vp-cf-submit", "cf_live_history.csv"),
@@ -94,14 +95,23 @@ def prepare_live(url: str) -> tuple[Path, dict]:
         saved = read_json(path)
         if saved and (saved.get("mode") != "live" or saved.get("handle", "").lower() != api.handle.lower()):
             raise VPError("The saved live participation belongs to another account or mode.")
-        directory = Path(saved["directory"]) if saved else desktop() / (contest.directory_name + " live")
-        directory.mkdir(parents=True, exist_ok=True)
-        configure_submission(api, contest, directory)
+        if saved:
+            rename_existing(path, saved, contest)
+            directory = Path(saved["directory"])
+            target = directory
+        else:
+            directory, target = allocate(desktop(), contest, root, api.handle)
         state = {**saved, "mode": "live", "contest": contest.to_dict(), "url": canonical,
                  "start_time": contest.original_start, "handle": api.handle, "directory": str(directory),
                  "tmux_session": name, "status": "running", "submissions": saved.get("submissions", []),
                  "snapshot": snapshot, "history_path": saved.get("history_path") or str(desktop() / PLATFORMS[platform][2])}
+        state.setdefault("created_at", time.time())
+        if directory != target:
+            state["workspace_target"] = str(target)
         write_json(path, state)
+        cli.configure_contest(api, contest, directory, path, state, live=True)
+        promote(path, state)
+        directory = Path(state["directory"])
         cli.bind_submit_context(directory, path, state)
         write_json(root / "current.json", {"state_path": str(path)})
         cli.console.print("Prepared " + str(directory) + " · existing registration retained", markup=False)
@@ -133,12 +143,12 @@ def save_progress(path: Path, state: dict, contest: Contest, snapshot: dict,
     final = (snapshot.get("phase") == "FINISHED" and not snapshot.get("frozen") and own is not None
              and submissions_at >= snapshot.get("at", float("inf"))
              and not any(e["verdict"] in ("PENDING", "UNAVAILABLE", "HIDDEN", "SYSTEM-ERROR") for e in events.values() if not e.get("practice")))
-    from .sessions import merge_records
+    from .sessions import merge_records, save_state
     merged = merge_records(path, {**state, "contest": contest.to_dict()}, list(events.values()))
     state.update(contest=contest.to_dict(), start_time=contest.original_start, snapshot=snapshot,
                  submissions=merged, status="complete" if final else "running",
                  last_sync_time=submissions_at)
-    write_json(path, state)
+    save_state(path, state)
     if snapshot:
         update_history(Path(state["history_path"]), {
             "start_time": datetime.fromtimestamp(contest.original_start, timezone.utc).isoformat(),
@@ -162,20 +172,16 @@ def monitor_live(path: Path) -> None:
         events = {s["id"]: s for s in state.get("submissions", [])}
         snapshot = state.get("snapshot", {})
         receipts = ReceiptReader(path, state)
-        submission_future = reference_future = statement_future = None
-        next_submissions = next_reference = next_render = next_statements = 0.0
+        submission_future = reference_future = None
+        next_submissions = next_reference = next_render = 0.0
         submissions_at = 0.0
         submission_start = contest.original_start
-        submission_error = reference_error = statement_error = ""
+        submission_error = reference_error = ""
         backoff = 5.0
         with ThreadPoolExecutor(max_workers=3) as network, TerminalDashboard() as view:
             while view.input():
                 now = time.monotonic()
                 changed = False
-                if statement_future is not None and statement_future.done():
-                    statement_error = statement_future.result()
-                    statement_future = None
-                    next_statements = now + 300.0
                 for receipt in receipts.read():
                     if receipt.id not in events:
                         events[receipt.id] = asdict(receipt)
@@ -216,28 +222,30 @@ def monitor_live(path: Path) -> None:
                 if submission_future is None and now >= next_submissions and time.time() >= contest.original_start:
                     submission_start = contest.original_start
                     submission_future = network.submit(fetch, api, contest.to_dict())
-                if statement_future is None and now >= next_statements and contest.problems:
-                    statement_future = network.submit(fetch_statements, reference_api, contest.to_dict(), Path(state["directory"]))
                 if changed:
                     save_progress(path, state, contest, snapshot, events, submissions_at)
                     cli.bind_submit_context(Path(state["directory"]), path, state)
                     # Populate newly published problem labels for submit.
-                    config_path = Path(state["directory"]) / "contest.json"
-                    submission_config = read_json(config_path)
-                    submission_config["problems"] = list(contest.problems)
-                    submission_config["problem_ids"] = contest.problems
-                    write_json(config_path, submission_config)
+                    with file_lock(path.parent / "workspaces.lock"):
+                        state["directory"] = read_json(path).get("directory", state["directory"])
+                        config_path = Path(state["directory"]) / "contest.json"
+                        submission_config = read_json(config_path)
+                        if submission_config.get("vp_context", {}).get("state_path") in (None, str(path)):
+                            submission_config["problems"] = list(contest.problems)
+                            submission_config["problem_ids"] = contest.problems
+                            write_json(config_path, submission_config)
                 phase = snapshot.get("phase", contest.extra["phase"])
                 age = time.time() - snapshot.get("at", 0)
-                message = submission_error or reference_error or snapshot.get("message", "") or statement_error
+                message = submission_error or reference_error or snapshot.get("message", "")
                 if age > 45 and phase != "BEFORE":
                     message = "Standings stale · " + (message or "reconnecting")
                 if submissions_at and time.time() - submissions_at > 15:
                     message = "Submissions stale · " + (message or "reconnecting")
                 if now >= next_render:
+                    state["practice_view"] = bool(state.get("practice_view") or read_json(path).get("practice_view"))
                     dashboard = LiveDashboard(contest, time.time() - contest.original_start, snapshot,
                                               submission_records(list(events.values()), phase), message,
-                                              state["handle"])
+                                              state["handle"], practice=state["practice_view"])
                     view.update(dashboard)
                     next_render = now + 0.25
                 time.sleep(0.1)

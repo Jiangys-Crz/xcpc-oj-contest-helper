@@ -24,6 +24,15 @@ def boundary(path: Path) -> float | None:
     return read_json(path.with_suffix(".closed")).get("capture_until")
 
 
+def latest_session(url: str, handle: str, *, include_practice: bool = False) -> tuple[Path, dict] | None:
+    root = state_directory()
+    saved = [(p, s) for p, s in attempts(root) if s['url'] == url
+             and s['handle'].casefold() == handle.casefold() and s.get('status') not in ('failed', 'cancelled')]
+    native = [(p, s) for p, s in saved if s.get('mode', 'vp') in ('vp', 'live')]
+    candidates = native or (saved if include_practice else [])
+    return max(candidates, key=lambda item: (item[1].get('created_at', item[1]['start_time']), item[1]['start_time'])) if candidates else None
+
+
 def close_attempt(path: Path, at: float, next_id: str = "", *, reason: str = "replaced") -> None:
     old = boundary(path)
     write_json(path.with_suffix(".closed"), {"capture_until": min(old, at) if old is not None else at,
@@ -76,6 +85,11 @@ def save_state(path: Path, state: dict) -> None:
     # merge IDs under a separate lock, so a slow GET cannot erase new receipts.
     with file_lock(path.with_suffix(".save.lock")):
         previous = read_json(path)
+        if previous.get("workspace_managed"):
+            state["directory"] = previous["directory"]
+            state["workspace_managed"] = True
+            if "workspace_target" not in previous:
+                state.pop("workspace_target", None)
         if previous.get("practice_view"):
             state["practice_view"] = True
         combined = {str(e["id"]): e for e in previous.get("submissions", [])}
@@ -103,7 +117,9 @@ def end_attempt(attempt_id: str | None = None) -> tuple[Path, dict]:
             bound = [(p, s) for p, s in all_saved if s.get("directory")
                      and here.is_relative_to(Path(s["directory"]).resolve())]
             if bound:
-                path, state = max(bound, key=lambda item: (len(Path(item[1]["directory"]).parts), item[1]["start_time"]))
+                owner = read_json(Path(max(bound, key=lambda item: len(Path(item[1]["directory"]).parts))[1]["directory"]) / "contest.json").get("vp_context", {}).get("state_path")
+                path, state = next((item for item in bound if str(item[0]) == owner), None) or max(
+                    bound, key=lambda item: (len(Path(item[1]["directory"]).parts), item[1].get("created_at", item[1]["start_time"])))
                 if state.get("mode", "vp") != "vp":
                     raise VPError("当前目录是补题或实时比赛工作区。请用 xcpc end 轮次ID 指定要结束的本地 VP。")
                 selected = [(path, state)]

@@ -227,6 +227,14 @@ class HydroLive:
         return snapshot
 
     def submissions(self, contest: Contest) -> list[dict]:
+        if contest.extra.get("practice"):
+            return self._submissions(contest, correction=True)
+        values = {record["id"]: record for record in self._submissions(contest)}
+        if contest.extra.get("phase") == "FINISHED":
+            values.update({record["id"]: record for record in self._submissions(contest, correction=True)})
+        return list(values.values())
+
+    def _submissions(self, contest: Contest, *, correction: bool = False) -> list[dict]:
         if not self._identified:
             self.identity()
         if contest.extra.get("uid") != self.uid:
@@ -235,18 +243,20 @@ class HydroLive:
         # CWNUOJ's rating plugin interprets uidOrName as a display-name keyword,
         # so its JSON view must be paged without that filter and then filtered by
         # exact numeric UID. The server still enforces contest visibility.
-        dynamic = self._dynamic_records
+        dynamic = None if correction else self._dynamic_records
         while True:
-            params = {"tid": self.id, "page": page}
+            params = {"page": page} if correction else {"tid": self.id, "page": page}
             if dynamic is not True:
                 params["uidOrName"] = str(self.uid)
             data = self.get_json(ORIGIN + self.prefix + "/record", **params)
             if dynamic is None and data.get("ratingDynamicRecords"):
                 dynamic = True
-                self._dynamic_records = True
+                if not correction:
+                    self._dynamic_records = True
                 continue
             dynamic = bool(data.get("ratingDynamicRecords"))
-            self._dynamic_records = dynamic
+            if not correction:
+                self._dynamic_records = dynamic
             records = data.get("rdocs")
             if not isinstance(records, list):
                 raise VPError("CWNUOJ did not return a submission list.")
@@ -260,7 +270,8 @@ class HydroLive:
                 sid = str(raw.get("_id", ""))
                 if not valid_submission_id(sid, "cwnuoj"):
                     raise VPError("CWNUOJ returned an invalid submission ID.")
-                if raw.get("domainId", self.domain) != self.domain or raw.get("contest", self.id) != self.id:
+                wanted_contests = (None, "") if correction else (self.id,)
+                if raw.get("domainId", self.domain) != self.domain or raw.get("contest", None if correction else self.id) not in wanted_contests:
                     continue
                 labels = {pid: label for label, pid in contest.problems.items()}
                 label = labels.get(str(raw.get("pid")))
@@ -272,7 +283,10 @@ class HydroLive:
                     continue
                 verdict = VERDICTS.get(raw.get("status"), "HIDDEN" if raw.get("status") is None else "UNAVAILABLE")
                 result[sid] = {"id": sid, "team": "me", "problem": label, "time": relative,
-                               "verdict": verdict, "points": raw.get("score"), "practice": created >= contest.extra["end_time"]}
+                               "verdict": verdict, "points": raw.get("score"), "practice": correction or created >= contest.extra["end_time"]}
+            if correction and records and all(valid_submission_id(str(r.get("_id", "")), "cwnuoj")
+                                               and int(str(r["_id"])[:8], 16) < contest.original_start for r in records):
+                break
             if dynamic:
                 if not data.get("ratingRecordsHasNext"):
                     break
@@ -284,7 +298,7 @@ class HydroLive:
                     next_page = int(query["page"][0])
                 except (KeyError, ValueError, IndexError):
                     raise VPError("CWNUOJ returned invalid submission pagination.") from None
-                if query.get("tid") != [self.id] or next_page <= page:
+                if query.get("tid") != (None if correction else [self.id]) or next_page <= page:
                     raise VPError("CWNUOJ changed contest identity while paging submissions.")
                 page = next_page
             elif not records:

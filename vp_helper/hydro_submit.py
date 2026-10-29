@@ -82,8 +82,12 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
         raise VPError("CWNUOJ changed the problem list. Reconnect with live URL before submitting.")
     path = api.prefix + "/p/" + pid + "/submit"
     url = ORIGIN + path
-    query = {"tid": api.id}
-    options = api.get_json(url, **query).get("langRange")
+    correction = contest.extra["phase"] == "FINISHED"
+    query = {} if correction else {"tid": api.id}
+    try:
+        options = api.get_json(url, **query).get("langRange")
+    except VPError as exc:
+        raise VPError("读取 CWNUOJ " + ("补题" if correction else "比赛") + "提交页失败：" + str(exc)) from None
     if not isinstance(options, dict) or not options:
         raise VPError("CWNUOJ did not offer any submission languages for this participation.")
     page = api.web.soup(url, params=query)
@@ -98,7 +102,10 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
         raise VPError("CWNUOJ returned an unexpected submission destination.")
     payload = form_values(form)
     payload.update(lang=language_id(options, source, language), code=source.read_text(encoding="utf8"))
-    payload["tid"] = api.id
+    if correction:
+        payload.pop("tid", None)
+    else:
+        payload["tid"] = api.id
     payload.pop("pretest", None)
     submitted_at = time.time()
     if submitted_at < contest.original_start:
@@ -116,7 +123,7 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     except ValueError:
         data = {}
     if response.status_code not in (200, 302, 303) or not isinstance(data, dict) or data.get("error"):
-        raise VPError("CWNUOJ did not confirm the submission. Check the original records before retrying.")
+        raise VPError(f"CWNUOJ 提交未获确认（HTTP {response.status_code}）。请先检查原站记录；请求不会自动重发。")
     sid = submission_id(data, response.headers.get("Location", ""), api.prefix)
     if sid is None:
         if data.get("tid") == api.id and response.status_code == 200:
@@ -124,9 +131,14 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
             return None
         raise VPError("CWNUOJ did not expose a new submission ID. Check the original records before retrying; the request was not repeated.")
     # Confirm the assignment without reading or printing anyone's source code.
-    record = api.get_json(ORIGIN + api.prefix + "/record/" + sid).get("rdoc", {})
+    try:
+        record = api.get_json(ORIGIN + api.prefix + "/record/" + sid).get("rdoc", {})
+    except VPError as exc:
+        raise VPError("提交已返回编号 #" + sid + "，但读取判定详情失败：" + str(exc) +
+                      "。请先查看原站记录；代码不会自动重发。") from None
     if (record.get("_id") != sid or record.get("uid") != config["uid"] or str(record.get("pid")) != pid
-            or record.get("contest") != api.id or record.get("domainId", api.domain) != api.domain):
+            or record.get("contest") not in ((None, "") if correction else (api.id,))
+            or record.get("domainId", api.domain) != api.domain):
         raise VPError("The returned record does not match this submission. Check CWNUOJ before retrying.")
     print("Submission #" + sid + ": PENDING", flush=True)
     try:

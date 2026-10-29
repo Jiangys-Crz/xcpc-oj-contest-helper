@@ -10,11 +10,12 @@ from .storage import set_workspace_directory, workspace_directory
 
 HELP = """XCPC 比赛终端助手
 
-虚拟参赛（输入命令后设置开始时间；回车立即开始）
+虚拟参赛（同场恢复已有会话；新建时设置开始时间）
   vp cf ID
   vp qoj ID
   vp gym ID
   vp CONTEST_URL
+  vp CONTEST_URL --restart    明确重新 VP，复用原文件夹
 
 实时比赛（需已有原站参赛资格）
   live cf ID
@@ -25,7 +26,7 @@ HELP = """XCPC 比赛终端助手
 补题（支持牛客、CWNUOJ、Codeforces、Gym、QOJ）
   bt CONTEST_URL
   submit A.cpp     在比赛或补题目录中提交
-  已有结束的 VP 时恢复原目录；补题不计时，不显示公共统计区。
+  优先恢复最新 VP/live 的原目录；补题不计时，不显示公共统计区。
 
 历史记录
   vp history
@@ -57,6 +58,9 @@ Codeforces API 设置
 
 只有原站允许并确认启动，vp 才创建有效轮次；原站拒绝则取消本次命令。
 不同比赛可同时进行 VP / live，各轮计分与提交互不混用；补题不占用 VP。
+同场命令恢复会话；--restart 才重新 VP，不新建比赛文件夹。
+目录按比赛名称命名；BT/live 不下载题面。
+VP 标题含 CCPC 时使用 CCPC 新赛制，否则按 ICPC。
 比赛结束后仍可提交补题，补题记录显示蓝色。
 新建目录默认保存在桌面，可用 xcpc path 修改。
 修改保存目录后，已有轮次保留在原位置，可从历史记录恢复。"""

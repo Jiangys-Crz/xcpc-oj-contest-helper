@@ -157,6 +157,7 @@ class LiveDashboard:
     submissions: list[dict]
     message: str = ""
     handle: str = ""
+    practice: bool = False
 
     _record_table = staticmethod(Dashboard._record_table)
     records = Dashboard.records
@@ -165,13 +166,13 @@ class LiveDashboard:
     def fixed(self, width: int):
         phase = self.snapshot.get("phase", self.contest.extra["phase"])
         frozen = self.snapshot.get("frozen", False)
-        title = Text(self.contest.name + " · LIVE", style="bold")
+        title = Text(self.contest.name + (" · BT" if self.practice else " · LIVE"), style="bold")
         timing = ("Starts in " + clock(-self.elapsed) if self.elapsed < 0 else
                   clock(min(self.elapsed, self.contest.rules.duration)) + " / " + clock(self.contest.rules.duration))
         phase_text = {"BEFORE": "Waiting for start", "CODING": "Coding",
                       "PENDING_SYSTEM_TEST": "Waiting for system tests",
                       "SYSTEM_TEST": "System testing", "FINISHED": "Finished"}.get(phase, phase)
-        heading = Text(timing + " · " + phase_text + (" · Scoreboard frozen" if frozen else ""))
+        heading = Text("" if self.practice else timing + " · " + phase_text + (" · Scoreboard frozen" if frozen else ""))
         scoring = self.contest.extra["scoring"]
         own = self.snapshot.get("own")
         table = Table(box=SCORE_BOX, padding=(0, 1), expand=True, show_edge=False)
@@ -210,7 +211,7 @@ class LiveDashboard:
             values.append(f"{own.get('successfulHackCount', 0)}/{own.get('unsuccessfulHackCount', 0)}" if own else "—")
         table.add_row(*values, *cells)
         stats = self.snapshot.get("stats", {})
-        for key in (("scored", "attempted") if self.contest.platform == "cf" else tuple(stats)):
+        for key in (() if self.practice else ("scored", "attempted") if self.contest.platform == "cf" else tuple(stats)):
             table.add_row("", "attempted ≥" if key == "attempted" and self.contest.platform == "cf" else key,
                           *([""] * (len(columns) - 2)), *(str(stats[key][p]) if key in stats and p in stats[key] else "—"
                                               for p in self.contest.problems))
@@ -218,6 +219,8 @@ class LiveDashboard:
                 else f"{'Nowcoder' if self.contest.platform == 'nowcoder' else 'CWNUOJ'} scoreboard · original scores, ranks and public statistics")
         if own is None:
             note = "Your participation is absent from the public official standings; points and rank unavailable."
+        if self.practice:
+            note = ""
         labels = self._record_table()
         labels.add_row("problem", "submission", "time", "result", style="bold black on #eeeeee")
         return Group(title, heading, table, Text(note, style="#666666"), Text(" "), labels)

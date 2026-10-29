@@ -27,7 +27,7 @@ class LifecycleTests(Isolated):
         self.api.start.side_effect = StartRejected('QOJ 拒绝再次 VP')
         with patch.object(cli, 'open_state') as open_state:
             with self.assertRaisesRegex(StartRejected, '拒绝'):
-                cli.start(URL)
+                cli.start(URL, restart=True, scheduled_start=self.clock)
             open_state.assert_not_called()
         self.assertEqual(path.read_bytes(), before)
         self.assertIsNone(boundary(path))

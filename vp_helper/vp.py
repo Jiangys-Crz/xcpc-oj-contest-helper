@@ -9,11 +9,14 @@ from .models import Contest, VPError, StartRejected
 from .parsing import contest_url
 from .sessions import attempts, boundary, close_attempt
 from .storage import file_lock, read_json, write_json
+from .workspaces import allocate, promote
 
 
-def _publish_started(path: Path, state: dict) -> None:
+def _publish_started(path: Path, state: dict, api) -> None:
     """Only a verified native start may replace an existing local attempt."""
     from . import cli
+    promote(path, state)
+    cli.configure_contest(api, Contest.from_dict(state["contest"]), Path(state["directory"]), path, state)
     for previous_path, previous in attempts(path.parent):
         if (previous_path != path and previous.get("mode", "vp") == "vp"
                 and previous.get("status") not in ("failed", "cancelled")
@@ -86,7 +89,7 @@ def _activate(path: Path) -> dict:
             raise
         state.update(start_time=started, contest=contest.to_dict(), status="running", activation_uncertain=False)
         write_json(path, state)
-        _publish_started(path, state)
+        _publish_started(path, state, api)
         return state
 
 
@@ -118,20 +121,26 @@ def prepare(url: str, scheduled_start: float | None = None) -> tuple[Path, dict]
         if platform == "qoj":
             api.check_start(contest)
         contest.extra.update(attempt=number, attempt_id=attempt_id)
-        directory = cli.desktop() / f"{contest.directory_name} VP{number}-{attempt_id}"
-        directory.mkdir(parents=True, exist_ok=False)
-        cli.configure_submit(api, contest, directory)
+        cli.configure_submit(api, contest, cli.desktop(), validate_only=True)
+        directory, target = allocate(cli.desktop(), contest, root, api.handle)
+        existing_folder = (directory / "contest.json").exists()
+        if not existing_folder:
+            cli.configure_submit(api, contest, directory)
         for name, pdf in contest.pdfs.items():
+            if existing_folder or (directory / name).exists():
+                continue
             try:
                 api.web.pdf(pdf, directory / name)
             except (VPError, OSError) as exc:
                 cli.console.print(f"Statement download skipped: {exc}. Use the original contest page.", markup=False)
         path = root / f"vp-{platform}-{contest.contest_id}-{attempt_id}.json"
-        state = {"mode": "vp", "attempt": number, "attempt_id": attempt_id, "contest": contest.to_dict(),
+        state = {"mode": "vp", "attempt": number, "attempt_id": attempt_id, "contest": contest.to_dict(), "created_at": time.time(),
                  "url": canonical, "start_time": requested, "requested_start": requested,
                  "handle": api.handle, "directory": str(directory), "tmux_session": path.stem,
                  "status": "scheduled", "submissions": [], "recent": [], "previous_current": current,
                  "history_path": str(cli.desktop() / "vp_history.csv")}
+        if directory != target:
+            state["workspace_target"] = str(target)
         write_json(path, state)
         cli.bind_submit_context(directory, path, state)
         # Codeforces confirms a future registration now; QOJ preflights the
@@ -143,11 +152,13 @@ def prepare(url: str, scheduled_start: float | None = None) -> tuple[Path, dict]
                 raise
             except (VPError, OSError) as exc:
                 state = read_json(path)
+                if state.get("status") == "running":
+                    raise VPError("原站已确认 VP，目录切换未完成。请用 vp history " + attempt_id + " --open 恢复。") from exc
                 if not state.get("activation_uncertain"):
                     _fail(path, state, exc)
                     raise
                 cli.console.print("Waiting for automatic start verification: " + str(exc), markup=False)
         if state.get("status") == "scheduled":
             write_json(root / "current.json", {"state_path": str(path)})
-        cli.console.print(f"VP #{number} · {attempt_id} · {directory}", markup=False)
+        cli.console.print(f"VP #{number} · {attempt_id} · {state['directory']}", markup=False)
         return path, state

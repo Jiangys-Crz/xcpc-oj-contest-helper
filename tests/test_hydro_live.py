@@ -347,26 +347,53 @@ class SubmitTests(IsolatedState):
             hydro_submit.submit(self.source)
         self.assertFalse(self.path.with_suffix(".receipts").exists())
 
-    def test_finished_contest_uses_contest_practice_submission_with_tid(self):
+    def test_finished_contest_uses_normal_problem_submission_without_tid(self):
+        self.record.pop("contest")
         with patch("vp_helper.hydro.time.time", return_value=9000):
             self.assertEqual(hydro_submit.submit(self.source), RID)
         call = self.api.web.session.post.call_args
-        self.assertEqual(call.kwargs["data"]["tid"], TID)
-        self.assertIn("?tid=" + TID, call.args[0])
+        self.assertNotIn("tid", call.kwargs["data"])
+        self.assertEqual(call.args[0], ORIGIN + "/p/10/submit")
         self.assertTrue(ReceiptReader(self.path, self.state).read()[0].practice)
 
-    def test_bt_without_registration_still_uses_the_contest_form(self):
+    def test_bt_without_registration_uses_normal_problem_form_without_tid(self):
+        self.record.pop("contest")
         self.config["mode"] = self.state["mode"] = "practice"
         self.state["start_time"] = self.config["vp_context"]["start_time"] = 8500
         write_json(self.path, self.state)
         self.api.details.return_value = details(attend=0)
         with patch("vp_helper.hydro.time.time", return_value=9000):
             self.assertEqual(hydro_submit.submit(self.source), RID)
-        self.assertEqual(self.api.web.session.post.call_args.kwargs["data"]["tid"], TID)
+        self.assertNotIn("tid", self.api.web.session.post.call_args.kwargs["data"])
 
     def test_oi_hidden_receipt_does_not_trigger_second_submission(self):
         self.api.web.session.post.return_value.json.return_value = {"tid": TID}
         self.assertIsNone(hydro_submit.submit(self.source))
+        self.api.web.session.post.assert_called_once()
+
+    def test_python_correction_uses_problem_endpoint_and_has_no_tid_in_payload(self):
+        self.source = self.root / "a.py"
+        self.source.write_text("print(0)\n")
+        self.record.pop("contest")
+        self.api.get_json.side_effect = [{"langRange":{"py.py3":"Python 3"}},{"rdoc":self.record}]
+        with patch("vp_helper.hydro.time.time",return_value=9000):
+            self.assertEqual(hydro_submit.submit(self.source),RID)
+        call=self.api.web.session.post.call_args
+        self.assertEqual(call.args[0],ORIGIN+"/p/10/submit")
+        self.assertNotIn("tid",call.kwargs["data"])
+        self.assertEqual(call.kwargs["data"]["lang"],"py.py3")
+        self.assertEqual(ReceiptReader(self.path,self.state).read()[0].problem,"A")
+
+    def test_form_permission_error_does_not_send_code(self):
+        self.api.get_json.side_effect=VPError("oj.cwnupaa.com returned HTTP 403")
+        with patch("vp_helper.hydro.time.time",return_value=9000),self.assertRaisesRegex(VPError,"补题提交页失败"):
+            hydro_submit.submit(self.source)
+        self.api.web.session.post.assert_not_called()
+
+    def test_record_permission_error_after_acknowledgement_does_not_repeat_code(self):
+        self.api.get_json.side_effect=[{"langRange":{"cc":"C++"}},VPError("HTTP 403")]
+        with self.assertRaisesRegex(VPError,"提交已返回编号"):
+            hydro_submit.submit(self.source)
         self.api.web.session.post.assert_called_once()
 
 

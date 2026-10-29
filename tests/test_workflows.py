@@ -43,7 +43,7 @@ class Isolated(unittest.TestCase):
         self.script = self.root/"submit"
         self.script.write_text("#!/bin/sh\n")
         self.script.chmod(0o755)
-        self.api = Mock(handle="tester", account={"submit_script": str(self.script), "cookie": "synthetic"})
+        self.api = Mock(handle="tester", account={"handle":"tester", "submit_script": str(self.script), "cookie": "synthetic"})
         self.api.native_post_sent = False
         self.api.prepare.side_effect = lambda: Contest("qoj", "123", URL, "test contest", "test contest",
                                                       {"A": "10"}, Rules(18000))
@@ -55,14 +55,17 @@ class Isolated(unittest.TestCase):
 
 
 class AttemptTests(Isolated):
-    def test_repeated_vp_has_new_clock_directory_and_preserves_old_code(self):
+    def test_explicit_restart_has_new_clock_in_same_directory_and_preserves_code(self):
         p1, s1 = cli.prepare_start(URL)
         original = Path(s1["directory"])/"A.cpp"
         original.write_text("saved solution")
         self.clock = 2000
         p2, s2 = cli.prepare_start(URL)
+        s1 = read_json(p1)
+        original = Path(s1["directory"])/"A.cpp"
         self.assertNotEqual(p1, p2)
-        self.assertNotEqual(s1["directory"], s2["directory"])
+        self.assertEqual(s1["directory"], s2["directory"])
+        self.assertEqual(Path(s2["directory"]).name, "test contest")
         self.assertEqual(s2["start_time"], 2000)
         self.assertEqual(s2["attempt"], 2)
         self.assertFalse(s2["contest"]["extra"].get("local_attempt"))
@@ -70,17 +73,19 @@ class AttemptTests(Isolated):
         self.assertEqual(boundary(p1), 2000)
         self.assertEqual(self.api.start.call_count, 2)
         self.assertTrue(all(call.kwargs.get("fresh") for call in self.api.start.call_args_list))
-        self.assertEqual(read_json(original.parent/"contest.json")["vp_context"]["state_path"], str(p1))
+        self.assertEqual(read_json(original.parent/"contest.json")["vp_context"]["state_path"], str(p2))
         self.assertEqual(read_json(original.parent/"contest.json")["platform"], "qoj")
         self.assertEqual(len(attempts()), 2)
 
-    def test_old_directory_practice_is_blue_and_excluded_from_new_attempt(self):
+    def test_prior_practice_is_blue_and_preserved_as_history_after_restart(self):
         p1, s1 = cli.prepare_start(URL)
+        close_attempt(p1, 1500)
+        cfg = read_json(Path(s1["directory"])/"contest.json")
+        record_receipt(cfg, "77", "A", 1700)
         self.clock = 2000
         p2, s2 = cli.prepare_start(URL)
-        cfg = read_json(Path(s1["directory"])/"contest.json")
-        record_receipt(cfg, "77", "A", 2100)
-        event = {"id": "77", "team": "me", "problem": "A", "time": 1100, "verdict": "CORRECT"}
+        s1 = read_json(p1)
+        event = {"id": "77", "team": "me", "problem": "A", "time": 700, "verdict": "CORRECT"}
         old = merge_records(p1, s1, [event])
         self.assertTrue(old[0]["practice"])
         score = score_submissions([Submission(**e) for e in old], ["A"], Rules(18000), 2000)
@@ -160,9 +165,11 @@ class AttemptTests(Isolated):
 
     def test_history_lists_and_queries_both_attempts_with_practice(self):
         p1, s1 = cli.prepare_start(URL)
+        close_attempt(p1, 1500)
+        record_receipt(read_json(Path(s1["directory"])/"contest.json"), "77", "A", 1700)
         self.clock = 2000
         _, s2 = cli.prepare_start(URL)
-        record_receipt(read_json(Path(s1["directory"])/"contest.json"), "77", "A", 2100)
+        s1 = read_json(p1)
         self.clock = 2200
         out = io.StringIO()
         with patch.object(cli, "console", Console(file=out, width=200)):
@@ -174,15 +181,16 @@ class AttemptTests(Isolated):
         self.assertIn("#77", text)
         self.assertIn("practice", text)
 
-    def test_same_contest_source_from_different_attempt_is_rejected(self):
-        _, s1 = cli.prepare_start(URL)
+    def test_shared_source_uses_latest_restart_submission_context(self):
+        p1, s1 = cli.prepare_start(URL)
         self.clock = 2000
         _, s2 = cli.prepare_start(URL)
+        s1 = read_json(p1)
         source = Path(s1["directory"])/"A.cpp"
         source.write_text("source")
         with patch("vp_helper.submit_context.Path.cwd", return_value=Path(s2["directory"])):
-            with self.assertRaisesRegex(VPError, "different contest"):
-                submission_configuration(source)
+            _, config = submission_configuration(source)
+            self.assertEqual(config["vp_context"]["start_time"], s2["start_time"])
 
 
 class SchedulingTests(unittest.TestCase):
@@ -226,7 +234,7 @@ class CommandTests(unittest.TestCase):
                            ("qoj", URL)):
             with patch("sys.argv", ["vp", alias, "123"]), patch("vp_helper.scheduling.prompt_start", return_value=3000), patch.object(cli, "start") as start:
                 cli.main()
-                start.assert_called_once_with(url, scheduled_start=3000)
+                start.assert_called_once_with(url)
         with patch("sys.argv", ["vp", "live", "cf", "123"]), patch.object(cli, "start") as start:
             with self.assertRaises(SystemExit): cli.main()
             start.assert_not_called()

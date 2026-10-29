@@ -13,7 +13,7 @@ import requests
 from .http import WebSession, form_values
 from .models import Cell, Contest, Reference, Rules, Submission, TeamScore, VPError, StartRejected
 from .originals import OriginalReplay, cache_archive_submissions, classify, eligibility_lookup, identity, load_archive_submissions, load_metadata, lookup_team
-from .parsing import ccpc_reveal_count, directory_name, js_value, medals_from_html, seconds, timestamp
+from .parsing import ccpc_reveal_count, js_value, medals_from_html, seconds, timestamp
 from .scoring import verdict
 
 
@@ -44,7 +44,9 @@ class QOJ:
         soup = self._page()
         titles = [h.get_text(" ", strip=True) for h in soup.select("h1")]
         titles.extend(a.get_text(" ", strip=True) for a in soup.select('a[href*="?v="]'))
-        name = directory_name(titles)
+        name = next((title for title in titles if title.strip() and title.strip().casefold() != "qoj"), "")
+        if not name:
+            raise VPError("QOJ 未返回比赛名称。")
         problem_map = {}
         for row in soup.select("tr"):
             a = row.select_one(f'a[href*="/contest/{self.id}/problem/"]')

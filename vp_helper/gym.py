@@ -11,7 +11,7 @@ from .http import WebSession, form_values
 from .accounts import refresh_api_credentials
 from .models import Cell, Contest, Medals, Reference, Rules, Submission, TeamScore, VPError, StartRejected
 from .originals import OriginalReplay, classify, load_metadata
-from .parsing import ccpc_reveal_count, directory_name, medals_from_html
+from .parsing import ccpc_reveal_count, medals_from_html
 from .scoring import verdict
 
 def signed_parameters(method: str, params: dict, key: str, secret: str,
@@ -68,7 +68,9 @@ class Gym:
         soup = self.web.soup(self.url, params={"locale": "en"})
         dashboard_html = str(soup)
         names = [raw["name"]] + [h.get_text(" ", strip=True) for h in soup.select("h1,h2")]
-        name = directory_name(names)
+        name = next((title for title in names if isinstance(title, str) and title.strip()), "")
+        if not name:
+            raise VPError("Codeforces 未返回比赛名称。")
         pdfs = {}
         for a in soup.select("a[href]"):
             label = a.get_text(" ", strip=True)

@@ -102,7 +102,7 @@ def history() -> None:
         console.print("Medal lines: solved/penalty, then rank limit. Original official final standings; — = unavailable.", markup=False)
 
 
-def configure_submit(api, contest: Contest, directory: Path) -> None:
+def configure_submit(api, contest: Contest, directory: Path, *, validate_only: bool = False) -> None:
     script = api.account.get("submit_script") or shutil.which("submit")
     selected = state_directory() / "submit"
     bundled = bool(script and Path(script).is_symlink() and Path(os.readlink(script)) == selected)
@@ -112,10 +112,12 @@ def configure_submit(api, contest: Contest, directory: Path) -> None:
         ids = [int(value) for value in contest.problems.values()]
         if not bundled and ids != list(range(ids[0], ids[0] + len(ids))):
             raise VPError("This QOJ contest has nonconsecutive problem IDs. Use the installed submit script with problem_ids support.")
-        write_json(directory / "contest.json", {**api.submit_configuration(contest), "platform": "qoj",
-                                               **browser_fields(api.account)})
+        if not validate_only:
+            write_json(directory / "contest.json", {**api.submit_configuration(contest), "platform": "qoj",
+                                                   **browser_fields(api.account)})
     elif bundled:
-        write_json(directory / "contest.json", {"name": contest.name, "platform": "gym",
+        if not validate_only:
+            write_json(directory / "contest.json", {"name": contest.name, "platform": "gym",
                    "contest_id": int(contest.contest_id), "handle": api.handle,
                    "cookie": api.account["cookie"],
                    "user_agent": api.web.session.headers["User-Agent"], **browser_fields(api.account)})
@@ -123,9 +125,11 @@ def configure_submit(api, contest: Contest, directory: Path) -> None:
         # ehnryx/cf_submit reads a plain contestid beside cf.py, not JSON.
         location = Path(api.account.get("cf_submit_directory") or Path(script).resolve().parent)
         if (location / "cf.py").is_file() or (location / "cf_login.py").is_file():
-            (location / "contestid").write_text(contest.contest_id, encoding="utf8")
+            if not validate_only:
+                (location / "contestid").write_text(contest.contest_id, encoding="utf8")
         elif api.account.get("submit_config_format") == "contest.json":
-            write_json(directory / "contest.json", {"name": contest.name, "platform": "gym",
+            if not validate_only:
+                write_json(directory / "contest.json", {"name": contest.name, "platform": "gym",
                         "base_url": contest.url, "contest_id": int(contest.contest_id),
                         "problems": "".join(contest.problems), "cookie": api.account["cookie"],
                         "user_agent": api.web.session.headers["User-Agent"], **browser_fields(api.account)})
@@ -135,21 +139,51 @@ def configure_submit(api, contest: Contest, directory: Path) -> None:
         tool = Path(sys.prefix) / "bin" / "vp-submit"
         if not tool.is_file() or not os.access(tool, os.X_OK):
             raise VPError(f"The bundled {contest.platform} submit script is missing; reinstall vp.")
+        if validate_only:
+            return
         temporary = selected.with_name("submit.new")
         temporary.unlink(missing_ok=True)
         temporary.symlink_to(tool)
         os.replace(temporary, selected)
 
 
-def bind_submit_context(directory: Path, state_path: Path, state: dict) -> None:
+def _bind_submit_context(directory: Path, state_path: Path, state: dict, *, force: bool = False) -> None:
+    saved = read_json(state_path)
+    if saved.get("workspace_managed"):
+        directory = Path(saved["directory"])
     path = directory / "contest.json"
     if not path.is_file():
         return
     config = read_json(path)
+    owner = config.get("vp_context", {}).get("state_path")
+    if owner and owner != str(state_path) and not force:
+        return
     config.setdefault("handle", state["handle"])
     config["vp_context"] = {"state_path": str(state_path), "start_time": state["start_time"],
                             "url": state["url"], "handle": state["handle"]}
     write_json(path, config)
+
+
+def bind_submit_context(directory: Path, state_path: Path, state: dict) -> None:
+    with file_lock(state_path.parent / "workspaces.lock"):
+        _bind_submit_context(directory, state_path, state)
+
+
+def configure_contest(api, contest: Contest, directory: Path, path: Path, state: dict,
+                      *, live: bool = False, overrides: dict | None = None) -> None:
+    # Switching the shared folder's current round is atomic with respect to
+    # old monitors, which may still be displaying historical records.
+    with file_lock(path.parent / "workspaces.lock"):
+        if live:
+            from .live import configure_submission
+            configure_submission(api, contest, directory)
+        else:
+            configure_submit(api, contest, directory)
+        if overrides:
+            config = read_json(directory / "contest.json")
+            config.update(overrides)
+            write_json(directory / "contest.json", config)
+        _bind_submit_context(directory, path, state, force=True)
 
 
 def tmux_exists(name: str) -> bool:
@@ -259,8 +293,37 @@ def prepare_start(url: str, scheduled_start: float | None = None) -> tuple[Path,
     return prepare(url, scheduled_start)
 
 
-def start(url: str, *, live: bool = False, practice: bool = False, resume: bool = False, scheduled_start: float | None = None) -> None:
+def restore_contest(path: Path, state: dict, config: dict) -> tuple[Path, dict]:
+    from .live import live_adapter
+    from .workspaces import rename_existing
+    contest = Contest.from_dict(state["contest"])
+    if not Path(state["directory"]).is_dir():
+        raise VPError("原比赛目录不存在，请先恢复：" + state["directory"])
+    rename_existing(path, state, contest)
+    directory = Path(state["directory"])
+    is_live = state.get("mode") == "live"
+    api = live_adapter(state["url"], config) if is_live else adapter(state["url"], config)
+    configure_contest(api, contest, directory, path, state, live=is_live)
+    write_json(path.parent / "current.json", {"state_path": str(path)})
+    return path, state
+
+
+def start(url: str, *, live: bool = False, practice: bool = False, resume: bool = False,
+          restart: bool = False, scheduled_start: float | None = None) -> None:
     # Release the cross-shell preparation lock before entering an attached TUI.
+    if not practice and not resume and not restart:
+        from .sessions import latest_session
+        check_terminal()
+        platform, _, url = contest_url(url)
+        config = load_account(platform, live=True)
+        from .live import account_for
+        previous = latest_session(url, account_for(config, platform).get("handle", ""))
+        if previous:
+            with file_lock(state_directory() / "start.lock"):
+                path, state = restore_contest(previous[0], read_json(previous[0]), config)
+            state["_reload_monitor"] = True
+            open_state(path, state)
+            return
     if practice:
         from .practice import prepare
         path, state = prepare(url)
@@ -268,17 +331,28 @@ def start(url: str, *, live: bool = False, practice: bool = False, resume: bool 
         from .live import prepare_live
         path, state = prepare_live(url)
     else:
+        platform, _, _ = contest_url(url)
+        if not resume and platform not in ("cf", "gym", "qoj"):
+            raise VPError("没有可恢复的 VP/live 记录。请先运行 live CONTEST_URL 接入原站比赛。")
+        if not resume and scheduled_start is None:
+            from .scheduling import prompt_start
+            scheduled_start = prompt_start()
         path, state = prepare_resume(url) if resume else prepare_start(url, scheduled_start)
     open_state(path, state)
 
 
 def open_state(path: Path, state: dict) -> None:
+    if state.get("workspace_target") and state.get("status") == "running":
+        from .workspaces import promote
+        with file_lock(path.parent / "start.lock"):
+            state = read_json(path)
+            promote(path, state)
     bind_submit_context(Path(state["directory"]), path, state)
     if tmux_exists(state["tmux_session"]):
         pane = state["tmux_session"] + ":0.0"
         dead = subprocess.run(["tmux", "display-message", "-p", "-t", pane, "#{pane_dead}"],
                               check=True, capture_output=True, text=True).stdout.strip()
-        refresh_practice = bool(state.get("practice_view") or state.get("mode") == "practice")
+        refresh_practice = bool(state.get("_reload_monitor") or state.get("practice_view") or state.get("mode") == "practice")
         if dead == "1" or refresh_practice:
             command = shlex.join([sys.executable, "-m", "vp_helper.cli", "_monitor", str(path)])
             # Reload the score pane after an update or login refresh. Keep the
@@ -302,6 +376,16 @@ def poll(api, contest: Contest, elapsed: float, refresh_reference: bool = False)
 
 
 def monitor(path: Path) -> None:
+    # A renamed workspace keeps the same tmux cwd. Repair an old daemon's
+    # stale directory field when it is relaunched after an application update.
+    here = Path.cwd()
+    context = read_json(here / "contest.json").get("vp_context", {})
+    with file_lock(path.with_suffix(".save.lock")):
+        saved = read_json(path)
+        if (saved and context.get("url") == saved.get("url") and context.get("handle") == saved.get("handle")
+                and str(here) != saved.get("directory")):
+            saved.update(directory=str(here), workspace_managed=True)
+            write_json(path, saved)
     # tmux's default "screen" terminfo only exposes eight colors. Its terminal
     # supports the 256-color palette needed for orange and purple practice rows.
     if os.environ.get("TMUX") and os.environ.get("TERM") in ("screen", "tmux"):
@@ -477,20 +561,21 @@ def monitor(path: Path) -> None:
 def main() -> None:
     args = sys.argv[1:]
     try:
+        restart = "--restart" in args
+        if restart:
+            if args.count("--restart") != 1 or "history" in args:
+                raise VPError("重新 VP 用法：vp cf ID --restart，或 vp CONTEST_URL --restart。")
+            args = [arg for arg in args if arg != "--restart"]
         if args and args[0] == "history":
             from .attempt_history import history as attempts_history
             attempts_history(args[1:])
         elif len(args) == 2 and args[0] == "_monitor":
             monitor(Path(args[1]))
         elif len(args) == 2 and args[0] in ("cf", "qoj", "gym"):
-            from .scheduling import prompt_start
-            start(contest_id_url(*args), scheduled_start=prompt_start())
+            start(contest_id_url(*args), **({"restart": True} if restart else {}))
         elif len(args) == 1 and args[0] not in ("-h", "--help"):
             platform, _, url = contest_url(args[0])
-            if platform not in ("qoj", "cf", "gym"):
-                raise VPError("Use live CONTEST_URL for CWNUOJ or Nowcoder.")
-            from .scheduling import prompt_start
-            start(url, scheduled_start=prompt_start())
+            start(url, **({"restart": True} if restart else {}))
         elif args in ([], ["-h"], ["--help"]):
             console.print("查看全部命令和设置：xcpc --help", markup=False)
         else:

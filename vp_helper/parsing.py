@@ -113,8 +113,7 @@ def directory_name(titles: list[str]) -> str:
 
 
 def ccpc_reveal_count(name: str) -> int | None:
-    match = re.fullmatch(r"(20\d{2}) CCPC .+ Reg", name)
-    return 50 if match and int(match[1]) >= 2026 else None
+    return 50 if "CCPC" in name.upper() else None
 
 
 def medals_from_html(html: str, source: str) -> Medals | None:

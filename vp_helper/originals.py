@@ -63,7 +63,12 @@ def identity(name: str) -> str:
 
 
 def archive_path(contest: Contest) -> str | None:
-    match = re.fullmatch(r"(20\d\d) (ICPC|CCPC) ([A-Za-z][A-Za-z .-]*) Reg", contest.name)
+    from .parsing import directory_name
+    try:
+        title = directory_name([contest.name])
+    except VPError:
+        title = contest.name
+    match = re.fullmatch(r"(20\d\d) (ICPC|CCPC) ([A-Za-z][A-Za-z .-]*) Reg", title)
     if not match:
         return None
     year, kind, site = match.groups()
