@@ -29,6 +29,7 @@ class FirefoxLoginTests(unittest.TestCase):
         self.stack.enter_context(patch.object(login.os,"geteuid",return_value=1000))
         self.stack.enter_context(patch.dict(os.environ,{"XDG_CONFIG_HOME":str(self.root/"config")}))
         self.stack.enter_context(patch.object(login,"_cache",{}))
+        self.stack.enter_context(patch('vp_helper.chromium_login.enabled', return_value=False))
 
     def test_new_xdg_profile_and_classic_snap_profile_are_both_discovered(self):
         xdg = self.root/"config/mozilla/firefox"

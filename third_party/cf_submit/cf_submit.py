@@ -145,7 +145,7 @@ def submit_problem(browser, contest, lang, source, guru):
     from pathlib import Path
     from vp_helper.submission_confirmation import confirm_submission
     config_path = Path('contest.json')
-    config = json.loads(config_path.read_text()) if config_path.is_file() else {'name': contest}
+    config = json.loads(config_path.read_text(encoding='utf8')) if config_path.is_file() else {'name': contest}
     problem = str(guru) if guru != -1 else str(submission['submittedProblemIndex'].value)
     if not confirm_submission(Path(source), config, problem, available[langcode], browser.url,
                               config_path if config_path.is_file() else None):
@@ -216,7 +216,7 @@ def submit(browser, handle, contest, problem, lang, source, show, guru):
                 config = Path('contest.json')
                 if config.is_file():
                     try:
-                        record_receipt(json.loads(config.read_text()), sid, problem.upper(), submitted_at)
+                        record_receipt(json.loads(config.read_text(encoding='utf8')), sid, problem.upper(), submitted_at)
                     except (VPError, OSError) as exc:
                         print('Submitted, but the monitor notification failed: ' + str(exc))
         if not guru:

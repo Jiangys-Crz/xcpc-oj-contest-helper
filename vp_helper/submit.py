@@ -50,7 +50,10 @@ def main() -> None:
                 # The upstream parser infers a problem from the full argument,
                 # so absolute paths need an explicit problem index.
                 options += ["-p", label]
-            os.execv(str(script), [str(script), str(source), *options])
+            if sys.platform in ('darwin', 'win32'):
+                os.execv(sys.executable, [sys.executable, str(script), str(source), *options])
+            else:
+                os.execv(str(script), [str(script), str(source), *options])
             return
         else:
             raise VPError("Unknown contest platform in this source directory.")
@@ -58,3 +61,7 @@ def main() -> None:
     except (VPError, OSError) as exc:
         print("submit: " + str(exc), file=sys.stderr)
         raise SystemExit(1) from None
+
+
+if __name__ == '__main__':
+    main()

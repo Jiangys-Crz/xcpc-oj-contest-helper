@@ -71,7 +71,7 @@ def main():
 
     local_contest = Path('contest.json')
     if local_contest.is_file():
-        context = json.loads(local_contest.read_text())
+        context = json.loads(local_contest.read_text(encoding='utf8'))
         if context.get('platform') != 'gym':
             raise SystemExit('This directory is not configured for Gym submissions.')
         defaultcontest = str(context['contest_id'])

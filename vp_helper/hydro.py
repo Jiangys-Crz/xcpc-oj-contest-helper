@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from bs4 import BeautifulSoup
 
+from .portable import login_browser
 from .http import WebSession
 from .platform_clock import platform_now
 from .models import Contest, Rules, VPError
@@ -35,7 +36,7 @@ def identity_from_html(html: str) -> dict:
     except (ValueError, SyntaxError, TypeError):
         value = {}
     if not isinstance(value, dict) or type(value.get("_id")) is not int or value["_id"] <= 0 or not value.get("uname"):
-        raise VPError("CWNUOJ login expired. Log in at oj.cwnupaa.com in Firefox, then retry.")
+        raise VPError(f"CWNUOJ login expired. Log in at oj.cwnupaa.com in {login_browser()}, then retry.")
     return {"uid": value["_id"], "handle": value["uname"]}
 
 
@@ -107,7 +108,7 @@ class HydroLive:
             if data.get("url") and urlsplit(data["url"]).path in ("/login", "/user/login"):
                 if attempt == 0 and self.web._refresh_browser(force=True):
                     continue
-                raise VPError("CWNUOJ login expired. Log in to oj.cwnupaa.com in Firefox, then retry.")
+                raise VPError(f"CWNUOJ login expired. Log in to oj.cwnupaa.com in {login_browser()}, then retry.")
             if data.get("error"):
                 error = data["error"]
                 raise VPError("CWNUOJ: " + str(error.get("message", error.get("name", "access denied")) if isinstance(error, dict) else error))

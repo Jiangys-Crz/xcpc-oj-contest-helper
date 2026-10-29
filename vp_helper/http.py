@@ -72,12 +72,11 @@ class WebSession:
         self._auto_refresh = (auto_refresh and bool(account.get("handle"))
                               and urlsplit(self.origin).hostname in ("qoj.ac", "codeforces.com", CWNUOJ_HOST, NOWCODER_HOST))
         if _IMPERSONATE:
-            # curl_cffi supplies the browser headers that match the impersonated
-            # fingerprint.  Do not override them with the config's user_agent --
-            # that would break the disguise.  Only mirror the profile's own
-            # User-Agent into session.headers so the lookups in cli.py/qoj.py work.
-            self.session = _requests.Session(impersonate=_IMPERSONATE)
-            self.session.headers["User-Agent"] = _IMPERSONATED_USER_AGENT
+            # Linux retains its fixed Firefox profile. Extension snapshots use
+            # the Chromium transport and the actual normal-window User-Agent.
+            chromium = account.get('cookie_source') in ('chrome', 'edge')
+            self.session = _requests.Session(impersonate='chrome' if chromium else _IMPERSONATE)
+            self.session.headers["User-Agent"] = account.get('user_agent') if chromium and account.get('user_agent') else _IMPERSONATED_USER_AGENT
         else:
             self.session = _requests.Session()
             self.session.headers["User-Agent"] = account.get(
@@ -105,6 +104,8 @@ class WebSession:
             return False
         self.session.cookies.clear()
         self._set_cookies(self.account["cookie"])
+        if self.account.get('cookie_source') in ('chrome', 'edge') and self.account.get('user_agent'):
+            self.session.headers['User-Agent'] = self.account['user_agent']
         return True
 
     def get(self, url: str, *, retry: bool = True, **kwargs) -> object:
@@ -190,7 +191,8 @@ class WebSession:
         if urlsplit(r.url).path in ("/login", "/user/login", "/enter"):
             if self.account.get("cookie_source") == "manual":
                 raise VPError("Login session expired; update the account cookie in ~/.config/vp/config.json.")
-            raise VPError("Login session expired. Log in to this site in Firefox, then run the command again.")
+            browser = 'Chrome / Edge' if self.account.get('cookie_source') in ('chrome', 'edge') else 'Firefox'
+            raise VPError(f"Login session expired. Log in to this site in {browser}, then run the command again.")
         # Cloudflare's interstitial is only meaningful for textual responses.
         # A PDF or other binary body must not be decoded here: requests happens
         # to tolerate it, but curl_cffi reports such a response with a non-codec

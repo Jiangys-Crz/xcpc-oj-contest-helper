@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import re
 
 from .models import Contest, VPError
@@ -28,6 +29,8 @@ def name(contest: Contest) -> str:
     value = ' '.join(value.split()).strip(' .')
     if not value:
         raise VPError("原站未提供可用的比赛名称。")
+    if os.name == 'nt' and value.split('.')[0].upper() in {'CON', 'PRN', 'AUX', 'NUL', *(f'COM{i}' for i in range(1, 10)), *(f'LPT{i}' for i in range(1, 10))}:
+        value = '_' + value
     while len(value.encode('utf8')) > 220:
         value = value[:-1]
     return value

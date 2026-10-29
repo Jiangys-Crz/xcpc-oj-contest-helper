@@ -5,6 +5,7 @@ from pathlib import Path
 import time
 from uuid import uuid4
 
+from .portable import login_browser
 from .platform_clock import platform_now
 from .models import Contest, VPError, StartRejected
 from .parsing import contest_url
@@ -67,7 +68,7 @@ def _activate(path: Path) -> dict:
         config = cli.load_account(contest.platform)
         api = cli.adapter(contest.url, config)
         if api.handle.casefold() != state["handle"].casefold():
-            raise VPError("The scheduled VP account changed. Restore its Firefox login.")
+            raise VPError(f"The scheduled VP account changed. Restore its {login_browser()} login.")
         recovering = bool(state.get("activation_uncertain"))
         def matches(started):
             if started is None:

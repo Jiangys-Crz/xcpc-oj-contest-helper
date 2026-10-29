@@ -5,6 +5,7 @@ import re
 import time
 from urllib.parse import urlsplit
 
+from .portable import login_browser
 from .http import WebSession
 from .platform_clock import platform_now
 from .models import Contest, Rules, VPError
@@ -42,7 +43,7 @@ def public_api(web: WebSession, method: str, **params):
 def verify_login(soup, handle: str) -> None:
     if not any(urlsplit(a.get("href", "")).path.rstrip("/").lower() == "/profile/" + handle.lower()
                for a in soup.select("#header a[href]")):
-        raise VPError("Codeforces login expired or belongs to another account. Log in to the configured account in Firefox.")
+        raise VPError(f"Codeforces login expired or belongs to another account. Log in to the configured account in {login_browser()}.")
 
 
 def verify_practice(api, duration: int) -> None:

@@ -11,6 +11,7 @@
     "Refresh a verified same-account Firefox login before submitting",
     "Use the common VP submission preview, require y/n confirmation and remove the automatic -y bypass",
     "Use the shared judge clock for submission receipt timestamps",
-    "Print a shared English judging-result link after submission, including unconfirmed outcomes"
+    "Print a shared English judging-result link after submission, including unconfirmed outcomes",
+    "Use the Chromium transport and actual browser User-Agent for native Chrome/Edge extension sessions"
   ]
 }

@@ -28,7 +28,9 @@
     "Use raw regex strings for Python 3.14 compatibility without invalid escape warnings",
     "Show the common VP submission preview and require y/n confirmation before the source upload",
     "Use the shared judge clock for submission receipt timestamps",
-    "Print a shared English judging-result link after submission, including unconfirmed outcomes"
+    "Print a shared English judging-result link after submission, including unconfirmed outcomes",
+    "Use the Chromium transport and actual browser User-Agent for native Chrome/Edge extension sessions",
+    "Read contest JSON as UTF-8 on Windows as well as Unix"
   ],
   "excluded_files": [
     "cf_test.py"

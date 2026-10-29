@@ -107,11 +107,12 @@ def post_form(session, url, fields):
 
 def submit(url: str, lang: str, code: str, problem: str) -> None:
     if _IMPERSONATE:
-        # curl_cffi bundles libcurl-impersonate and supplies browser headers
-        # matching its TLS fingerprint; overriding the User-Agent would break
-        # that disguise, so only the cookie is set here.
-        session = requests.Session(impersonate=_IMPERSONATE)
+        # Keep Linux's Firefox transport; native extension logins use Chromium.
+        chromium = contest.get('cookie_source') in ('chrome', 'edge')
+        session = requests.Session(impersonate='chrome' if chromium else _IMPERSONATE)
         session.headers.update({'Cookie': cookie})
+        if chromium:
+            session.headers['User-Agent'] = user_agent
     else:
         session = requests.Session()
         session.headers.update({
@@ -121,7 +122,8 @@ def submit(url: str, lang: str, code: str, problem: str) -> None:
     response = session.get(url, timeout=(10, 40))
     response.raise_for_status()
     if isinstance(response.url, str) and urlsplit(response.url).path in ('/login', '/enter'):
-        raise SystemExit('QOJ login expired. Log in to QOJ in Firefox, then run submit again.')
+        browser_name = 'Chrome / Edge' if contest.get('cookie_source') in ('chrome', 'edge') else 'Firefox'
+        raise SystemExit(f'QOJ login expired. Log in to QOJ in {browser_name}, then run submit again.')
 
     parser = LexborHTMLParser(response.text)
     token_node = parser.css_first('input[name="_token"]')

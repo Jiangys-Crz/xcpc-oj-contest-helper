@@ -1,10 +1,12 @@
 # VP Helper
 
-Ubuntu 上的比赛终端助手，支持 QOJ、Codeforces ICPC 虚拟参赛、Codeforces Gym，以及 Codeforces、CWNUOJ、牛客正式比赛实时接入，并提供各站补题工作区。上方显示成绩与完整提交记录，下方保留比赛目录中的普通 shell。
+支持 Ubuntu、macOS 和 Windows 的比赛终端助手，支持 QOJ、Codeforces ICPC 虚拟参赛、Codeforces Gym，以及 Codeforces、CWNUOJ、牛客正式比赛实时接入，并提供各站补题工作区。上方显示成绩与完整提交记录，下方保留比赛目录中的普通 shell。
 
-当前版本：0.7.11。
+当前版本：0.8.0。
 
 ## 安装
+
+### Ubuntu
 
 支持 Ubuntu x86_64 和 ARM64（aarch64）。优先使用系统原生 Python 3.12 或更新版本，包括 Ubuntu 26.04 的 Python 3.14；安装器使用独立虚拟环境，保留系统 Python。Ubuntu 22.04 x86_64 可以继续使用仓库附带的独立 Python 3.12 运行时；ARM64 需要原生 Python 3.12+。
 
@@ -26,7 +28,92 @@ xcpc --help
 
 随仓库保留的 wheels 包括原始 x86_64/Python 3.12 版本，以及本次准备的 ARM64/Python 3.14 版本。不匹配当前架构或 Python 版本的 wheel 会自动被忽略；缺少兼容依赖时，安装器会联网从 PyPI 安装原生 wheel。使用 `--offline` 可禁止 PyPI 回退；如果缺少 tmux、Python venv 或系统证书，仍需通过 apt 安装这些系统包。`--python /path/to/python3` 可选择其他原生 Python 3.12+。
 
-macOS / Ubuntu 双系统用户需要先将本文件夹或随附安装包放到 Ubuntu 能访问的位置，再切换到 Ubuntu 执行安装。macOS 下不运行此安装器。
+Ubuntu 保持原来的 Firefox 登录读取与 tmux 面板流程，不需要浏览器扩展。`install.sh` 只用于 Ubuntu；macOS、Windows 使用下面的原生安装器。
+
+### macOS
+
+需要 Python 3.12+（推荐 3.13）、Git、tmux 和 Google Chrome 或 Microsoft Edge。先安装 [Homebrew](https://brew.sh/)，再在系统“终端”运行：
+
+```bash
+brew install python@3.13 tmux git
+git clone https://gitee.com/Zyihan_Crz/xcpc-vp-system.git
+cd xcpc-vp-system
+sh install-macos.sh
+```
+
+安装器会为当前用户创建独立环境；不需要 `sudo`。首次安装需联网下载适用于当前 macOS 和 Python 的依赖。程序默认位于 `~/Library/Application Support/XCPC/app`，命令放在 `~/.local/bin`。将下面这行加入 `~/.zshrc`，保存后重新打开终端：
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+然后运行 `xcpc --help`，并按下面的“Chrome / Edge 登录扩展”步骤加载一次扩展。比赛面板使用 tmux，上方显示比赛详情，下方可编辑代码、运行 `submit A.cpp`。代码编译器、编辑器按自己的习惯安装。
+
+### Windows
+
+原生安装支持 Windows 10 / 11，推荐 x64 Windows、Python 3.13 和 Windows Terminal。无需 WSL、tmux 或 Firefox。使用普通用户的 PowerShell，先安装以下软件；也可以从各自官方网站手动安装：
+
+```powershell
+winget install -e --id Git.Git
+winget install -e --id Python.Python.3.13
+winget install -e --id Microsoft.WindowsTerminal
+```
+
+安装后关闭并重新打开 Windows Terminal 的 PowerShell 页签，让 Python 和 Git 的 PATH 生效，然后运行：
+
+```powershell
+git clone https://gitee.com/Zyihan_Crz/xcpc-vp-system.git
+cd xcpc-vp-system
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+上述执行策略只用于这次安装进程。安装器自动添加当前用户的命令路径；安装结束后重新打开终端，运行 `xcpc --help`，再加载下面的扩展。程序默认保存在 `%LOCALAPPDATA%\XCPC\app`，命令位于 `%LOCALAPPDATA%\XCPC\bin`；不需要管理员权限。首次安装需要联网下载 Windows 依赖，包括终端显示组件和时区数据库。没有 `winget` 时，参见 [Microsoft 安装说明](https://learn.microsoft.com/en-us/windows/package-manager/winget/install)。
+
+打开比赛时，Windows Terminal 会创建一个比赛页签，上方为详情面板、下方为比赛目录中的 PowerShell。未找到 `wt.exe` 时，详情在单独终端打开，当前终端进入比赛目录；输入 `exit` 返回。保存目录、恢复面板和提交命令与其他系统相同。请自行安装所用语言的编译器或解释器。
+
+### macOS / Windows：Chrome / Edge 登录扩展
+
+使用你平时登录比赛网站的 **普通 Chrome 或 Edge 用户配置**，无需专用窗口、浏览器可执行文件路径或远程调试。已经登录的账号可以直接使用，不需要重新登录。安装 XCPC 后：
+
+1. Chrome 打开 `chrome://extensions`；Edge 打开 `edge://extensions`。
+2. 开启“开发者模式”，点击“加载已解压的扩展程序”。
+3. 选择安装器复制好的 **整个扩展文件夹**：
+
+   | 系统 | 扩展文件夹 |
+   | --- | --- |
+   | macOS | `~/Library/Application Support/XCPC/browser-extension` |
+   | Windows | `%APPDATA%\XCPC\browser-extension` |
+
+   macOS 文件选择框可按 `Command+Shift+G` 粘贴路径；Windows 可把展开后的路径粘贴到文件选择框地址栏。
+
+4. 点击“XCPC 登录同步”扩展图标，确认显示“已连接本机 XCPC”。必要时点击“同步登录状态”。只需要在实际使用的浏览器中加载，不必两个都加载。
+5. 在同一系统用户的终端验证登录，例如：
+
+   ```text
+   xcpc doctor qoj
+   xcpc doctor cf
+   xcpc doctor paa
+   xcpc doctor nk
+   ```
+
+之后照常在这个浏览器登录、切换账号或退出账号；扩展在 Cookie 变化时同步，并定期补查。VP、live、BT 和 submit 共用这些登录信息，仍通过原站返回的账号验证身份。已绑定其他账号的比赛不会自动改用新账号。Codeforces / Gym 仍需按提示配置同账号 API key / secret。
+
+扩展仅申请 Codeforces、QOJ、CWNUOJ、牛客及 CWNUOJ / 牛客父域登录 Cookie 的权限，通过[浏览器 Cookie 接口](https://developer.chrome.com/docs/extensions/reference/api/cookies)和[本机 Native Messaging](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging)传给本机 XCPC，不读取密码，不上传到额外服务。隐私窗口和分区 Cookie 不参与同步。扩展原始快照保存在当前用户的本地状态目录；比赛目录的私有 `contest.json` 仍按项目原有方式保存该站提交所需的会话。这些私有文件均不纳入仓库。
+
+若提示“本地连接未建立”，先确认用同一系统用户运行过本系统安装器，再重新加载扩展并点击同步。浏览器的组织策略可能禁止开发者扩展或 Native Messaging，需要由该浏览器的管理者允许。不要手动修改扩展 `manifest.json` 的 `key`；本地连接会核对固定扩展 ID。
+
+更新后扩展文件夹路径保持不变。到扩展管理页面点击该扩展的重新加载按钮，让已打开浏览器使用新版本，再点击同步。不要删除程序安装目录下的旧 release，命令入口和 Windows 本地连接会通过最初的启动环境转到当前版本。
+
+### 配置和数据位置
+
+默认比赛保存目录都是桌面，可用 `xcpc path` 修改。账号、程序与比赛文件分别保存：
+
+| 内容 | Ubuntu | macOS | Windows |
+| --- | --- | --- | --- |
+| 账号与设置 | `~/.config/vp/config.json` | `~/Library/Application Support/XCPC/config.json` | `%APPDATA%\XCPC\config.json` |
+| 比赛状态与登录快照 | `~/.local/state/vp` | `~/Library/Application Support/XCPC/State` | `%LOCALAPPDATA%\XCPC\State` |
+
+设置了 `XDG_CONFIG_HOME` / `XDG_STATE_HOME` 时仍优先采用这些目录。macOS / Windows 的终端与浏览器应使用一致的设置；普通安装无需设置这些变量。原生安装器也支持 `--target-root` 和 `--target-bin` 自定义程序与命令位置，手动把自定义命令目录加入 PATH；比赛保存目录使用 `xcpc path` 单独设置。
 
 ## 更新
 
@@ -36,7 +123,7 @@ macOS / Ubuntu 双系统用户需要先将本文件夹或随附安装包放到 U
 xcpc update
 ```
 
-程序从本项目 Gitee 的 `main` 分支获取最新版本，并沿用原来的本地或全局安装位置、Python 和自定义提交器设置。全局安装需要时由安装器请求 sudo 权限。更新使用独立缓存，不覆盖原项目中未提交的修改；账号、保存目录、比赛代码和历史记录保留。新版本安装检查成功后才切换，旧版本保留以便恢复。缺少 Git 时会尝试安装 Git；Python 依赖优先使用随附 wheels，必要时联网补齐。
+程序从本项目 Gitee 的 `main` 分支获取最新版本，并沿用原来的本地或全局安装位置、Python 和自定义提交器设置。Ubuntu 全局安装需要时由安装器请求 sudo 权限；macOS / Windows 更新使用各自原生安装器，不需要管理员权限。更新使用独立缓存，不覆盖原项目中未提交的修改；账号、保存目录、比赛代码和历史记录保留。新版本安装检查成功后才切换，旧版本保留以便恢复。Ubuntu 缺少 Git 时会尝试安装 Git；其他系统请先自行安装。Python 依赖优先使用随附 wheels，必要时联网补齐。
 
 第一次升级到包含 `xcpc update` 的版本，仍需要先按原安装方式更新一次：在项目目录执行 `git pull --ff-only` 后，本地安装运行 `bash install.sh --local`，全局安装运行 `bash install.sh`。从压缩包安装、没有 Git 工作区的用户，先下载新版覆盖程序源文件并重新安装一次；后续 `xcpc update` 不要求原目录含有 Git 工作区。
 
@@ -254,6 +341,8 @@ submit solution.cpp --problem A
 
 测试覆盖分页、计分与封榜、正式榜/补题区分、Firefox 父域 Cookie 与身份验证、目录恢复、表单字段/编译器和单次提交行为。公开接口已联网核对；登录后的完整比赛流程及真实代码提交仍需在已登录 Firefox、已有参赛资格的比赛中验证。
 
+以下 Firefox 登录说明适用于 Ubuntu；macOS / Windows 使用上面的 Chrome / Edge 扩展流程，VP、live、BT 和 submit 的使用方式相同。
+
 先在 Ubuntu 的 Firefox 登录 QOJ 或 Codeforces，再运行比赛命令。`vp`、`bt` 和内置 `submit` 自动读取 Firefox 的登录状态，并通过网站导航中的登录用户核对账号；未填写 handle 时也可以从已验证的浏览器登录自动取得。Codeforces / Gym 的 API key 与 API secret 在首次使用 VP、BT 或 live 时配置。配置保存在 `~/.config/vp/config.json`，权限为 600；也可以参考 `config.example.json` 填写。`cf` 与 `gym` 默认共用 Codeforces 配置。
 
 ### 重新设置 Codeforces API
@@ -316,7 +405,7 @@ xcpc doctor nk
 - 最终成绩保存到桌面的 `vp_history.csv`。
 - `vp history 轮次ID` 显示已保存的原赛正式队终榜金、银、铜线。每格上行是过题数/罚时，下行是名次界限，例如 `9/1200` 与 `(≤30)`；并列成绩使用相同分界，打星队不计入奖线。比赛完成后保存奖线，旧记录从本地 VP 状态和已核验的原赛缓存补齐。只有奖项名额时过题数/罚时显示 `—`，资格或数据缺失时整格显示 `—`。轮次成绩与奖线保存在独立状态文件中，补题不会改写正式赛内成绩。
 
-在上方面板用方向键、`PgUp` / `PgDn`、`Home` / `End` 或鼠标滚轮查看提交。`Ctrl+B`、`D` 脱离 tmux 后继续同步；`vp`、`live`、`bt` 都可再次运行原命令恢复；也支持 `vp history 轮次ID --open`。按 `q` 关闭评分面板。
+在上方面板用方向键、`PgUp` / `PgDn`、`Home` / `End` 或鼠标滚轮查看提交。Ubuntu / macOS 可用 `Ctrl+B`、`D` 脱离 tmux 后继续同步；Windows 保留比赛终端即可继续同步，关闭后可用 `xcpc dashboard` 恢复。`vp`、`live`、`bt` 都可再次运行原命令恢复；也支持 `vp history 轮次ID --open`。按 `q` 关闭评分面板。
 
 如果终端关闭或重启导致 tmux 会话消失，使用原 VP 命令或 `vp history 轮次ID --open` 重建已有 VP 面板，保留其开始时间、目录及提交记录，不重新报名。
 
@@ -361,4 +450,4 @@ SRK Collection 的档案按其 AGPL-3.0 许可证提供，来源和许可证保�
 
 提交器来自 [hikariyo 的 QOJ submit.py](https://gist.github.com/hikariyo/b3cec2e736d87be57d1e4faafb04f908) 与 [ehnryx/cf_submit](https://github.com/ehnryx/cf_submit)，固定版本、兼容补丁与现有许可证保存在 `third_party/`。Python 运行时的来源与校验值见 `runtimes/manifest.json`。
 
-本仓库包含运行程序、安装依赖、使用文档和隔离的自动化回归测试；比赛数据、账号配置、验证输出及个人比赛文件不纳入仓库。安装依赖后可运行 `python -m unittest discover -s tests -v`；真实 tmux 恢复测试需要 Ubuntu 和 tmux。测试中的账号、Cookie、题目和提交结果均为合成数据，不会发起真实比赛报名或代码提交。
+本仓库包含运行程序、安装依赖、使用文档和隔离的自动化回归测试；比赛数据、账号配置、验证输出及个人比赛文件不纳入仓库。安装依赖后可运行 `python -m unittest discover -s tests -v`；真实 tmux 恢复测试需要 Ubuntu 和 tmux；扩展的合成浏览器接口测试可运行 `node tests/browser_extension.test.cjs`。测试中的账号、Cookie、题目和提交结果均为合成数据，不会发起真实比赛报名或代码提交。

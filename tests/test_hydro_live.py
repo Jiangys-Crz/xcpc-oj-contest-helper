@@ -220,7 +220,8 @@ class LocalTests(IsolatedState):
                            [("sid", "local-fake", "oj.cwnupaa.com"), ("sso", "parent-fake", ".cwnupaa.com"),
                             ("other", "excluded", "codeforces.com")])
             db.commit()
-        with patch.object(browser_login, "firefox_profiles", return_value=[profile]):
+        with patch.object(browser_login, "firefox_profiles", return_value=[profile]), \
+                patch('vp_helper.chromium_login.enabled', return_value=False):
             candidates = browser_login.browser_cookies("cwnuoj", {})
         self.assertIn("sid=local-fake", candidates[0].cookie)
         self.assertIn("sso=parent-fake", candidates[0].cookie)

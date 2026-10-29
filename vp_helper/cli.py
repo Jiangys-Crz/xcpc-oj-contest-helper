@@ -70,7 +70,8 @@ def _load_account(path: Path, platform: str, *, live: bool = False) -> dict:
             verified = True
             write_json(path, config)
         else:
-            raise VPError(f"无法验证 {site} 的 Firefox 登录。\n{detail}\n"
+            browser_label = 'Firefox' if sys.platform.startswith('linux') else '浏览器'
+            raise VPError(f"无法验证 {site} 的 {browser_label} 登录。\n{detail}\n"
                           f"可运行 xcpc doctor {alias} 查看检查结果。")
     required = ("handle", "cookie", "api_key", "api_secret") if platform in ("cf", "gym") else ("handle", "cookie")
     missing = [key for key in required if not account.get(key)]
@@ -117,11 +118,13 @@ def history() -> None:
 
 
 def configure_submit(api, contest: Contest, directory: Path, *, validate_only: bool = False) -> None:
+    from .portable import bundled_submit, installed_command, bind_submit
     script = api.account.get("submit_script") or shutil.which("submit")
     selected = state_directory() / "submit"
-    bundled = bool(script and Path(script).is_symlink() and Path(os.readlink(script)) == selected)
+    bundled = bundled_submit(script, selected)
     if not script or not Path(script).is_file() or not os.access(script, os.X_OK):
-        raise VPError("The existing submit script is not installed; configure its path in ~/.config/vp/config.json.")
+        location = '~/.config/vp/config.json' if sys.platform == 'linux' else str(config_directory()/'config.json')
+        raise VPError(f"The existing submit script is not installed; configure its path in {location}.")
     if contest.platform == "qoj":
         ids = [int(value) for value in contest.problems.values()]
         if not bundled and ids != list(range(ids[0], ids[0] + len(ids))):
@@ -150,15 +153,12 @@ def configure_submit(api, contest: Contest, directory: Path, *, validate_only: b
         else:
             raise VPError("The Gym submit script's configuration format must be connected before a native VP is started.")
     if bundled:
-        tool = Path(sys.prefix) / "bin" / "vp-submit"
+        tool = installed_command('vp-submit')
         if not tool.is_file() or not os.access(tool, os.X_OK):
             raise VPError(f"The bundled {contest.platform} submit script is missing; reinstall vp.")
         if validate_only:
             return
-        temporary = selected.with_name("submit.new")
-        temporary.unlink(missing_ok=True)
-        temporary.symlink_to(tool)
-        os.replace(temporary, selected)
+        bind_submit(tool, selected)
 
 
 def _bind_submit_context(directory: Path, state_path: Path, state: dict, *, force: bool = False) -> None:
@@ -234,12 +234,12 @@ def launch(state_path: Path, state: dict) -> None:
 
 
 def check_terminal() -> None:
-    if sys.platform != "linux":
-        raise VPError("vp is supported on Ubuntu only.")
+    if sys.platform not in ('linux', 'darwin', 'win32'):
+        raise VPError('Unsupported operating system.')
     if not sys.stdin.isatty():
-        raise VPError("Run vp in an interactive Ubuntu terminal.")
-    if shutil.which("tmux") is None:
-        raise VPError("tmux is missing; run the installer.")
+        raise VPError("Run vp in an interactive Ubuntu terminal." if sys.platform == 'linux' else 'Run XCPC in an interactive terminal.')
+    if sys.platform != 'win32' and shutil.which("tmux") is None:
+        raise VPError('tmux is missing; run the installer.' if sys.platform == 'linux' else 'tmux is missing; run brew install tmux.')
 
 
 def prepare_resume(url: str) -> tuple[Path, dict]:
@@ -338,7 +338,8 @@ def reopen_saved(path: Path, state: dict, config: dict) -> None:
     from . import practice
     contest = Contest.from_dict(state['contest'])
     if account_for(config, contest.platform).get('handle', '').casefold() != state['handle'].casefold():
-        raise VPError('请在 Firefox 登录此比赛原来的账号后再恢复面板。')
+        browser = 'Firefox' if sys.platform == 'linux' else '原 Chrome / Edge 窗口'
+        raise VPError(f'请在 {browser} 登录此比赛原来的账号后再恢复面板。')
     if state.get('mode') == 'practice':
         path, state = practice.prepare(state['url'])
     else:
@@ -418,6 +419,10 @@ def open_state(path: Path, state: dict) -> None:
             state = read_json(path)
             promote(path, state)
     bind_submit_context(Path(state["directory"]), path, state)
+    if sys.platform == 'win32':
+        from .windows_terminal import open_dashboard
+        open_dashboard(path, state)
+        return
     if tmux_exists(state["tmux_session"]):
         pane = state["tmux_session"] + ":0.0"
         dead = subprocess.run(["tmux", "display-message", "-p", "-t", pane, "#{pane_dead}"],
@@ -512,6 +517,9 @@ def monitor(path: Path) -> None:
     if read_json(path).get("status") in ("cancelled", "failed"):
         raise VPError("此 VP 未启动。请查看历史记录中的失败原因。")
     with file_lock(path.with_suffix(".monitor.lock"), nonblocking=True):
+        if sys.platform == 'win32':
+            from .windows_terminal import track_monitor
+            track_monitor(path)
         state = read_json(path)
         if state.get('practice_view') and 'practice_rank' not in state:
             from .practice import saved_rank

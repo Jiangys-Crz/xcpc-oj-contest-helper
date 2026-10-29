@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup
 
+from .portable import login_browser
 from .http import WebSession
 from .platform_clock import platform_now
 from .models import Contest, Rules, VPError
@@ -61,7 +62,7 @@ def identity_from_html(html: str) -> dict:
             raise VPError("Nowcoder returned conflicting account identities.")
         ids = {owner[1]}
     if logged is False or len(ids) != 1 or not int(next(iter(ids))):
-        raise VPError("Nowcoder login expired. Log in at ac.nowcoder.com in Firefox and retry.")
+        raise VPError(f"Nowcoder login expired. Log in at ac.nowcoder.com in {login_browser()} and retry.")
     uid = int(ids.pop())
     return {"uid": uid, "handle": str(uid)}
 
@@ -160,7 +161,7 @@ class NowcoderLive:
         if basic.get("basicUid") != self.uid:
             self._identified = False
             self.web._refresh_browser(force=True)
-            raise VPError("Nowcoder did not confirm this account's private view. Refresh the Firefox login and retry.")
+            raise VPError(f"Nowcoder did not confirm this account's private view. Refresh the {login_browser()} login and retry.")
 
     def apply_metadata(self, contest: Contest, data: dict, *, require_registration: bool = True) -> None:
         if (str(data.get("contestId")) != self.id or data.get("type") not in SCORING

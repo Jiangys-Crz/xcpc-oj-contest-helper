@@ -48,14 +48,16 @@ def live_adapter(url: str, config: dict):
 
 
 def configure_submission(api, contest: Contest, directory: Path) -> None:
+    from .portable import bundled_submit, installed_command, bind_submit
     from .browser_login import browser_fields
     selected = state_directory() / "submit"
     script = api.account.get("submit_script") or shutil.which("submit")
-    native = Path(sys.prefix) / "bin" / "vp-submit"
+    native = installed_command('vp-submit')
+    installer = 'bash install.sh' if sys.platform == 'linux' else ('install.ps1' if sys.platform == 'win32' else 'sh install-macos.sh')
     if not native.is_file() or not os.access(native, os.X_OK):
-        raise VPError("The live submit command is missing. Install this version with bash install.sh, then retry.")
-    if not script or not Path(script).is_symlink() or Path(os.readlink(script)) != selected:
-        raise VPError("Live contests require the bundled submit entry. Use the submit installed by bash install.sh.")
+        raise VPError(f"The live submit command is missing. Install this version with {installer}, then retry.")
+    if not bundled_submit(script, selected):
+        raise VPError(f"Live contests require the bundled submit entry. Use the submit installed by {installer}.")
     write_json(directory / "contest.json", {
         "platform": contest.platform, "mode": "live", "name": contest.name, "base_url": contest.url,
         "contest_id": int(contest.contest_id) if contest.platform == "cf" else contest.contest_id,
@@ -64,10 +66,7 @@ def configure_submission(api, contest: Contest, directory: Path) -> None:
         "handle": api.handle, "cookie": api.account["cookie"],
         "user_agent": api.web.session.headers["User-Agent"], **browser_fields(api.account),
     })
-    temporary = selected.with_name("submit.new")
-    temporary.unlink(missing_ok=True)
-    temporary.symlink_to(native)
-    os.replace(temporary, selected)
+    bind_submit(native, selected)
 
 
 def prepare_live(url: str) -> tuple[Path, dict]:
@@ -170,6 +169,9 @@ def save_progress(path: Path, state: dict, contest: Contest, snapshot: dict,
 def monitor_live(path: Path) -> None:
     from . import cli
     with file_lock(path.with_suffix(".monitor.lock"), nonblocking=True):
+        if sys.platform == 'win32':
+            from .windows_terminal import track_monitor
+            track_monitor(path)
         state = read_json(path)
         if state.get('practice_view') and 'practice_rank' not in state:
             from .practice import saved_rank

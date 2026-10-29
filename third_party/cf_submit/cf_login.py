@@ -87,10 +87,14 @@ if _IMPERSONATE:
             return super().request(method, url, *args, **kwargs)
 
 
-def make_session(user_agent=None):
+def make_session(user_agent=None, cookie_source=None):
     """A browser session that can pass Cloudflare and accept RoboBrowser's forms."""
     if _IMPERSONATE:
-        return _FormSession(impersonate=_IMPERSONATE)
+        chromium = cookie_source in ('chrome', 'edge')
+        session = _FormSession(impersonate='chrome' if chromium else _IMPERSONATE)
+        if chromium and user_agent:
+            session.headers['User-Agent'] = user_agent
+        return session
     session = _requests.Session()
     if user_agent:
         session.headers['User-Agent'] = user_agent
@@ -133,7 +137,7 @@ def encode(s):
 def get_secret(inclupass):
     context = Path('contest.json')
     if context.is_file():
-        account = json.loads(context.read_text())
+        account = json.loads(context.read_text(encoding='utf8'))
         if account.get('platform') == 'gym' and account.get('handle'):
             return (account['handle'], None) if inclupass else account['handle']
     handle = None
@@ -180,10 +184,10 @@ def set_login(handle=None):
 def login():
     context = Path('contest.json')
     if context.is_file():
-        account = json.loads(context.read_text())
+        account = json.loads(context.read_text(encoding='utf8'))
         if account.get('platform') == 'gym':
             refresh_submission_login(context, account, 'gym')
-            session = make_session(account['user_agent'])
+            session = make_session(account['user_agent'], account.get('cookie_source'))
             jar = SimpleCookie()
             jar.load(account['cookie'])
             for item in jar.values():
@@ -193,7 +197,8 @@ def login():
             logged_in = any(a.get('href', '').lower() == '/profile/' + account['handle'].lower()
                             for a in browser.select('#header a'))
             if not logged_in:
-                raise SystemExit('Codeforces login expired or belongs to another account. Log in to the configured account in Firefox, then run submit again.')
+                browser_name = 'Chrome / Edge' if account.get('cookie_source') in ('chrome', 'edge') else 'Firefox'
+                raise SystemExit(f'Codeforces login expired or belongs to another account. Log in to the configured account in {browser_name}, then run submit again.')
             return browser
     handle, password = get_secret(True)
 

@@ -268,7 +268,8 @@ class LocalTests(IsolatedState):
             (".nowcoder.com", "container", "private", "/", 9999999999, "^userContextId=1")])
         db.commit()
         db.close()
-        with patch.object(browser_login, "firefox_profiles", return_value=[self.root]):
+        with patch.object(browser_login, "firefox_profiles", return_value=[self.root]), \
+                patch('vp_helper.chromium_login.enabled', return_value=False):
             candidates = browser_login.browser_cookies("nowcoder", {})
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0].cookie, "t=synthetic")

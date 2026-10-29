@@ -5,6 +5,7 @@ from datetime import datetime
 import io
 import os
 import shutil
+import sys
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -359,7 +360,10 @@ class PracticeTests(Isolated):
                 patch("vp_helper.submit.submission_configuration",return_value=(self.root/"contest.json",{"platform":"gym"})), \
                 patch("vp_helper.submit.os.chdir"), patch("vp_helper.submit.os.execv") as execute:
             submit.main()
-        self.assertEqual(execute.call_args.args[1], [str(script), str(source.resolve()), "-p", "A"])
+        expected = [str(script), str(source.resolve()), "-p", "A"]
+        if sys.platform in ('darwin', 'win32'):
+            expected.insert(0, sys.executable)
+        self.assertEqual(execute.call_args.args[1], expected)
 
     def test_cf_and_gym_practice_prepare_without_live_registration(self):
         import test_codeforces_live as fixtures

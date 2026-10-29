@@ -1,4 +1,4 @@
-"""Import only judge cookies from the local Firefox profile and verify its user."""
+"""Verify judge logins from Linux Firefox or native Chrome / Edge snapshots."""
 from __future__ import annotations
 
 import configparser
@@ -40,9 +40,13 @@ _lock = threading.Lock()
 class BrowserCookies:
     profile: Path
     cookie: str = field(repr=False)
+    source: str = 'firefox'
+    user_agent: str = ''
 
 
 def firefox_roots() -> list[Path]:
+    if os.name != 'posix':
+        return []
     home = Path.home()
     switched_user = False
     if os.geteuid() == 0 and os.environ.get("SUDO_USER") not in (None, "", "root"):
@@ -263,6 +267,15 @@ def _cookie_read_error(exc: Exception) -> str:
 
 
 def browser_cookies(platform: str, account: dict, *, errors: list[str] | None = None) -> list[BrowserCookies]:
+    from . import chromium_login
+    if chromium_login.enabled():
+        try:
+            return chromium_login.cookies(platform, account, errors=errors)
+        except Exception as exc:
+            if errors is not None:
+                from .models import VPError
+                errors.append(str(exc) if isinstance(exc, VPError) else '浏览器读取失败；请检查 XCPC 登录扩展是否已连接。')
+            return []
     host = platform_host(platform)
     candidates = []
     for profile in firefox_profiles(account):
@@ -328,7 +341,10 @@ def _verify(platform: str, candidate: BrowserCookies, expected: str, *, errors: 
     from .http import WebSession
     host = platform_host(platform)
     origin = "https://" + host
-    web = WebSession(origin, {"cookie": candidate.cookie}, auto_refresh=False)
+    credentials = {'cookie': candidate.cookie}
+    if candidate.source in ('chrome', 'edge'):
+        credentials.update(cookie_source=candidate.source, user_agent=candidate.user_agent)
+    web = WebSession(origin, credentials, auto_refresh=False)
     try:
         from .platform_clock import tick
         sent_at = tick()
@@ -342,8 +358,11 @@ def _verify(platform: str, candidate: BrowserCookies, expected: str, *, errors: 
         jar = getattr(web.session.cookies, "jar", web.session.cookies)
         values = {c.name: c.value for c in jar
                   if c.domain in cookie_hosts(host) and c.path == "/"}
-        return {**identity, "cookie": _header(values),
-                "cookie_source": "firefox", "firefox_profile": str(candidate.profile)}
+        fields = {'cookie_source': candidate.source}
+        if candidate.user_agent:
+            fields['user_agent'] = candidate.user_agent
+        fields['firefox_profile' if candidate.source == 'firefox' else 'browser_profile'] = str(candidate.profile)
+        return {**identity, "cookie": _header(values), **fields}
     except Exception as exc:
         # Do not replace a configured session on network failure or another login.
         if errors is not None:
@@ -355,9 +374,13 @@ def _verify(platform: str, candidate: BrowserCookies, expected: str, *, errors: 
 
 
 def verify_stored_session(platform: str, account: dict) -> bool:
+    from .chromium_login import enabled
+    if enabled() and account.get('cookie_source') != 'manual':
+        return False  # Native platforms follow the extension snapshot, including logout.
     if not account.get("cookie"):
         return False
-    verified = _verify(platform, BrowserCookies(Path(account.get("firefox_profile") or "."), account["cookie"]),
+    verified = _verify(platform, BrowserCookies(Path(account.get('browser_profile') or account.get("firefox_profile") or "."),
+                                               account["cookie"], account.get('cookie_source', 'firefox'), account.get('user_agent', '')),
                        account.get("handle", ""))
     if not verified:
         return False
@@ -369,7 +392,7 @@ def refresh_browser_account(platform: str, account: dict, *, force: bool = False
     if account.get("cookie_source") == "manual":
         return False
     for candidate in browser_cookies(platform, account):
-        key = (platform_host(platform), str(candidate.profile), account.get("handle", ""),
+        key = (platform_host(platform), str(candidate.profile), candidate.source, candidate.user_agent, account.get("handle", ""),
                hashlib.sha256(candidate.cookie.encode()).digest())
         with _lock:
             cached = _cache.get(key)
@@ -385,13 +408,18 @@ def refresh_browser_account(platform: str, account: dict, *, force: bool = False
 
 
 def browser_fields(account: dict) -> dict:
-    return {k: account[k] for k in ("cookie_source", "firefox_profile", "firefox_profile_strict") if account.get(k)}
+    return {k: account[k] for k in ("cookie_source", "firefox_profile", "firefox_profile_strict", 'browser_profile') if account.get(k)}
 
 
 def refresh_submission_login(path: Path, config: dict, platform: str) -> None:
     from .storage import write_json
     before = dict(config)
-    if refresh_browser_account(platform, config) and config != before:
+    refreshed = refresh_browser_account(platform, config)
+    from .chromium_login import enabled
+    if enabled() and config.get('cookie_source') != 'manual' and not refreshed:
+        from .models import VPError
+        raise VPError('无法验证当前 Chrome / Edge 登录。请在原浏览器窗口登录并同步 XCPC 扩展后重试。')
+    if refreshed and config != before:
         write_json(path, config)
 
 
@@ -399,6 +427,19 @@ def login_diagnostics(platform: str, account: dict, *, verified_account: dict | 
     """Safe to share: locations, counts and fixed errors, never cookie values."""
     if account.get("cookie_source") == "manual":
         return ["当前配置使用手动 Cookie，未自动读取 Firefox。"]
+    from . import chromium_login
+    if chromium_login.enabled():
+        from .storage import config_directory
+        messages = ['登录来源：普通 Chrome / Edge 窗口中的 XCPC 扩展。',
+                    '扩展文件夹：' + str(config_directory() / 'browser-extension')]
+        errors = []
+        for candidate in browser_cookies(platform, account, errors=errors):
+            verified = _verify(platform, candidate, account.get('handle', ''), errors=errors)
+            if verified:
+                if verified_account is not None:
+                    verified_account.update(verified)
+                return messages + ['已验证该站点的浏览器登录。']
+        return messages + errors + ['请确认已加载扩展，并在普通 Chrome / Edge 窗口登录此网站后重试。']
     profiles = firefox_profiles(account)
     if not profiles:
         return ["未找到 Firefox 配置目录。请在 Firefox 打开 about:support 查看“配置文件夹”。",

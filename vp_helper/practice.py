@@ -196,6 +196,9 @@ class PracticeDashboard(Dashboard):
 def monitor(path: Path) -> None:
     from . import cli
     with file_lock(path.with_suffix(".monitor.lock"), nonblocking=True):
+        if sys.platform == 'win32':
+            from .windows_terminal import track_monitor
+            track_monitor(path)
         state = read_json(path)
         contest = Contest.from_dict(state["contest"])
         config = read_json(cli.config_directory() / "config.json")

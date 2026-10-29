@@ -12,6 +12,7 @@ import sys
 import time
 from urllib.parse import urlsplit
 
+from .portable import login_browser
 from .browser_login import refresh_submission_login
 from .http import _RequestException
 from .platform_clock import platform_now
@@ -123,7 +124,7 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     if data.get("code") != 0:
         print_judging_link(api.url)
         if data.get("code") in (999, 1125, 499) or data.get("msg") == "请先登录":
-            raise VPError("Nowcoder requires browser login or verification. Complete it in Firefox, then check records before retrying.")
+            raise VPError(f"Nowcoder requires browser login or verification. Complete it in {login_browser()}, then check records before retrying.")
         raise VPError(f"Nowcoder rejected the submission (code {data.get('code')}). Check the result link before retrying.")
     # The reference client receives a numeric data value. Some site versions
     # wrap the same ID; never infer success merely from code=0 or local time.

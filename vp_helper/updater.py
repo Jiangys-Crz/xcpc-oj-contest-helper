@@ -23,12 +23,18 @@ def installation() -> dict:
             or Path(data.get("install_root", "")).resolve() != release.parent.parent
             or not isinstance(data.get("local"), bool)
             or not Path(data.get("bin_directory", "")).is_absolute()):
-        raise VPError("未找到有效安装信息。请先用新版 install.sh 安装一次，再使用 xcpc update。")
+        installer = 'install.sh' if sys.platform == 'linux' else ('install.ps1' if sys.platform == 'win32' else 'install-macos.sh')
+        raise VPError(f"未找到有效安装信息。请先用新版 {installer} 安装一次，再使用 xcpc update。")
     return data
 
 
 @contextmanager
 def update_lock(path: Path):
+    if sys.platform == 'win32':
+        from .storage import file_lock
+        with file_lock(path, nonblocking=True):
+            yield
+        return
     import fcntl
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as lock:
@@ -54,10 +60,10 @@ def _git(args: list[str], *, cwd: Path | None = None) -> str:
 def ensure_git() -> None:
     if shutil.which("git"):
         return
-    apt = shutil.which("apt-get")
+    apt = shutil.which("apt-get") if sys.platform == 'linux' else None
     if not apt:
         raise VPError("更新需要 Git，请先安装 Git 后重试。")
-    prefix = [] if os.geteuid() == 0 else ["sudo", "--"]
+    prefix = [] if getattr(os, 'geteuid', lambda: 1)() == 0 else ["sudo", "--"]
     print("正在安装更新所需的 Git…", flush=True)
     try:
         subprocess.run([*prefix, apt, "update"], check=True)
@@ -71,6 +77,9 @@ def installer_command(source: Path, data: dict) -> list[str]:
     if not python or not Path(python).is_file():
         python = getattr(sys, "_base_executable", sys.executable)
     python = str(Path(python).resolve())
+    if data.get('portable'):
+        return [python, str(source / 'install.py'), '--target-root', data['install_root'],
+                '--target-bin', data['bin_directory']]
     command = ["bash", str(source/"install.sh"), "--python", python,
                "--target-root", data["install_root"], "--target-bin", data["bin_directory"]]
     if data["local"]:
@@ -108,7 +117,7 @@ def update(*, repository: str = REPOSITORY) -> None:
                 raise VPError("更新缓存中存在本地改动，未覆盖：" + str(source))
         else:
             _git(["--git-dir", str(bare), "worktree", "add", "--detach", str(source), revision])
-        if not (source/"install.sh").is_file():
+        if not (source / ('install.py' if data.get('portable') else 'install.sh')).is_file():
             raise VPError("最新代码缺少安装器；原版本未改动。")
         log = cache/"last-update.log"
         print("正在安装新版本，账号、保存目录及比赛记录将保留…", flush=True)

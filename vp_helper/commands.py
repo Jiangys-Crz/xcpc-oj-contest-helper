@@ -72,7 +72,10 @@ def main() -> None:
     args = sys.argv[1:]
     try:
         if args in ([], ["-h"], ["--help"]):
-            print(HELP.replace("XCPC 比赛终端助手", "XCPC 比赛终端助手 " + __version__, 1))
+            help_text = HELP.replace("XCPC 比赛终端助手", "XCPC 比赛终端助手 " + __version__, 1)
+            if sys.platform in ('darwin', 'win32'):
+                help_text = help_text.replace('Firefox 登录', 'Chrome / Edge 扩展登录')
+            print(help_text)
         elif args == ["path"]:
             print("当前保存目录：" + str(workspace_directory()))
             try:

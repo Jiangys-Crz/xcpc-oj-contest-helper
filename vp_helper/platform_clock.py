@@ -6,6 +6,8 @@ from functools import lru_cache
 import math
 import os
 from pathlib import Path
+import subprocess
+import sys
 import time
 from urllib.parse import urlsplit
 
@@ -19,9 +21,22 @@ HOSTS = {'codeforces.com', 'qoj.ac', 'contest.ucup.ac', CWNUOJ_HOST, NOWCODER_HO
 @lru_cache(maxsize=1)
 def boot_id():
     try:
-        return Path('/proc/sys/kernel/random/boot_id').read_text().strip()
-    except OSError:
-        return f'process-{os.getpid()}'
+        if sys.platform == 'darwin':
+            value = subprocess.check_output(['/usr/sbin/sysctl', '-n', 'kern.bootsessionuuid'],
+                                            text=True, stderr=subprocess.DEVNULL, timeout=2).strip()
+            if value:
+                return 'mac-' + value
+        elif sys.platform == 'win32':
+            value = subprocess.check_output(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
+                '(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().Ticks'],
+                text=True, stderr=subprocess.DEVNULL, timeout=5, creationflags=0x08000000).strip()
+            if value.isdecimal():
+                return 'windows-' + value
+        else:
+            return Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return f'process-{os.getpid()}'
 
 
 def tick():

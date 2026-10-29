@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 from .models import VPError
@@ -14,14 +15,33 @@ FIELDS = ["start_time", "contest", "url", "solved", "penalty", "rank", "prize"]
 
 
 def config_directory() -> Path:
+    if 'XDG_CONFIG_HOME' not in os.environ:
+        if sys.platform == 'darwin':
+            return Path.home() / 'Library/Application Support/XCPC'
+        if sys.platform == 'win32':
+            return Path(os.environ.get('APPDATA', Path.home() / 'AppData/Roaming')) / 'XCPC'
     return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "vp"
 
 
 def state_directory() -> Path:
+    if 'XDG_STATE_HOME' not in os.environ:
+        if sys.platform == 'darwin':
+            return config_directory() / 'State'
+        if sys.platform == 'win32':
+            return Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData/Local')) / 'XCPC/State'
     return Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "vp"
 
 
 def desktop() -> Path:
+    if sys.platform == 'win32':
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders') as key:
+                return Path(os.path.expandvars(winreg.QueryValueEx(key, 'Desktop')[0]))
+        except OSError:
+            return Path.home() / 'Desktop'
+    if sys.platform == 'darwin':
+        return Path.home() / 'Desktop'
     try:
         p = subprocess.run(["xdg-user-dir", "DESKTOP"], check=True, capture_output=True, text=True).stdout.strip()
         if p:
@@ -87,6 +107,32 @@ def read_json(path: Path) -> dict:
 
 @contextlib.contextmanager
 def file_lock(path: Path, *, nonblocking: bool = False):
+    if sys.platform == 'win32':
+        import msvcrt
+        import time
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open('a+b') as f:
+            if f.tell() == 0:
+                f.write(b'\0')
+                f.flush()
+            while True:
+                f.seek(0)
+                try:
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    import errno
+                    if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                        raise
+                    if nonblocking:
+                        raise VPError('This virtual contest is already being monitored.') from exc
+                    time.sleep(.05)
+            try:
+                yield
+            finally:
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        return
     import fcntl
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with path.open("a") as f:
