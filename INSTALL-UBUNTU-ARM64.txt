@@ -1,100 +1,59 @@
-VP Helper · Ubuntu 26.04 ARM64 安装说明
+XCPC 0.8.2 · Ubuntu ARM64 快速安装
 
-此目录已包含适配后的源代码及 Python 3.14 / ARM64 依赖 wheels。
-当前电脑处于 macOS，不能替尚未启动的另一套 Ubuntu 安装系统软件。
+完整安装与使用教程请阅读同目录的 README.md。
+Ubuntu 24.04 / 26.04 ARM64 使用系统 Python 3.12+；仓库带有适配
+Ubuntu 26.04、Python 3.14 ARM64 的依赖 wheels。
 
-已安装 0.1.15、只需修复当前比赛时，无需重新安装。以原虚拟环境路径为例，
-在 Ubuntu 用原参赛用户执行：
+1. 将整个源码目录复制到 Ubuntu，或解压源码包后进入 VP 目录。
 
-   ~/Program/VP/VP/bin/python ~/Program/VP/tools/repair-vp.py
-   vp qoj 4538
-
-请先将更新后的 tools/repair-vp.py 复制到上面的位置。
-该脚本自动定位安装文件，检查兼容性并备份后再修复：
-- tmux 会话丢失时重建比赛面板，保留原开始时间和本地比赛记录，不重新申请 VP。
-- CCPC 新赛制的匿名 ? 列显示提交次数、尝试队伍数和通过队伍数，只隐藏题号。
-如果实际虚拟环境位于其他路径，请使用那里的 bin/python。
-
-1. 将本文件夹复制到 Ubuntu 能访问的位置，或将 outputs/ 下的
-   vp-helper-ubuntu-arm64.tar.gz 放到共享分区/U盘，进入 Ubuntu 后解压。
-   不要假定 Ubuntu 一定能直接读取 macOS 的 APFS 分区。
-
-2. 重启进入 Ubuntu，在终端进入解压后的 VP 文件夹，运行：
+2. 使用日常 Linux 用户运行：
 
    bash install.sh --local --offline
    export PATH="$PWD/bin:$PATH"
    xcpc --help
-   后续更新使用 xcpc update，会保留原安装位置、账号、保存目录和比赛历史。
 
-   请使用日常 Linux 用户运行，不要在安装命令前加 sudo。
-   缺少 tmux、python3.14-venv 或系统证书时，安装器会自动调用 sudo apt。
-   --offline 仅表示 Python 依赖使用随附 wheels；安装系统包仍需要网络。
-   如果改用其他 Python 版本，缺少相应 wheel 时去掉 --offline 后重试。
+   安装器会自动补齐 Python、venv、Git、tmux 和证书，缺少系统包时
+   自动请求 sudo 权限。--offline 只禁止从 PyPI 下载 Python 依赖；
+   apt 安装系统包仍可能需要网络。其他 Python 版本缺少对应 wheel 时，
+   去掉 --offline 后重试。不要在比赛命令前加 sudo。
 
-   可用 xcpc path 交互修改保存位置，或执行 xcpc path ~/XCPC 直接指定目录。
-   默认桌面，修改后新建 VP/live/bt 目录和 CSV 使用新位置，已有记录不移动。
+   程序保存在 .vp-install，命令在 bin。安装器自动配置 Bash / Zsh
+   的命令路径，新终端可直接运行 xcpc；当前终端先执行上面的 export。
+   本地安装后不要移动程序目录，移动后需要重新安装。
 
-3. 将安装完成时显示的 export PATH=... 行添加到 ~/.bashrc，
-   这样新开的终端也能找到 vp 和 submit。使用 zsh 时添加到 ~/.zshrc。
-   程序保存在此目录的 .vp-install/，命令入口在 bin/。
-   安装完成后不要移动目录；如果移动，请重新运行安装器。
+3. 在同一系统用户的普通 Firefox 窗口登录比赛网站，无需退出浏览器。
+   Ubuntu 继续直接读取 Firefox 登录，不使用 Chrome / Edge 扩展。
 
-4. 在 Ubuntu 的 Firefox 登录 QOJ 或 Codeforces，然后运行：
+   xcpc doctor cf
+   xcpc doctor qoj
+   xcpc doctor paa
+   xcpc doctor nk
 
-   vp qoj 比赛编号
-   vp cf 比赛编号
-   vp gym 比赛编号
-   三种 VP 命令均提示开始时间，回车预约三分钟后开始，或输入 HH:MM / YYYY-MM-DD HH:MM。
-   CF/Gym 默认个人参赛，自动填写原站预约日期、时间与时区；分钟精度向上取整。
-   QOJ 到点才提交 /virtual/register 表单立即开始 VP。等待时保持开机联网。
-   每场比赛只支持一次 VP；重复 vp / live 命令恢复已有会话，不重新报名。
-   在比赛文件夹或子目录执行 xcpc dashboard 恢复面板；结束后自动进入补题。
-   新 VP 必须由原站允许并确认；原站拒绝就退出，不启动本地模拟 VP。
-   xcpc end 结束当前本地 VP，或 xcpc end 轮次ID 结束指定轮次。
-   不同比赛可同时进行多场 VP / live，补题不阻塞新 VP。
-   在比赛目录中运行 xcpc end 时，优先结束该目录的轮次，不误结束另一场。
-   结束只改变本地计时计分，原站状态忽略；保留代码，原 AC 方格保持绿色，补题新 AC 方格变蓝；提交列表沿用 VP 判定颜色。
-   vp history 列出轮次，vp history 轮次ID 查看，附加 --open 恢复已有面板。
+4. 设置比赛保存目录和 Codeforces API：
 
-   已报名的正式比赛使用：
-   live cf 比赛编号
+   xcpc path
+   xcpc api cf
+
+   API 设置页：https://codeforces.com/settings/api
+   CF/Gym 的 VP、BT、live 共用配置，用户名不区分大小写。
+
+5. 常用命令：
+
+   vp cf 2181
+   vp qoj 3617
+   vp gym 100123
+   live cf 2277
    live paa 比赛ID
-   live nk 比赛编号
-   live https://codeforces.com/contest/比赛编号
-   live https://oj.cwnupaa.com/contest/比赛ID
-   live https://ac.nowcoder.com/acm/contest/比赛编号
-   实时模式按官方赛程计时，不启动 VP。CF 共用 API key/secret，CWNUOJ 和牛客无需密钥。
-   CWNUOJ 请先在 Ubuntu Firefox 登录并在网站报名，配置使用 cwnuoj 项。
-   牛客同样读取 Ubuntu Firefox Cookie，配置使用 nowcoder 项，不填写密码。
-   已登录但无法识别时，运行 xcpc doctor paa 或 xcpc doctor nk 查看具体原因。
-   支持 Firefox 传统、XDG、Snap 和 Flatpak 配置位置，检查结果不显示 Cookie 值。
-   牛客提交参考 vscode-nowcoderac 的表单协议，验证码或结果不明时不会自动重发。
-   比赛目录内 submit A.cpp 提交；结束后仍可补题，原 AC 保留，补题新 AC 的题格变蓝，下面记录沿用 VP 判定颜色。
-   bt 比赛链接 直接创建补题工作区，支持 CF、Gym、QOJ、CWNUOJ、牛客。
-   已有同账号的已结束 VP/live 时，bt 优先恢复最近一轮的原目录与历史记录。
-   补题沿用赛时布局，取消顶部计时和公共统计区，原 AC 方格绿色，补题新 AC 方格蓝色，提交记录按判定显示颜色。
-   补题 Rank 固定为进入补题时保存的原排名，不随提交、榜单刷新或恢复面板改变。
-   Firefox 保持运行也可读取登录，数据库占用时自动通过含 WAL 的临时副本读取。
-   CWNUOJ 赛后使用 /p/题目ID/submit，不带 tid；赛中提交保留 tid。
-   vp history --live 查看实时比赛历史。
-   BT / live 不下载题面，VP 首次下载失败时仍可使用面板和提交。
-   所有工作目录按实际比赛名称命名；重复 vp / live / bt 保留原文件夹全部内容。
-   原目录丢失时自动重建原目录及提交配置，保留比赛状态和记录，不重新开始 VP。
-   标题包含 CCPC 时使用 CCPC 新赛制，否则按 ICPC；无需年份、赛区命名。
+   live nk 比赛ID
+   bt 比赛链接
 
-   CF / Gym 首次运行 VP、BT 或 live 时需要填写 Codeforces API key 和 secret。
-   重新设置运行 xcpc api cf，同账号的 VP、BT、live 和 Gym 共用新配置。
-   key 和 secret 均支持右键或 Ctrl+Shift+V 粘贴；secret 不回显，按回车完成。
-   比赛目录内使用 submit A.cpp 提交；vp history 查看本地历史。
-   比赛命令会在原平台启动真实虚拟参赛，请在准备好比赛后使用。
+   在原比赛文件夹运行 xcpc dashboard 恢复面板，运行 xcpc end
+   结束本地 VP。代码和历史保留，比赛结束后可继续补题。
+   同一比赛再次输入命令恢复已有会话，不重新开始 VP。
 
-适配说明：
-- 优先使用原生 Python 3.12+，兼容 Ubuntu 26.04 自带的 Python 3.14。
-- Python 使用独立虚拟环境，不替换系统 Python，不修改 GCC。
-- ARM64 原生二进制依赖已准备；原始 x86_64 运行时在 ARM64 上不会使用。
-- 提交器通过所在安装目录查找解释器，支持路径中含空格。
-- 重新安装会先验证新版本，再切换到新版本；旧版保留在 releases/。
+6. 更新：
 
-本机 Docker 验证环境：Ubuntu 26.04.1 LTS / aarch64 / Python 3.14.4。
-验证记录位于原工作目录 outputs/；尚未验证双系统 Ubuntu 的图形桌面、
-实际 Firefox 登录、真实比赛启动和真实代码提交。
+   xcpc update
+
+   沿用原安装位置，保留账号、保存路径、代码和比赛历史。
+   macOS / Windows 的安装和浏览器扩展步骤请阅读 README.md。

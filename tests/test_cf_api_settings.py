@@ -14,6 +14,18 @@ from vp_helper.storage import config_directory, read_json, write_json
 
 
 class CodeforcesAPISettingsTests(unittest.TestCase):
+    def test_username_prompt_is_chinese_in_initial_setup_and_rebinding(self):
+        for initial_setup in (False, True):
+            write_json(self.path,{})
+            with patch('builtins.input',side_effect=['Tester','new-key']) as prompt, \
+                    patch.object(accounts.getpass,'getpass',return_value='new-secret'):
+                if initial_setup:
+                    accounts.prepare_api_account(self.path,{},'cf')
+                else:
+                    accounts.configure_api('cf')
+            self.assertEqual(prompt.call_args_list[0].args,('请输入 Codeforces 用户名：',))
+            self.assertEqual(read_json(self.path)['gym']['handle'],'Tester')
+
     def test_native_first_use_prompts_api_before_browser_and_shares_cf_gym(self):
         for operating_system in ('darwin','win32'):
             for platform in ('cf','gym'):
@@ -69,7 +81,7 @@ class CodeforcesAPISettingsTests(unittest.TestCase):
 
     def configure(self,platform='cf',values=('new-key','new-secret')):
         with patch.object(accounts.getpass,'getpass',side_effect=[values[1]]), \
-                patch('builtins.input',side_effect=lambda prompt: 'tester' if 'handle' in prompt else values[0]):
+                patch('builtins.input',side_effect=lambda prompt: 'tester' if '用户名' in prompt else values[0]):
             accounts.configure_api(platform)
 
     def test_reset_preserves_browser_workspace_and_other_platform_settings(self):

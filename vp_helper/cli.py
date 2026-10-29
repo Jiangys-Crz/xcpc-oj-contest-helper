@@ -92,7 +92,11 @@ def _load_account(path: Path, platform: str, *, live: bool = False) -> dict:
                 from .accounts import prompt_api_credentials
                 account.update(prompt_api_credentials())
                 continue
-            value = input(labels[key] + ": ").strip() if key == "handle" else getpass.getpass(labels[key] + ": ").strip()
+            if key == 'handle' and platform in ('cf','gym'):
+                from .accounts import HANDLE_PROMPT
+                value = input(HANDLE_PROMPT).strip()
+            else:
+                value = input(labels[key] + ": ").strip() if key == "handle" else getpass.getpass(labels[key] + ": ").strip()
             if not value:
                 raise VPError("An account field was empty; no native VP was started.")
             account[key] = value
@@ -265,7 +269,8 @@ def prepare_resume(url: str) -> tuple[Path, dict]:
                 # refreshing it never starts or resets the native participation.
                 config = load_account(platform)
                 api = adapter(canonical, config)
-                if api.handle != old.get("handle"):
+                matches = api.handle.casefold() == old.get('handle', '').casefold() if platform in ('cf','gym') else api.handle == old.get('handle')
+                if not matches:
                     raise VPError("The configured account changed; restore this VP's account before resuming it.")
                 directory = Path(old["directory"])
                 directory.mkdir(parents=True, exist_ok=True)
@@ -461,13 +466,15 @@ def poll(api, contest: Contest, elapsed: float, refresh_reference: bool = False)
 
 
 def monitor(path: Path) -> None:
+    from .accounts import same_handle
     # A renamed workspace keeps the same tmux cwd. Repair an old daemon's
     # stale directory field when it is relaunched after an application update.
     here = Path.cwd()
     context = read_json(here / "contest.json").get("vp_context", {})
     with file_lock(path.with_suffix(".save.lock")):
         saved = read_json(path)
-        if (saved and context.get("url") == saved.get("url") and context.get("handle") == saved.get("handle")
+        if (saved and context.get("url") == saved.get("url")
+                and same_handle(saved['contest']['platform'], context.get("handle"), saved.get("handle"))
                 and str(here) != saved.get("directory")):
             saved.update(directory=str(here), workspace_managed=True)
             write_json(path, saved)

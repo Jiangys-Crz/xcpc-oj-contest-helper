@@ -50,7 +50,10 @@ def main() -> None:
                 # The upstream parser infers a problem from the full argument,
                 # so absolute paths need an explicit problem index.
                 options += ["-p", label]
-            if sys.platform in ('darwin', 'win32'):
+            if sys.platform == 'win32':
+                from .bootstrap import launch_python
+                launch_python(sys.executable, [str(script), str(source), *options])
+            elif sys.platform == 'darwin':
                 os.execv(sys.executable, [sys.executable, str(script), str(source), *options])
             else:
                 os.execv(str(script), [str(script), str(source), *options])

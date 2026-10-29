@@ -2,11 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-import sys
 
 from rich import box
-from rich.align import Align
-from rich.cells import set_cell_size
+from rich.cells import cell_len, set_cell_size
 from rich.console import Console, Group
 from rich.table import Table
 from rich.text import Text
@@ -20,9 +18,43 @@ PRACTICE_ACCEPTED = "white on #0000ff"
 SCORE_BOX = box.Box("    \n    \n ── \n    \n ── \n ── \n    \n    \n")
 
 
-def positioned_scoreboard(table):
-    # Center the compact table itself, rather than stretching empty problems.
-    return Align.center(table, pad=False) if sys.platform == 'win32' else table
+def score_table(columns, problems, rows, width, *, separate_summary=False):
+    # Keep summary fields at their content width; share the rest among problems.
+    def content_width(value):
+        text = value if isinstance(value, Text) else Text.from_markup(str(value))
+        return max((cell_len(line) for line in text.plain.splitlines()), default=0)
+
+    minimum = [content_width(label) for label in columns]
+    sizes = [max([minimum[index]] + [content_width(row[index]) for row in rows])
+             for index in range(len(columns))]
+    count = len(columns) + len(problems)
+    problem_minimum = max((content_width(label) for label in problems), default=1)
+    problem_space = len(problems) * problem_minimum
+    padding = 1 if sum(sizes) + problem_space + 2 * count <= width else 0
+    available = width - problem_space - (2 * count if padding else count - 1)
+    if available < sum(minimum):
+        return Text("Enlarge the score pane to view all problems.", style="#555555")
+    excess = max(0, sum(sizes) - available)
+    # A long team name must not hide the problem labels in a narrow pane.
+    order = sorted(range(len(columns)), key=lambda index: columns[index] != "team")
+    for index in order:
+        reduction = min(excess, sizes[index] - minimum[index])
+        sizes[index] -= reduction
+        excess -= reduction
+    table = Table(box=SCORE_BOX, padding=(0, padding), style="default",
+                  header_style="bold black on #eeeeee", border_style="#bbbbbb",
+                  show_edge=False, expand=bool(problems), collapse_padding=True)
+    for label, size in zip(columns, sizes):
+        table.add_column(label, width=size, justify="center", no_wrap=True)
+    if padding:
+        # Some Rich versions omit the leading collapsed padding when measuring
+        # fixed columns, although they still draw it. Keep that edge in budget.
+        table.columns[0].width += max(0, 2 * padding - table._get_padding_width(0))
+    for label in problems:
+        table.add_column(label, justify="center", ratio=1, min_width=problem_minimum, overflow="fold")
+    for index, row in enumerate(rows):
+        table.add_row(*row, end_section=separate_summary and index == 0)
+    return table
 
 
 def clock(value: float) -> str:
@@ -74,14 +106,6 @@ class Dashboard:
         if self.contest.extra.get("local_attempt") and not self.practice:
             label += " · local timer"
         heading.add_row(Text(" " + timer, style="bold default"), Text(label, style="bold"), Text(""))
-        table = Table(box=SCORE_BOX, padding=(0, 1), style="default",
-                      header_style="bold black on #eeeeee", border_style="#bbbbbb",
-                      show_edge=False, expand=False, collapse_padding=True)
-        for label in ("rank", "team", "solved", "penalty"):
-            table.add_column(label, justify="left" if label == "team" else "center",
-                             no_wrap=True)
-        for label in self.contest.problems:
-            table.add_column(label, justify="center")
         cells = []
         corrections = recorded_cells(self.contest, self.submissions, practice=True)
         for label in self.contest.problems:
@@ -102,18 +126,19 @@ class Dashboard:
                 cells.append(Text(tries, style="black on #e87272"))
             else:
                 cells.append(Text(tries))
-        table.add_row(Text(result, style="bold default"), self.me.name, str(self.me.solved),
-                      str(self.me.penalty) if self.me.results_complete else "?",
-                      *cells, end_section=True)
+        rows = [[Text(result, style="bold default"), self.me.name, str(self.me.solved),
+                 str(self.me.penalty) if self.me.results_complete else "?", *cells]]
         if not self.practice and not self.contest.rules.problem_reveal_count:
             for key in ("submitted", "attempted", "accepted"):
-                table.add_row("", key, "", "", *(str(self.stats[key][p]) if self.stats else "—"
-                                                 for p in self.contest.problems))
+                rows.append(["", key, "", "", *(str(self.stats[key][p]) if self.stats else "—"
+                                                   for p in self.contest.problems)])
+        table = score_table(("rank", "team", "solved", "penalty"), self.contest.problems,
+                            rows, width, separate_summary=True)
         labels = self._record_table()
         labels.add_row("problem", "submission", "time", "result", style="bold black on #eeeeee")
         if not self.practice and self.contest.rules.problem_reveal_count:
-            return Group(heading, Text(" "), positioned_scoreboard(table), self.public_statistics(), Text(" "), labels)
-        return Group(heading, Text(" "), positioned_scoreboard(table), Text(" "), labels)
+            return Group(heading, Text(" "), table, self.public_statistics(), Text(" "), labels)
+        return Group(heading, Text(" "), table, Text(" "), labels)
 
     def public_statistics(self):
         visible = self.revealed or frozenset()
@@ -208,18 +233,11 @@ class LiveDashboard:
         heading = Text("" if self.practice else timing + " · " + phase_text + (" · Scoreboard frozen" if frozen else ""))
         scoring = self.contest.extra["scoring"]
         own = self.snapshot.get("own")
-        table = Table(box=SCORE_BOX, padding=(0, 1), style="default",
-                      header_style="bold black on #eeeeee", border_style="#bbbbbb",
-                      expand=False, show_edge=False, collapse_padding=True)
         columns = ["rank", "team", "solved" if scoring == "ICPC" else "points"]
         if scoring == "ICPC":
             columns.append("penalty")
         elif self.contest.platform == "cf":
             columns.append("hacks +/−")
-        for label in columns:
-            table.add_column(label, justify="left" if label == "team" else "center", no_wrap=True)
-        for label in self.contest.problems:
-            table.add_column(label, justify="center")
         results = own["problemResults"] if own else []
         cells = []
         corrections = recorded_cells(self.contest, self.submissions, practice=True)
@@ -257,12 +275,13 @@ class LiveDashboard:
             values.append(str(own["penalty"]) if own else "—")
         elif self.contest.platform == "cf":
             values.append(f"{own.get('successfulHackCount', 0)}/{own.get('unsuccessfulHackCount', 0)}" if own else "—")
-        table.add_row(*values, *cells)
+        rows = [[*values, *cells]]
         stats = self.snapshot.get("stats", {})
         for key in (() if self.practice else ("scored", "attempted") if self.contest.platform == "cf" else tuple(stats)):
-            table.add_row("", "attempted ≥" if key == "attempted" and self.contest.platform == "cf" else key,
-                          *([""] * (len(columns) - 2)), *(str(stats[key][p]) if key in stats and p in stats[key] else "—"
-                                              for p in self.contest.problems))
+            rows.append(["", "attempted ≥" if key == "attempted" and self.contest.platform == "cf" else key,
+                         *([""] * (len(columns) - 2)), *(str(stats[key][p]) if key in stats and p in stats[key] else "—"
+                                                       for p in self.contest.problems)])
+        table = score_table(columns, self.contest.problems, rows, width)
         note = ("Official public standings · scored = positive points · * preliminary" if self.contest.platform == "cf"
                 else f"{'Nowcoder' if self.contest.platform == 'nowcoder' else 'CWNUOJ'} scoreboard · original scores, ranks and public statistics")
         if own is None:
@@ -271,7 +290,7 @@ class LiveDashboard:
             note = ""
         labels = self._record_table()
         labels.add_row("problem", "submission", "time", "result", style="bold black on #eeeeee")
-        return Group(title, heading, positioned_scoreboard(table), Text(note, style="#666666"), Text(" "), labels)
+        return Group(title, heading, table, Text(note, style="#666666"), Text(" "), labels)
 
 
 class TerminalDashboard:

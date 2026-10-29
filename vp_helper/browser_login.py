@@ -331,8 +331,15 @@ def identity_from_page(platform: str, html: str, expected: str = "") -> dict:
                    for header in soup.select(selector) for a in header.select("a[href]")
                    if urlsplit(a["href"]).path.startswith(prefix)}
     if expected:
+        if platform in ('cf','gym') and len(handles) == 1 and not any(h.casefold() == expected.casefold() for h in handles):
+            raise VPError('Codeforces 当前网页登录账号为 ' + next(iter(handles)) + '，本地配置为 ' + expected + '；请使用本场比赛绑定的账号。')
         handles = {h for h in handles if h == expected or platform != "qoj" and h.casefold() == expected.casefold()}
     if len(handles) != 1:
+        if platform in ('cf','gym') and not handles:
+            from .chromium_login import enabled
+            advice = ('请检查扩展是否已获准读取该站 HTTP 和 HTTPS Cookie，并在同一普通浏览器配置中登录后同步。'
+                      if enabled() else '请在普通 Firefox 窗口登录对应网站后重试。')
+            raise VPError('Codeforces 页面未返回登录账号。' + advice)
         raise VPError("网页登录账号与本地 handle 配置不匹配，或网页未返回登录账号。" +
                       ("CWNUOJ 的 handle 应为用户名，不是登录邮箱。" if platform == "cwnuoj" else ""))
     return {**identity, "handle": expected or handles.pop()}

@@ -7,6 +7,7 @@ from pathlib import Path
 import time
 
 from .platform_clock import platform_now
+from .accounts import same_handle
 from .models import Contest, Submission, VPError
 from .storage import file_lock, read_json, state_directory, write_json
 
@@ -49,7 +50,8 @@ def receipt_owners(path: Path, state: dict) -> dict[str, tuple[Path, dict]]:
         owner = directory.with_suffix(".json")
         for receipt in directory.glob("*.json"):
             data = read_json(receipt)
-            if data.get("url") == state["url"] and data.get("handle", state["handle"]) == state["handle"]:
+            if (data.get("url") == state["url"]
+                    and same_handle(state['contest']['platform'], data.get("handle", state["handle"]), state["handle"])):
                 result[str(data.get("id"))] = (owner, data)
     return result
 
@@ -135,7 +137,7 @@ def reconcile_native_start(path: Path, state: dict, started: float) -> dict:
         for receipt in path.with_suffix('.receipts').glob('*.json'):
             event = read_json(receipt)
             if (event.get('start_time') == old and event.get('url') == saved['url']
-                    and event.get('handle', saved['handle']) == saved['handle']):
+                    and same_handle(saved['contest']['platform'], event.get('handle', saved['handle']), saved['handle'])):
                 event.update(start_time=started, time=event['time'] + old - started)
                 cutoff = boundary(path)
                 event['practice'] = bool(saved.get('mode') == 'practice'

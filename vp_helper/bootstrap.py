@@ -3,9 +3,27 @@ import importlib
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 MODULES = {'xcpc':'commands','vp':'cli','live':'live','bt':'practice','submit':'submit'}
+
+
+def launch_python(python, arguments, *, native_host=False):
+    """Use CreateProcess on Windows; retain exec semantics on POSIX."""
+    python = str(python)
+    if sys.platform != 'win32':
+        return os.execv(python, [python, *arguments])
+    try:
+        options = {'creationflags': 0x08000000} if native_host else {}
+        result = subprocess.run([python, '-X', 'utf8', *arguments], **options)
+    except OSError as exc:
+        detail = getattr(exc, 'winerror', None) or exc.errno
+        raise SystemExit(f'XCPC could not start its Python runtime (Windows error {detail}). '
+                         f'Rerun install.ps1 as the same user. Runtime: {python}') from None
+    except KeyboardInterrupt:
+        raise SystemExit(130) from None
+    raise SystemExit(result.returncode)
 
 
 def main():
@@ -25,7 +43,7 @@ def main():
     os.environ['PATH'] = installation['bin_directory'] + os.pathsep + os.environ.get('PATH', '')
     if release.resolve() != Path(sys.prefix).parent.resolve():
         python = release / 'venv' / ('Scripts/python.exe' if sys.platform == 'win32' else 'bin/python')
-        return os.execv(str(python), [str(python), '-m', 'vp_helper.' + MODULES[name], *sys.argv[1:]])
+        return launch_python(python, ['-I', '-m', 'vp_helper.' + MODULES[name], *sys.argv[1:]])
     importlib.import_module('vp_helper.' + MODULES[name]).main()
 
 

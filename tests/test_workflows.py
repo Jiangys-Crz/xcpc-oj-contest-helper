@@ -358,10 +358,15 @@ class PracticeTests(Isolated):
         script.write_text("#!/bin/sh\n")
         with patch("sys.argv",["submit",str(source)]), patch("vp_helper.submit.sys.prefix",str(self.root/"venv")), \
                 patch("vp_helper.submit.submission_configuration",return_value=(self.root/"contest.json",{"platform":"gym"})), \
-                patch("vp_helper.submit.os.chdir"), patch("vp_helper.submit.os.execv") as execute:
+                patch("vp_helper.submit.os.chdir"), patch("vp_helper.submit.os.execv") as execute, \
+                patch('vp_helper.bootstrap.launch_python') as launch:
             submit.main()
         expected = [str(script), str(source.resolve()), "-p", "A"]
-        if sys.platform in ('darwin', 'win32'):
+        if sys.platform == 'win32':
+            launch.assert_called_once_with(sys.executable,expected)
+            execute.assert_not_called()
+            return
+        if sys.platform == 'darwin':
             expected.insert(0, sys.executable)
         self.assertEqual(execute.call_args.args[1], expected)
 

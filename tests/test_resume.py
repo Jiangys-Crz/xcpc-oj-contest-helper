@@ -146,6 +146,18 @@ class ResumeTests(unittest.TestCase):
         self.launch.assert_not_called()
         self.api.submit_configuration.assert_not_called()
 
+    def test_cf_and_gym_resume_accept_handle_case_changes(self):
+        (self.root/'cf.py').write_text('# external submit fixture\n')
+        for platform,part in (('cf','contest'),('gym','gym')):
+            self.state['url'] = f'https://codeforces.com/{part}/2181'
+            self.state['contest'].update(platform=platform,url=self.state['url'],contest_id='2181')
+            self.state['handle'] = 'Jiangys'
+            self.api.handle = 'jIaNgYs'
+            self.save_state()
+            before = self.path.read_bytes()
+            self.assertEqual(cli.prepare_resume(self.state['url']),(self.path,self.state))
+            self.assert_preserved(before)
+
     def test_submission_config_failure_keeps_saved_state(self):
         self.api.account["submit_script"] = str(self.root / "missing")
         before = self.path.read_bytes()

@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from .bootstrap import launch_python
 
 
 def main():
@@ -13,6 +14,6 @@ def main():
         raise SystemExit(1)
     if release.resolve() != Path(sys.prefix).parent.resolve():
         python = release / 'venv/Scripts/python.exe'
-        return os.execv(str(python), [str(python), '-u', '-m', 'vp_helper.browser_bridge', *sys.argv[1:]])
+        return launch_python(python, ['-I', '-u', '-m', 'vp_helper.browser_bridge', *sys.argv[1:]], native_host=True)
     from .browser_bridge import main as host
     host()

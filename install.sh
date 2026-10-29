@@ -5,6 +5,7 @@ vp_source="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 vp_local=false
 vp_offline=false
 vp_python=python3
+vp_python_supplied=false
 vp_submit_path=
 vp_target_root=
 vp_target_bin=
@@ -15,7 +16,7 @@ while (( $# )); do
         --offline) vp_offline=true ;;
         --python)
             if (( $# < 2 )); then printf '%s\n' '--python requires an interpreter path.' >&2; exit 2; fi
-            vp_python="$2"; shift ;;
+            vp_python="$2"; vp_python_supplied=true; shift ;;
         --target-root|--target-bin)
             if (( $# < 2 )) || [[ "$2" != /* ]]; then printf '%s\n' 'Update targets require absolute paths.' >&2; exit 2; fi
             if [[ "$1" == --target-root ]]; then vp_target_root="$2"; else vp_target_bin="$2"; fi
@@ -107,7 +108,7 @@ vp_apt() {
     fi
 }
 if ! command -v "$vp_python" >/dev/null; then
-    if [[ $vp_python != python3 ]]; then
+    if $vp_python_supplied; then
         printf 'Python interpreter not found: %s\n' "$vp_python" >&2
         exit 1
     fi
@@ -117,6 +118,10 @@ fi
 # Prefer the native interpreter, including Ubuntu 26.04's Python 3.14.
 # The bundled CPython is only a fallback for older x86_64 Ubuntu systems.
 if ! "$vp_python" -c 'import sys; assert sys.version_info >= (3, 12)' 2>/dev/null; then
+    if $vp_python_supplied; then
+        printf 'The supplied interpreter must be a usable Python 3.12 or newer: %s\n' "$vp_python" >&2
+        exit 1
+    fi
     if [[ $(uname -m) != x86_64 || ! -f "$vp_source/runtimes/manifest.json" ]]; then
         printf '%s\n' 'Native Python 3.12+ is required on ARM64. Use Ubuntu 24.04/26.04 or --python /path/to/python3.' >&2
         exit 1
@@ -139,8 +144,9 @@ PY_RUNTIME
     vp_python="$vp_runtime_root/python/bin/python3"
 fi
 vp_apt_packages=()
-if ! command -v tmux >/dev/null; then vp_apt_packages+=(tmux); fi
-if ! "$vp_python" -c 'import ensurepip' 2>/dev/null; then
+if ! command -v tmux >/dev/null || ! tmux -V >/dev/null 2>&1; then vp_apt_packages+=(tmux); fi
+if ! command -v git >/dev/null || ! git --version >/dev/null 2>&1; then vp_apt_packages+=(git); fi
+if ! "$vp_python" -c 'import venv, ensurepip; ensurepip.version()' 2>/dev/null; then
     vp_python_version="$("$vp_python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
     vp_apt_packages+=("python${vp_python_version}-venv")
 fi
@@ -148,6 +154,14 @@ if [[ ! -s /etc/ssl/certs/ca-certificates.crt ]]; then vp_apt_packages+=(ca-cert
 if (( ${#vp_apt_packages[@]} )); then
     vp_apt update -qq
     vp_apt install -y --no-install-recommends "${vp_apt_packages[@]}"
+fi
+if ! tmux -V >/dev/null 2>&1 || ! git --version >/dev/null 2>&1; then
+    printf '%s\n' 'Git or tmux is still unusable after prerequisite setup. Check the apt errors and retry.' >&2
+    exit 1
+fi
+if ! "$vp_python" -c 'import venv, ensurepip; ensurepip.version()' 2>/dev/null; then
+    printf 'Python venv support is still unusable after prerequisite setup: %s\n' "$vp_python" >&2
+    exit 1
 fi
 install -d -m 755 "$vp_prefix/releases" "$vp_bin"
 vp_release="$(mktemp -d "$vp_prefix/releases/$(date -u +%Y%m%dT%H%M%SZ).XXXXXX")"
@@ -280,6 +294,38 @@ elif [[ -z "$vp_submit_path" && "$(readlink -- "$vp_bin/submit" || true)" != "$v
 fi
 printf 'Installed VP Helper using %s (%s).\n' "$("$vp_release/venv/bin/python" --version)" "$(uname -m)"
 printf 'Commands: %s/xcpc, %s/vp, %s/live, %s/bt and %s/submit\n' "$vp_bin" "$vp_bin" "$vp_bin" "$vp_bin" "$vp_bin"
-if $vp_local; then
-    printf 'For commands in any directory, add this to your shell configuration:\n  export PATH=%q:"$PATH"\n' "$vp_bin"
+if $vp_local || [[ "$vp_bin" != /usr/local/bin || ":$PATH:" != *":$vp_bin:"* ]]; then
+    # Configure the invoking user's shell, even when the global installer was
+    # elevated with sudo. Load the helper before dropping privileges so a source
+    # checkout inside a private parent directory remains usable.
+    if ! "$vp_python" - "$vp_source/install.py" "$vp_bin" "$vp_owner" <<'PY_PATH'
+import importlib.util
+import os
+from pathlib import Path
+import pwd
+import sys
+
+source, commands, owner = sys.argv[1:]
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location('xcpc_path_configuration', source)
+installer = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(installer)
+account = pwd.getpwnam(owner)
+if os.geteuid() == 0 and account.pw_uid != 0:
+    os.initgroups(account.pw_name, account.pw_gid)
+    os.setgid(account.pw_gid)
+    os.setuid(account.pw_uid)
+if os.geteuid() != account.pw_uid:
+    raise PermissionError('Cannot safely update another user\'s shell configuration.')
+files = installer.configure_macos_path(Path(commands), home=account.pw_dir,
+                                       shell=account.pw_shell or '/bin/bash')
+if files:
+    print('Configured PATH for new terminals: ' + ', '.join(map(str, files)))
+else:
+    print('Shell PATH could not be configured automatically for ' + account.pw_shell)
+PY_PATH
+    then
+        printf '%s\n' 'Could not configure shell PATH automatically; add the export below to your shell configuration.' >&2
+    fi
+    printf 'For this terminal, run:\n  export PATH=%q:"$PATH"\n' "$vp_bin"
 fi

@@ -127,7 +127,15 @@ class ExtensionLoginTests(Isolated):
     def test_extension_manifest_declares_every_imported_host_and_no_unrelated_site(self):
         from vp_helper.browser_sites import HOSTS
         manifest=storage.read_json(chromium_login.extension_source()/'manifest.json')
-        self.assertEqual(set(manifest['host_permissions']),{'https://'+host+'/*' for host in HOSTS})
+        self.assertEqual(set(manifest['host_permissions']),{scheme+'://'+host+'/*' for host in HOSTS for scheme in ('http','https')})
+
+    def test_cf_browser_identity_is_case_insensitive_and_mismatch_is_explicit(self):
+        page='<div id="header"><a href="/profile/Zyihan">Zyihan</a></div>'
+        for platform in ('cf','gym'):
+            for handle in ('Zyihan','zyihan','ZYIHAN'):
+                self.assertEqual(login.identity_from_page(platform,page,handle)['handle'],handle)
+            with self.assertRaisesRegex(VPError,'当前网页登录账号为 Zyihan'):
+                login.identity_from_page(platform,page,'another-user')
 
     def test_ucup_web_client_refreshes_only_the_target_judge_cookies(self):
         from vp_helper.http import WebSession
@@ -273,16 +281,64 @@ class NativeBoundaryTests(Isolated):
         storage.write_json(first/'installation.json',metadata)
         storage.write_json(first.parent.parent/'current.json',{'release':str(latest)})
         with patch('sys.prefix',str(first/'venv')),patch('sys.platform','win32'), \
-                patch('sys.argv',['submit.exe','A.cpp']),patch('os.execv') as execute:
-            bootstrap.main()
-            self.assertEqual(execute.call_args.args[1], [str(latest/'venv/Scripts/python.exe'),'-m','vp_helper.submit','A.cpp'])
+                patch('sys.argv',['submit.exe','A.cpp']),patch('os.execv') as execute, \
+                patch.object(bootstrap.subprocess,'run',return_value=SimpleNamespace(returncode=7)) as run:
+            with self.assertRaises(SystemExit) as exit_code:
+                bootstrap.main()
+            self.assertEqual(exit_code.exception.code,7)
+            self.assertEqual(run.call_args.args[0], [str(latest/'venv/Scripts/python.exe'),'-X','utf8','-I','-m','vp_helper.submit','A.cpp'])
+            execute.assert_not_called()
         origin='chrome-extension://'+PROFILE+'/'
-        with patch('sys.prefix',str(first/'venv')),patch('sys.argv',['host.exe',origin]),patch('os.execv') as execute:
-            bridge_bootstrap.main()
-            self.assertEqual(execute.call_args.args[1], [str(latest/'venv/Scripts/python.exe'),'-u','-m','vp_helper.browser_bridge',origin])
+        with patch('sys.prefix',str(first/'venv')),patch('sys.platform','win32'), \
+                patch('sys.argv',['host.exe',origin]),patch('os.execv') as execute, \
+                patch.object(bootstrap.subprocess,'run',return_value=SimpleNamespace(returncode=0)) as run:
+            with self.assertRaises(SystemExit) as exit_code:
+                bridge_bootstrap.main()
+            self.assertEqual(exit_code.exception.code,0)
+            self.assertEqual(run.call_args.args[0], [str(latest/'venv/Scripts/python.exe'),'-X','utf8','-I','-u','-m','vp_helper.browser_bridge',origin])
+            self.assertEqual(run.call_args.kwargs,{'creationflags':0x08000000})
+            execute.assert_not_called()
         storage.write_json(first.parent.parent/'current.json',{'release':str(self.root/'unrelated')})
         with patch('sys.prefix',str(first/'venv')),patch('sys.argv',['submit.exe']),self.assertRaises(SystemExit):
             bootstrap.main()
+
+    def test_windows_process_launch_errors_are_actionable_without_tracebacks(self):
+        with patch('sys.platform','win32'),patch.object(bootstrap.subprocess,'run',side_effect=PermissionError(13,'denied')):
+            with self.assertRaises(SystemExit) as error:
+                bootstrap.launch_python('C:/XCPC/Python 路径/python.exe',['-m','vp_helper.commands'])
+        self.assertIn('install.ps1',str(error.exception))
+        self.assertIn('Runtime:',str(error.exception))
+
+    def test_windows_submit_uses_create_process_with_original_arguments(self):
+        from vp_helper import submit
+        script=self.root/'third_party/cf_submit/submit'
+        script.parent.mkdir(parents=True)
+        script.write_text('# fixture')
+        source=self.root/'A.cpp'
+        source.write_text('// fixture')
+        with patch('sys.platform','win32'),patch('sys.prefix',str(self.root/'venv')), \
+                patch('sys.argv',['submit',str(source)]),patch('vp_helper.submit.os.chdir'), \
+                patch('vp_helper.submit.submission_configuration',return_value=(self.root/'contest.json',{'platform':'gym'})), \
+                patch.object(bootstrap.subprocess,'run',return_value=SimpleNamespace(returncode=0)) as run:
+            with self.assertRaises(SystemExit):
+                submit.main()
+        self.assertEqual(run.call_args.args[0],[sys.executable,'-X','utf8',str(script),str(source),'-p','A'])
+
+    def test_migrated_windows_forwarder_runs_child_and_preserves_piped_stdio(self):
+        import subprocess
+        harness = ('import importlib.util,sys,os; '
+            'spec=importlib.util.spec_from_file_location("fixture_bootstrap",sys.argv[1]); '
+            'm=importlib.util.module_from_spec(spec); spec.loader.exec_module(m); '
+            'sys.platform="win32"; '
+            'os.execv=lambda *args: (_ for _ in ()).throw(PermissionError(13,"forbidden execv")); '
+            'm.launch_python(sys.executable,["-c",'
+            '"import sys; sys.stdout.buffer.write(sys.stdin.buffer.read()); sys.exit(7)"])')
+        payload='原样传递 stdin / stdout'.encode('utf8')
+        result=subprocess.run([sys.executable,'-c',harness,str(Path(bootstrap.__file__).resolve())],
+                              input=payload,capture_output=True,timeout=10)
+        self.assertEqual(result.returncode,7,result.stderr)
+        self.assertEqual(result.stdout,payload)
+        self.assertEqual(result.stderr,b'')
 
     def test_native_storage_defaults_and_xdg_override(self):
         with patch.dict(os.environ,{},clear=True), patch.object(Path,'home',return_value=self.root):

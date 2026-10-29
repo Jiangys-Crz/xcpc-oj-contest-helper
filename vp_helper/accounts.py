@@ -8,6 +8,7 @@ from .models import VPError
 from .storage import config_directory, file_lock, read_json, write_json
 
 API_FIELDS = ("api_key", "api_secret")
+HANDLE_PROMPT = '请输入 Codeforces 用户名：'
 
 
 def pasted_credential(value: str) -> str:
@@ -35,6 +36,13 @@ def account_key(config: dict, platform: str) -> str:
         return platform
     other = "gym" if platform == "cf" else "cf"
     return other if other in config else "gym"
+
+
+def same_handle(platform: str, left: str | None, right: str | None) -> bool:
+    """Codeforces handles ignore case; other platforms keep exact ownership."""
+    return left == right or (platform in ('cf', 'gym')
+                             and isinstance(left, str) and isinstance(right, str)
+                             and left.casefold() == right.casefold())
 
 
 def api_credentials(account: dict, config: dict, platform: str) -> dict:
@@ -66,11 +74,11 @@ def prepare_api_account(path, config: dict, platform: str) -> None:
             raise VPError('Missing Codeforces API configuration. Run xcpc api cf in an interactive terminal.')
         if not account.get('handle'):
             try:
-                handle = input('Codeforces handle：').strip()
+                handle = input(HANDLE_PROMPT).strip()
             except EOFError:
                 raise VPError('输入已取消，原 API 配置未修改。') from None
             if not handle or any(c.isspace() for c in handle):
-                raise VPError('Codeforces handle 不能为空或包含空白字符，原配置未修改。')
+                raise VPError('Codeforces 用户名不能为空或包含空白字符，原配置未修改。')
             account['handle'] = handle
             account.update(api_credentials(account, config, platform))
         if not all(account.get(field) for field in API_FIELDS):
@@ -91,9 +99,9 @@ def configure_api(platform: str = "cf") -> None:
     config = read_json(path)
     selected = account_key(config, platform)
     original = config.get(selected, {})
-    handle = original.get("handle", "") or input("Codeforces handle：").strip()
+    handle = original.get("handle", "") or input(HANDLE_PROMPT).strip()
     if not handle or any(c.isspace() for c in handle):
-        raise VPError("Codeforces handle 不能为空或包含空白字符，原配置未修改。")
+        raise VPError("Codeforces 用户名不能为空或包含空白字符，原配置未修改。")
     print("重新设置 Codeforces API，账号：" + handle)
     values = prompt_api_credentials()
     with file_lock(path.with_suffix(".lock")):

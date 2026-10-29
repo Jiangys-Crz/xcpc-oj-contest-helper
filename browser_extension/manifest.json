@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "XCPC 登录同步",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "将当前普通浏览器中比赛网站的登录状态同步给本机 XCPC。",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5CgKBNzU8cUARiVsI2qJ5we55swAKWmR5EKJIuQo0i46i6Zp5uJ5gDjMenAfYz4qPbFF8OA2cAG2FMFR9+9+/tj33I7qU2/njbvvn8mmlP9JvnSyUGJ4hh9gFXbTndoUIVFbz0iZmyAGQ/eZyTUIfQF+DuwScSc0/spdtm9J56Xtm8OnjXz3N+gNbtYZnLCuAcNqiFph8KCSCDnt4pZb4rr6PdSAvkQIUzSNXNs5iRp+DysiSOC0xBPnGse/wsKErygWevOK8TW8kongvfUlmTyLCg8fAzkcNyuHGkHguF4hRVQYR637xsXWyWKxH9wxRfYSUuvm1pM8g+pC16Z1IwIDAQAB",
   "permissions": [
@@ -11,19 +11,33 @@
     "alarms"
   ],
   "host_permissions": [
+    "http://ac.nowcoder.com/*",
     "https://ac.nowcoder.com/*",
+    "http://codeforces.com/*",
     "https://codeforces.com/*",
+    "http://contest.ucup.ac/*",
     "https://contest.ucup.ac/*",
+    "http://cwnupaa.com/*",
     "https://cwnupaa.com/*",
+    "http://nowcoder.com/*",
     "https://nowcoder.com/*",
+    "http://oj.cwnupaa.com/*",
     "https://oj.cwnupaa.com/*",
+    "http://qoj.ac/*",
     "https://qoj.ac/*",
+    "http://www.ac.nowcoder.com/*",
     "https://www.ac.nowcoder.com/*",
+    "http://www.codeforces.com/*",
     "https://www.codeforces.com/*",
+    "http://www.contest.ucup.ac/*",
     "https://www.contest.ucup.ac/*",
+    "http://www.cwnupaa.com/*",
     "https://www.cwnupaa.com/*",
+    "http://www.nowcoder.com/*",
     "https://www.nowcoder.com/*",
+    "http://www.oj.cwnupaa.com/*",
     "https://www.oj.cwnupaa.com/*",
+    "http://www.qoj.ac/*",
     "https://www.qoj.ac/*"
   ],
   "background": {

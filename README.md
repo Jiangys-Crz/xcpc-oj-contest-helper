@@ -2,7 +2,7 @@
 
 在终端中进行虚拟参赛、接入实时比赛和补题。上方显示比赛成绩、题目状态与提交记录，下方保留比赛目录中的命令终端。
 
-当前版本：**0.8.1**。
+当前版本：**0.8.2**。
 
 | 平台 | VP | 实时比赛 live | 补题 bt |
 | --- | --- | --- | --- |
@@ -16,6 +16,18 @@
 
 请选择自己的系统。比赛命令和浏览器应使用同一个系统用户运行。
 
+没有 Git 时，可先从 [Gitee 项目仓库](https://gitee.com/Zyihan_Crz/xcpc-vp-system)下载 ZIP 并解压，再进入源码目录运行对应系统的安装脚本。脚本会补齐 Git，安装后即可使用 `xcpc update` 更新。
+
+各系统的安装脚本会检查环境并补齐缺少的依赖，已有可用环境会继续使用：
+
+| 系统 | 运行环境 | 比赛面板 | 浏览器登录 |
+| --- | --- | --- | --- |
+| Ubuntu | Python 3.12+、Git；旧版 Ubuntu x86_64 可使用随附 Python | tmux | Firefox，自动读取登录状态 |
+| macOS | Python 3.12+、Git、tmux，缺少时通过 Homebrew 安装 | tmux | 已有 Chrome / Edge 加载扩展 |
+| Windows | Python 3.12+、Git、Windows Terminal，缺少时通过 WinGet 安装 | Windows Terminal 原生分屏 | 已有 Chrome / Edge 加载扩展 |
+
+Windows 不需要安装 tmux 或 WSL。macOS / Windows 安装器不会替你安装或更换浏览器。
+
 ### Ubuntu
 
 支持 x86_64、ARM64，推荐系统 Python 3.12 或更新版本；Ubuntu 26.04 的 Python 3.14 也支持。Ubuntu 22.04 x86_64 可使用随仓库提供的独立 Python 运行时。
@@ -27,7 +39,7 @@ bash install.sh
 xcpc --help
 ```
 
-默认安装到 `/opt/vp-helper`，命令位于 `/usr/local/bin`；需要安装系统依赖时，安装器会请求 sudo 权限。日常参赛请用普通用户运行。
+默认安装到 `/opt/vp-helper`，命令位于 `/usr/local/bin`。安装器会自动补齐 Python、venv、Git、tmux 和证书；需要安装系统依赖时会请求 sudo 权限。日常参赛请用普通用户运行。
 
 也可以安装到当前项目内：
 
@@ -37,22 +49,21 @@ export PATH="$PWD/bin:$PATH"
 xcpc --help
 ```
 
-本地安装不使用 sudo，程序位于项目的 `.vp-install`，命令位于 `bin`。将安装器打印的完整 `export PATH=...` 行加入 `~/.bashrc`；使用 zsh 时加入 `~/.zshrc`，然后重新打开终端。安装后不要移动程序目录，移动后应重新安装。
+本地安装的程序位于项目的 `.vp-install`，命令位于 `bin`；只在缺少系统依赖时需要 sudo。安装器自动配置 Bash / Zsh 的命令路径，保留原有设置。当前终端执行安装器打印的完整 `export PATH=...` 行，新终端自动生效。安装后不要移动程序目录，移动后应重新安装。
 
 Ubuntu **继续使用 Firefox 读取登录状态，无需扩展**，也无需关闭 Firefox。比赛面板使用 tmux。
 
 ### macOS
 
-先安装 [Homebrew](https://brew.sh/)，然后在系统“终端”中运行：
+在仓库页面下载 ZIP 并解压，进入解压后的项目文件夹，在系统“终端”中运行：
 
 ```bash
-brew install python@3.13 tmux git
-git clone https://gitee.com/Zyihan_Crz/xcpc-vp-system.git
-cd xcpc-vp-system
 sh install-macos.sh
 ```
 
-安装结束后，将下面一行加入 `~/.zshrc`，保存并重新打开终端：
+脚本会自动补齐 Python 3.12+、Git 和 tmux；需要时先安装 [Homebrew](https://brew.sh/)。首次配置 Homebrew 可能要求系统密码和确认，按终端提示完成即可。
+
+安装器会保留原有设置并自动配置 Bash / Zsh 的命令路径（包括 Homebrew 路径）。**新打开的终端直接生效**；当前终端先执行：
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
@@ -64,41 +75,29 @@ export PATH="$HOME/.local/bin:$PATH"
 xcpc --help
 ```
 
-程序默认安装到 `~/Library/Application Support/XCPC/app`，命令位于 `~/.local/bin`。不需要 sudo。首次安装需要联网下载对应系统的依赖，推荐 Python 3.13，也支持 Python 3.12+。
+程序默认安装到 `~/Library/Application Support/XCPC/app`，命令位于 `~/.local/bin`。XCPC 安装在当前用户目录，Homebrew 首次配置可能申请系统权限。首次安装需要联网下载依赖；优先使用 Python 3.13，也支持 Python 3.12+。
 
 接下来按第 2 节加载 Chrome / Edge 扩展。macOS 比赛面板使用 tmux。
 
 ### Windows
 
-支持 Windows 10 / 11 原生运行，推荐 x64 Windows、Python 3.13 和 Windows Terminal；无需 WSL、tmux 或 Firefox。
-
-在普通用户 PowerShell 中安装依赖：
+支持 Windows 10 / 11 原生运行，使用 Windows PowerShell 5.1 或更新版本。先从 [Gitee 项目仓库](https://gitee.com/Zyihan_Crz/xcpc-vp-system)下载并解压源码，进入包含 `install.ps1` 的文件夹。在资源管理器地址栏输入 `powershell` 并回车，打开当前目录的普通用户 PowerShell，然后运行：
 
 ```powershell
-winget install -e --id Git.Git
-winget install -e --id Python.Python.3.13
-winget install -e --id Microsoft.WindowsTerminal
-```
-
-也可以从软件官方网站手动安装。没有 `winget` 时，参见 [Microsoft 安装说明](https://learn.microsoft.com/en-us/windows/package-manager/winget/install)。
-
-关闭并重新打开 Windows Terminal 的 PowerShell 页签，再运行：
-
-```powershell
-git clone https://gitee.com/Zyihan_Crz/xcpc-vp-system.git
-cd xcpc-vp-system
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-`ExecutionPolicy Bypass` 仅作用于这次安装进程。安装器会为当前用户添加命令路径；安装结束后重新打开终端，再执行：
+无需先手动安装 Python、Git 或 Windows Terminal。脚本会复用可用的 Python 3.12+，并通过 WinGet 只补齐缺少的 Python 3.13、Git、Windows Terminal；WinGet 不可用时，会先尝试为当前用户注册或修复 App Installer。Windows 安装器出现确认提示时按提示完成即可。如果自动修复失败，脚本会显示原因和 [App Installer 官方安装入口](https://apps.microsoft.com/detail/9nblggh4nns1)。已有 Git 时，也可以用 `git clone` 获取源码后运行同一条安装命令。
+
+`ExecutionPolicy Bypass` 仅作用于这次安装进程，不修改系统的永久执行策略。安装器会为当前用户添加命令路径；安装结束后重新打开 Windows Terminal 的 PowerShell 页签，再执行：
 
 ```powershell
 xcpc --help
 ```
 
-程序默认位于 `%LOCALAPPDATA%\XCPC\app`，命令位于 `%LOCALAPPDATA%\XCPC\bin`，不需要管理员权限。接下来按第 2 节加载 Chrome / Edge 扩展。
+XCPC 程序按当前用户安装，默认位于 `%LOCALAPPDATA%\XCPC\app`，命令位于 `%LOCALAPPDATA%\XCPC\bin`。接下来按第 2 节加载已有 Chrome / Edge 的扩展。
 
-打开比赛后，Windows Terminal 上方显示详情，下方是比赛目录中的 PowerShell。没有找到 `wt.exe` 时，详情会在独立终端打开，当前终端进入比赛目录；输入 `exit` 返回。
+打开比赛后，Windows Terminal 使用原生分屏：上方显示详情，下方是比赛目录中的 PowerShell，无需 tmux。没有找到 `wt.exe` 时，详情会在独立终端打开，当前终端进入比赛目录；输入 `exit` 返回。
 
 ## 2. 设置网站登录
 
@@ -127,6 +126,8 @@ xcpc --help
 5. 在安装了扩展的同一个浏览器用户配置中登录网站。点击“XCPC 登录同步”图标，再点“同步登录状态”。
 6. 确认弹窗显示“已连接本机 XCPC”，并查看各站 Cookie 数量。
 
+从旧版本更新后，在扩展管理页对 **XCPC 登录同步** 点一次“重新加载”，允许新增的站点权限，再点“同步登录状态”。0.8.2 为同一批比赛域名同时声明 HTTP / HTTPS Cookie 读取权限：Chromium 按 Cookie 的 Secure 属性检查权限，只有 HTTPS 权限时会漏掉部分实际用于 HTTPS 页面的登录 Cookie。这不会改变程序通过 HTTPS 访问比赛网站的方式。
+
 扩展支持已列出的比赛域名、对应 `www` 域名、CWNUOJ / 牛客父域登录，以及 QOJ 的 `contest.ucup.ac` 入口。支持与本站匹配的第一方分区 Cookie，排除隐私窗口和跨站分区 Cookie。不同浏览器用户配置的登录不会混合。
 
 扩展弹窗中的“已连接”表示已连接本机程序；某站 Cookie 为 0 时，说明这份浏览器配置尚未同步到该站可用 Cookie，不等同于网站判定账号退出。请检查扩展站点权限和登录所用的浏览器用户配置。
@@ -153,7 +154,7 @@ xcpc doctor nk
 xcpc api cf
 ```
 
-按提示输入 handle、API key 和 API secret。支持粘贴，secret 不回显。请粘贴同一组密钥，不要填写账号密码。
+用户名提示为“请输入 Codeforces 用户名：”，随后输入 API key 和 API secret。Codeforces 用户名匹配不区分大小写，保留你输入的显示形式。支持粘贴，secret 不回显。请粘贴同一组密钥，不要填写账号密码。
 
 首次运行 CF / Gym 比赛命令时，缺少配置也会自动提示。macOS / Windows 会先完成 API 配置，再检查浏览器登录；浏览器暂未同步时，已完整输入的 API 配置会保留。
 
@@ -290,7 +291,7 @@ vp history --live
 - Ubuntu / macOS：`Ctrl+B` 后按 `D` 脱离 tmux，面板继续同步；重新执行原命令可恢复。
 - Windows：保留比赛终端可继续同步；关闭后在原比赛目录执行 `xcpc dashboard` 恢复。
 - `q` 关闭详情面板，不代表结束原站 VP；结束本地 VP 使用 `xcpc end`。
-- 窗口太小时请放大终端或上方面板。Windows 的题目成绩表独立居中，空题格保持紧凑，有提交后按内容增宽。
+- 窗口太小时请放大终端或上方面板。成绩表的 rank、team、solved、penalty 列按内容收紧，剩余宽度由题目列均分，所有表头和值居中。
 
 ## 10. 更新
 
@@ -307,6 +308,26 @@ xcpc update
 3. 点击扩展“同步登录状态”，再运行 `xcpc doctor cf` 或其他站点检查命令。
 
 旧版尚无 `xcpc update` 时，先在源码目录执行 `git pull --ff-only`，再按对应系统的安装步骤重装一次。本地 Ubuntu 安装仍使用 `bash install.sh --local`。
+
+### Windows：所有命令启动器都报错时恢复
+
+如果 `xcpc`、`vp`、`submit` 等都因旧版启动器报错，连 `xcpc update` 也无法运行，可以在普通用户 PowerShell 中读取当前版本位置，直接调用安装环境中的 Python 更新：
+
+```powershell
+$App = Join-Path $env:LOCALAPPDATA 'XCPC\app'
+$Current = Get-Content -LiteralPath (Join-Path $App 'current.json') -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json
+& (Join-Path $Current.release 'venv\Scripts\python.exe') -I -m vp_helper.updater
+```
+
+自定义过 `--target-root` 时，将第一行的 `$App` 改为原来的程序目录。这条命令绕过 `xcpc.exe` 等命令启动器，从 Gitee 更新，并沿用原来的程序目录和命令目录。
+
+如果 `current.json` 缺失、当前 Python 也无法启动，或旧版本没有更新模块，重新下载最新源码并解压，进入源码目录后运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+使用自定义安装目录时，附上原来的 `--target-root` 和 `--target-bin` 参数。新版安装器会修复最初安装环境中的命令转发代码和浏览器连接入口；账号、比赛目录、代码和历史记录保留。完成后重新打开终端，运行 `xcpc --help`，并按上面的步骤重新加载浏览器扩展。
 
 ## 11. 常见问题
 
@@ -343,7 +364,9 @@ Ubuntu 使用 `xcpc doctor 站点` 检查 Firefox 配置位置和数据库读取
 
 Ubuntu 可用 `bash install.sh --offline` 禁止从 PyPI 回退，缺少系统依赖时仍可能需要 apt。可用 `--python /path/to/python3` 选择 Python。
 
-原生安装器支持 `--target-root`、`--target-bin` 和 `--offline`。随附 wheels 主要用于 Ubuntu，macOS / Windows 首次安装建议联网。自定义命令目录需要自行加入 PATH；比赛文件保存路径仍使用 `xcpc path` 设置。
+macOS / Windows 安装脚本支持 `--target-root`、`--target-bin` 和 `--offline`。`--offline` 只使用已有系统环境和随附 wheels，缺少 Python、Git 或本系统比赛面板工具时会提示退出，不会下载或安装这些依赖。随附 wheels 主要用于 Ubuntu，macOS / Windows 首次安装建议联网。
+
+`--target-root` 设置程序安装目录，`--target-bin` 设置命令目录；macOS / Windows 安装脚本会自动配置命令路径，包括自定义的 `--target-bin`，完成后重新打开终端。比赛文件保存路径仍使用 `xcpc path` 设置。
 
 ## 配置与数据位置
 

@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup
 
+from .accounts import same_handle
 from .models import Submission, VPError
 from .storage import file_lock, read_json, state_directory, write_json
 
@@ -38,7 +39,7 @@ def _record_locked(path: Path, context: dict, sid: str, problem: str, submitted_
     state = read_json(path)
     if (context.get("start_time") not in [state.get("start_time"), *state.get('start_time_aliases', [])]
             or state.get("url") != context.get("url")
-            or state.get("handle") != context.get("handle")
+            or not same_handle(state.get('contest', {}).get('platform', ''), state.get("handle"), context.get("handle"))
             or problem not in state.get("contest", {}).get("problems", {})):
         raise VPError("This submission context no longer matches the native VP.")
     relative = submitted_at - state["start_time"]

@@ -37,7 +37,9 @@ async function synchronize() {
     const all = results.flatMap(result => result.status === 'fulfilled' ? result.value : []);
     readErrors = queries.filter((query,index) => !query.partitionKey && results[index].status === 'rejected').map(query=>query.domain);
     if (chrome.permissions?.contains) {
-      const permissions = await Promise.allSettled(hosts.map(host => chrome.permissions.contains({origins:['https://'+host+'/*']})));
+      // Chromium checks non-Secure cookies against http:// permissions even
+      // when the website itself is used over HTTPS. Cookie reads need both.
+      const permissions = await Promise.allSettled(hosts.map(host => chrome.permissions.contains({origins:['http://'+host+'/*','https://'+host+'/*']})));
       readErrors.push(...hosts.filter((host,index)=>permissions[index].status==='fulfilled' && !permissions[index].value));
     }
     const selected = new Map();

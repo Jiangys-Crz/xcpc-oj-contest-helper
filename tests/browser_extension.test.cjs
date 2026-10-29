@@ -24,6 +24,12 @@ async function test() {
     runtime:{connectNative(name) {assert.equal(name,'com.xcpc.browser');return port;},
       onInstalled:event('installed'),onStartup:event('startup'),onMessage:event('message')},
     cookies:{async getAll({domain}) {assert.ok(domain.includes('.'));return cookies;},onChanged:event('changed')},
+    permissions:{async contains({origins}) {
+      assert.equal(origins.length,2);
+      assert.ok(origins.some(origin=>origin.startsWith('http://')));
+      assert.ok(origins.some(origin=>origin.startsWith('https://')));
+      return true;
+    }},
     alarms:{onAlarm:event('alarm'),create(name,options) {assert.equal(name,'xcpc-login');assert.equal(options.periodInMinutes,.5);}},
   };
   const context = {chrome,navigator:{userAgent:'Synthetic Edg/150'},crypto:{randomUUID:()=> '01234567-89ab-cdef-0123-456789abcdef'},
@@ -76,6 +82,9 @@ async function test() {
   assert.equal(manifest.incognito,'not_allowed');
   assert.ok(!manifest.host_permissions.some(host=>host.includes('*://')||host.includes('<all_urls>')));
   assert.ok(!manifest.permissions.includes('debugger'));
+  for (const origin of manifest.host_permissions.filter(origin=>origin.startsWith('https://'))) {
+    assert.ok(manifest.host_permissions.includes(origin.replace('https://','http://')));
+  }
   console.log('Chrome / Edge extension synchronization, logout, filtering and reconnect: OK');
 }
 test().catch(error=>{console.error(error);process.exitCode=1;});
