@@ -31,6 +31,36 @@ def desktop() -> Path:
     return Path.home() / "Desktop"
 
 
+def workspace_directory() -> Path:
+    value = read_json(config_directory() / "config.json").get("workspace_directory", "")
+    if not value:
+        return desktop()
+    if not isinstance(value, str):
+        raise VPError("保存目录配置必须为文件夹路径。请运行 xcpc path 重新设置。")
+    directory = Path(value).expanduser()
+    if not directory.is_absolute():
+        raise VPError("保存目录必须为绝对路径。请运行 xcpc path 重新设置。")
+    return directory
+
+
+def set_workspace_directory(value: str) -> Path:
+    if not value.strip():
+        raise VPError("保存目录不能为空。")
+    try:
+        directory = Path(value.strip()).expanduser().resolve()
+        directory.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryFile(dir=directory):
+            pass
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise VPError("无法使用该保存目录：" + str(exc)) from None
+    path = config_directory() / "config.json"
+    with file_lock(path.with_suffix(".lock")):
+        config = read_json(path)
+        config["workspace_directory"] = str(directory)
+        write_json(path, config)
+    return directory
+
+
 def write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, temp = tempfile.mkstemp(prefix=".vp-", dir=path.parent)

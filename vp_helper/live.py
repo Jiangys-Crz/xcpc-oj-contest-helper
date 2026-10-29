@@ -17,7 +17,7 @@ from .codeforces_live import CodeforcesLive, submission_records
 from .models import Contest, VPError
 from .parsing import contest_url
 from .receipts import ReceiptReader
-from .storage import desktop, file_lock, read_history, read_json, state_directory, update_history, write_json
+from .storage import workspace_directory as desktop, file_lock, read_history, read_json, state_directory, update_history, write_json
 from .tui import LiveDashboard, TerminalDashboard
 
 HISTORY_FIELDS = ["start_time", "contest", "url", "handle", "scoring", "points", "penalty", "rank", "phase", "frozen"]
@@ -103,7 +103,7 @@ def prepare_live(url: str) -> tuple[Path, dict]:
         state = {**saved, "mode": "live", "contest": contest.to_dict(), "url": canonical,
                  "start_time": contest.original_start, "handle": api.handle, "directory": str(directory),
                  "tmux_session": name, "status": "running", "submissions": saved.get("submissions", []),
-                 "snapshot": snapshot, "history_path": str(desktop() / PLATFORMS[platform][2])}
+                 "snapshot": snapshot, "history_path": saved.get("history_path") or str(desktop() / PLATFORMS[platform][2])}
         write_json(path, state)
         cli.bind_submit_context(directory, path, state)
         write_json(root / "current.json", {"state_path": str(path)})
@@ -260,6 +260,9 @@ def history() -> None:
 
 
 def main() -> None:
+    if sys.argv[1:] in ([], ["-h"], ["--help"]):
+        print("查看全部命令和设置：xcpc --help")
+        return
     parser = argparse.ArgumentParser(usage="live cf ID | live paa ID | live nk ID | live CONTEST_URL",
                                      description="Attach to an existing Codeforces, CWNUOJ or Nowcoder contest registration")
     parser.add_argument("target", help="cf ID, paa ID (CWNUOJ), nk ID (Nowcoder), or CONTEST_URL")

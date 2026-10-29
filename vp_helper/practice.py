@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 import re
+import sys
 import time
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -184,6 +185,9 @@ def monitor(path: Path) -> None:
 
 
 def main():
+    if sys.argv[1:] in ([], ["-h"], ["--help"]):
+        print("查看全部命令和设置：xcpc --help")
+        return
     parser = argparse.ArgumentParser(description="Practice a Codeforces, Gym, QOJ, CWNUOJ or Nowcoder contest")
     parser.add_argument("url", metavar="CONTEST_URL")
     args = parser.parse_args()

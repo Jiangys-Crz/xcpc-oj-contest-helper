@@ -23,7 +23,7 @@ from .history_lines import enrich_history
 from .parsing import contest_url, contest_id_url
 from .receipts import ReceiptReader
 from .scoring import medal_lines, rank_of, rank_label, prize_of, recent_submissions, revealed_problems, score_submissions, statistics, submission_history
-from .storage import config_directory, desktop, file_lock, read_history, read_json, state_directory, update_history, write_json
+from .storage import config_directory, workspace_directory as desktop, file_lock, read_history, read_json, state_directory, update_history, write_json
 from .tui import display, TerminalDashboard
 
 console = Console()
@@ -42,6 +42,11 @@ def adapter(url: str, config: dict):
 
 def load_account(platform: str, *, live: bool = False) -> dict:
     path = config_directory() / "config.json"
+    with file_lock(path.with_suffix(".lock")):
+        return _load_account(path, platform, live=live)
+
+
+def _load_account(path: Path, platform: str, *, live: bool = False) -> dict:
     config = read_json(path)
     key = "gym" if platform == "cf" and "cf" not in config else platform
     account = config.setdefault(key, {})
@@ -468,7 +473,7 @@ def main() -> None:
             from .scheduling import prompt_start
             start(url, scheduled_start=prompt_start())
         elif args in ([], ["-h"], ["--help"]):
-            console.print("Usage: vp cf ID\n       vp qoj ID\n       vp gym ID\n       vp CONTEST_URL\nHistory: vp history [ATTEMPT_ID | --live]", markup=False)
+            console.print("查看全部命令和设置：xcpc --help", markup=False)
         else:
             raise VPError("Usage: vp cf ID, vp qoj ID, vp gym ID, vp CONTEST_URL or vp history [ATTEMPT_ID]")
     except (VPError, OSError, subprocess.CalledProcessError) as exc:

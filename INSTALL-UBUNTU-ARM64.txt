@@ -23,15 +23,15 @@ VP Helper · Ubuntu 26.04 ARM64 安装说明
 
    bash install.sh --local --offline
    export PATH="$PWD/bin:$PATH"
-   vp --help
-   live --help
-   bt --help
-   submit --help
+   xcpc --help
 
    请使用日常 Linux 用户运行，不要在安装命令前加 sudo。
    缺少 tmux、python3.14-venv 或系统证书时，安装器会自动调用 sudo apt。
    --offline 仅表示 Python 依赖使用随附 wheels；安装系统包仍需要网络。
    如果改用其他 Python 版本，缺少相应 wheel 时去掉 --offline 后重试。
+
+   可用 xcpc path 交互修改保存位置，或执行 xcpc path ~/XCPC 直接指定目录。
+   默认桌面，修改后新建 VP/live/bt 目录和 CSV 使用新位置，已有记录不移动。
 
 3. 将安装完成时显示的 export PATH=... 行添加到 ~/.bashrc，
    这样新开的终端也能找到 vp 和 submit。使用 zsh 时添加到 ~/.zshrc。

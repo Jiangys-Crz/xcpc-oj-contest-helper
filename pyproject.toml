@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xcpc-vp-helper"
-version = "0.5.0"
+version = "0.6.0"
 description = "Ubuntu QOJ/Gym virtual contests and Codeforces/CWNUOJ/Nowcoder live contest terminal"
 requires-python = ">=3.12"
 dependencies = ["requests>=2.31,<3", "beautifulsoup4>=4.12,<5", "rich>=13.7,<15", "curl_cffi>=0.16,<1"]
 
 [project.scripts]
+xcpc = "vp_helper.commands:main"
 vp = "vp_helper.cli:main"
 live = "vp_helper.live:main"
 bt = "vp_helper.practice:main"

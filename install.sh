@@ -74,6 +74,12 @@ if [[ -e "$vp_bin/bt" || -L "$vp_bin/bt" ]]; then
         exit 1
     fi
 fi
+if [[ -e "$vp_bin/xcpc" || -L "$vp_bin/xcpc" ]]; then
+    if [[ ! -L "$vp_bin/xcpc" || "$(readlink -- "$vp_bin/xcpc")" != "$vp_prefix/current/venv/bin/xcpc" ]]; then
+        printf '%s already exists and is not managed by this installation.\n' "$vp_bin/xcpc" >&2
+        exit 1
+    fi
+fi
 if [[ -n "$vp_submit_path" && ( -e "$vp_bin/submit" || -L "$vp_bin/submit" ) ]] && \
         [[ "$(readlink -f -- "$vp_bin/submit")" != "$vp_submit_path" ]]; then
     printf '%s\n' 'A different submit already exists. It was left in place.' >&2
@@ -176,9 +182,7 @@ for platform in ('qoj', 'cf_submit'):
 PY_LAUNCHER
 fi
 "${vp_pip[@]}" check
-"$vp_release/venv/bin/vp" --help
-"$vp_release/venv/bin/live" --help
-"$vp_release/venv/bin/bt" --help
+"$vp_release/venv/bin/xcpc" --help
 "$vp_release/venv/bin/vp-cf-submit" --help
 "$vp_release/venv/bin/vp-hydro-submit" --help
 "$vp_release/venv/bin/vp-nowcoder-submit" --help
@@ -225,6 +229,7 @@ vp_installed=true
 ln -sfn "$vp_prefix/current/venv/bin/vp" "$vp_bin/vp"
 ln -sfn "$vp_prefix/current/venv/bin/live" "$vp_bin/live"
 ln -sfn "$vp_prefix/current/venv/bin/bt" "$vp_bin/bt"
+ln -sfn "$vp_prefix/current/venv/bin/xcpc" "$vp_bin/xcpc"
 if [[ ! -e "$vp_bin/submit" && ! -L "$vp_bin/submit" ]]; then
     if [[ -n "$vp_submit_path" ]]; then
         ln -s -- "$vp_submit_path" "$vp_bin/submit"
@@ -235,7 +240,7 @@ elif [[ -z "$vp_submit_path" && "$(readlink -- "$vp_bin/submit" || true)" != "$v
     printf '%s\n' 'Preserved the previously installed submit.'
 fi
 printf 'Installed VP Helper using %s (%s).\n' "$("$vp_release/venv/bin/python" --version)" "$(uname -m)"
-printf 'Commands: %s/vp, %s/live, %s/bt and %s/submit\n' "$vp_bin" "$vp_bin" "$vp_bin" "$vp_bin"
+printf 'Commands: %s/xcpc, %s/vp, %s/live, %s/bt and %s/submit\n' "$vp_bin" "$vp_bin" "$vp_bin" "$vp_bin" "$vp_bin"
 if $vp_local; then
     printf 'For commands in any directory, add this to your shell configuration:\n  export PATH=%q:"$PATH"\n' "$vp_bin"
 fi
