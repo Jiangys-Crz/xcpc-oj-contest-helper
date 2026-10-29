@@ -25,6 +25,7 @@ HELP = """XCPC 比赛终端助手
 补题（支持牛客、CWNUOJ、Codeforces、Gym、QOJ）
   bt CONTEST_URL
   submit A.cpp     在比赛或补题目录中提交
+  已有结束的 VP 时恢复原目录；补题不计时，不显示公共统计区。
 
 历史记录
   vp history
@@ -33,7 +34,7 @@ HELP = """XCPC 比赛终端助手
   vp history --live
 
 手动结束本地 VP
-  xcpc end             结束当前本地 VP，不操作原站
+  xcpc end             优先结束当前目录对应的本地 VP，不操作原站
   xcpc end 轮次ID      结束指定轮次；保留代码，后续提交计为蓝色补题
 
 路径设置
@@ -51,6 +52,7 @@ HELP = """XCPC 比赛终端助手
   xcpc --help
 
 只有原站允许并确认启动，vp 才创建有效轮次；原站拒绝则取消本次命令。
+不同比赛可同时进行 VP / live，各轮计分与提交互不混用；补题不占用 VP。
 比赛结束后仍可提交补题，补题记录显示蓝色。
 新建目录默认保存在桌面，可用 xcpc path 修改。
 修改保存目录后，已有轮次保留在原位置，可从历史记录恢复。"""

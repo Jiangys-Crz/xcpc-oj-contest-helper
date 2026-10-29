@@ -200,3 +200,108 @@ class FirefoxLoginTests(unittest.TestCase):
                     contest=practice.Practice(url,{kind:account}).prepare()
                 self.assertTrue(contest.extra['practice'])
                 self.assertTrue(client._identified)
+
+    def test_running_firefox_exclusive_wal_is_read_for_both_judges_and_cleaned_up(self):
+        profile=self.root/'config/mozilla/firefox/locked.default'
+        cookies(profile,[])
+        database=profile/'cookies.sqlite'
+        writer=sqlite3.connect(database)
+        temporary=self.root/'snapshots'
+        temporary.mkdir()
+        try:
+            writer.execute('PRAGMA journal_mode=WAL')
+            writer.execute('PRAGMA locking_mode=EXCLUSIVE')
+            writer.executemany("INSERT INTO moz_cookies VALUES (?,?,?,'/',9999999999,'',1)",
+                               [('sid','live-hydro','oj.cwnupaa.com'),('t','live-nk','.nowcoder.com'),
+                                ('other','excluded','other.example')])
+            writer.commit()
+            before={p.name:p.read_bytes() for p in profile.iterdir() if p.is_file()}
+            with patch.object(login.tempfile,'tempdir',str(temporary)):
+                for platform,expected in [('cwnuoj','sid=live-hydro'),('nowcoder','t=live-nk')]:
+                    messages=[]
+                    candidates=login.browser_cookies(platform,{},errors=messages)
+                    self.assertEqual(candidates[0].cookie,expected)
+                    self.assertIn('临时快照',' '.join(messages))
+                    self.assertEqual(list(temporary.iterdir()),[])
+            self.assertEqual(before,{p.name:p.read_bytes() for p in profile.iterdir() if p.is_file()})
+            self.assertEqual(writer.execute('SELECT COUNT(*) FROM moz_cookies').fetchone()[0],3)
+        finally:
+            writer.close()
+
+    def test_snapshot_retries_when_browser_commits_a_new_wal_during_copy(self):
+        profile=self.root/'config/mozilla/firefox/changing.default'
+        cookies(profile,[])
+        database=profile/'cookies.sqlite'
+        writer=sqlite3.connect(database)
+        try:
+            writer.execute('PRAGMA journal_mode=WAL')
+            writer.execute("INSERT INTO moz_cookies VALUES ('sid','old','oj.cwnupaa.com','/',9999999999,'',1)")
+            writer.commit()
+            copy=login.shutil.copyfile
+            copied=[]
+            def concurrent_copy(source,target):
+                result=copy(source,target)
+                if not copied:
+                    copied.append(source)
+                    writer.execute("UPDATE moz_cookies SET value='newest-committed'")
+                    writer.commit()
+                return result
+            with patch.object(login.shutil,'copyfile',side_effect=concurrent_copy):
+                rows=login._cookie_snapshot(database,'oj.cwnupaa.com')
+            self.assertEqual(rows,[('sid','newest-committed','oj.cwnupaa.com')])
+        finally:
+            writer.close()
+
+    def test_snapshot_read_error_cleans_temporary_cookie_copy_and_reports_sqlite_category(self):
+        profile=self.root/'config/mozilla/firefox/broken.default'
+        profile.mkdir(parents=True)
+        database=profile/'cookies.sqlite'
+        database.write_bytes(b'Not a sqlite database; synthetic fixture')
+        temporary=self.root/'snapshots'
+        temporary.mkdir()
+        errors=[]
+        with patch.object(login.tempfile,'tempdir',str(temporary)):
+            self.assertEqual(login.browser_cookies('cwnuoj',{},errors=errors),[])
+        self.assertEqual(list(temporary.iterdir()),[])
+        self.assertIn('SQLITE_NOTADB',' '.join(errors))
+        self.assertNotIn('同一个 Ubuntu 用户',' '.join(errors))
+
+    def test_live_and_bt_use_shared_firefox_reader_then_verify_each_judge_identity(self):
+        from vp_helper import cli, live, practice
+        import test_hydro_live as h
+        import test_nowcoder_live as n
+        profile=self.root/'config/mozilla/firefox/locked.default'
+        cookies(profile,[])
+        writer=sqlite3.connect(profile/'cookies.sqlite')
+        try:
+            writer.execute('PRAGMA journal_mode=WAL')
+            writer.execute('PRAGMA locking_mode=EXCLUSIVE')
+            writer.executemany("INSERT INTO moz_cookies VALUES (?,?,?,'/',9999999999,'',1)",
+                               [('sid','shared-hydro','oj.cwnupaa.com'),('t','shared-nk','.nowcoder.com')])
+            writer.commit()
+            def verify(platform,candidate,expected,**kwargs):
+                return {'handle':'tester' if platform=='cwnuoj' else '42','uid':42,'cookie':candidate.cookie,
+                        'cookie_source':'firefox','firefox_profile':str(profile)}
+            with patch.object(login,'_verify',side_effect=verify),patch('time.time',return_value=1200):
+                for platform,url,html in [('cwnuoj',h.URL,h.page()),('nowcoder',n.URL,n.page())]:
+                    config=cli.load_account(platform,live=True)
+                    client=live.live_adapter(url,config)
+                    client.web=Mock()
+                    client.web.get.return_value=Mock(url='https://'+login.platform_host(platform)+'/',text=html)
+                    if platform=='cwnuoj':
+                        client.get_json=Mock(side_effect=[h.details(),h.board()])
+                    else:
+                        client.details=Mock(return_value=n.details())
+                        client.get_json=Mock(side_effect=lambda path,**kw:n.problems() if path==n.PROBLEMS else n.rank())
+                    contest,snapshot=client.prepare()
+                    self.assertEqual(contest.extra['uid'],42)
+                    self.assertEqual(snapshot['phase'],'CODING')
+                    self.assertIsNotNone(snapshot['own'])
+                    client.web.session.post.assert_not_called()
+                    # BT invokes the identical account loader and inherits its
+                    # verified account; it does not introduce another cookie path.
+                    again=cli.load_account(platform,live=True)
+                    self.assertEqual(again[platform]['cookie'],config[platform]['cookie'])
+                    self.assertTrue(again[platform]['_login_verified'])
+        finally:
+            writer.close()

@@ -216,8 +216,6 @@ def prepare_resume(url: str) -> tuple[Path, dict]:
                 configure_submit(api, Contest.from_dict(old["contest"]), directory)
                 bind_submit_context(directory, Path(current["state_path"]), old)
                 return Path(current["state_path"]), old
-            if old.get("status") != "complete" and time.time() < old.get("start_time", 0) + old.get("contest", {}).get("rules", {}).get("duration", 0):
-                raise VPError(f"A native VP is already running: {old.get('url')}. Open that URL to resume it.")
         config = load_account(platform)
         api = adapter(canonical, config)
         console.print("Reading contest information…", markup=False)
@@ -275,9 +273,13 @@ def open_state(path: Path, state: dict) -> None:
         pane = state["tmux_session"] + ":0.0"
         dead = subprocess.run(["tmux", "display-message", "-p", "-t", pane, "#{pane_dead}"],
                               check=True, capture_output=True, text=True).stdout.strip()
-        if dead == "1":
+        refresh_practice = bool(state.get("practice_view") or state.get("mode") == "practice")
+        if dead == "1" or refresh_practice:
             command = shlex.join([sys.executable, "-m", "vp_helper.cli", "_monitor", str(path)])
-            subprocess.run(["tmux", "respawn-pane", "-t", pane, "-c", state["directory"], command], check=True)
+            # Reload the score pane after an update or login refresh. Keep the
+            # lower shell and the original VP directory untouched.
+            subprocess.run(["tmux", "respawn-pane", *(["-k"] if dead != "1" else []),
+                            "-t", pane, "-c", state["directory"], command], check=True)
         subprocess.run(["tmux", "set-option", "-t", state["tmux_session"], "mouse", "on"], check=True)
         attach(state["tmux_session"])
     else:
@@ -348,7 +350,7 @@ def monitor(path: Path) -> None:
         contest = Contest.from_dict(state["contest"])
         config = read_json(config_directory() / "config.json")
         api = adapter(contest.url, config)
-        if state.get("handle") and api.handle != state["handle"]:
+        if state.get("handle") and api.handle.casefold() != state["handle"].casefold():
             raise VPError("The configured account changed; restore this VP's account before resuming it.")
         api.start_time = state["start_time"]
         reference_api = adapter(contest.url, config)
@@ -439,8 +441,10 @@ def monitor(path: Path) -> None:
                 if boundary(path) is not None and time.time() >= boundary(path):
                     shown_message = "Archived VP · new submissions from this directory are practice"
                 if now >= next_render:
+                    state["practice_view"] = bool(state.get("practice_view") or read_json(path).get("practice_view"))
                     dashboard = display(contest, max(0, scoring_elapsed) if interrupted else elapsed,
                                         private, shown_rank, prize, stats, records, shown_message)
+                    dashboard.practice = state["practice_view"]
                     dashboard.revealed = revealed_problems(contest, scoring_elapsed, current_reference)
                     view.update(dashboard)
                     next_render = now + 0.25

@@ -76,6 +76,8 @@ def save_state(path: Path, state: dict) -> None:
     # merge IDs under a separate lock, so a slow GET cannot erase new receipts.
     with file_lock(path.with_suffix(".save.lock")):
         previous = read_json(path)
+        if previous.get("practice_view"):
+            state["practice_view"] = True
         combined = {str(e["id"]): e for e in previous.get("submissions", [])}
         combined.update({str(e["id"]): e for e in state.get("submissions", [])})
         state["submissions"] = merge_records(path, state, list(combined.values()))
@@ -92,15 +94,29 @@ def end_attempt(attempt_id: str | None = None) -> tuple[Path, dict]:
     from .scoring import score_submissions
     root = state_directory()
     with file_lock(root / "start.lock"):
-        saved = [(p, s) for p, s in attempts(root) if s.get("mode", "vp") == "vp"]
+        all_saved = attempts(root)
+        saved = [(p, s) for p, s in all_saved if s.get("mode", "vp") == "vp"]
         if attempt_id:
             selected = [(p, s) for p, s in saved if attempt_id in (p.stem, s.get("attempt_id"))]
         else:
-            current = read_json(root / "current.json").get("state_path")
-            active = [(p, s) for p, s in saved if s.get("status") in ("scheduled", "running")
-                      and (boundary(p) is None or time.time() < boundary(p))
-                      and time.time() < s["start_time"] + s["contest"]["rules"]["duration"]]
-            selected = [(p, s) for p, s in active if str(p) == current] or active[-1:]
+            here = Path.cwd().resolve()
+            bound = [(p, s) for p, s in all_saved if s.get("directory")
+                     and here.is_relative_to(Path(s["directory"]).resolve())]
+            if bound:
+                path, state = max(bound, key=lambda item: (len(Path(item[1]["directory"]).parts), item[1]["start_time"]))
+                if state.get("mode", "vp") != "vp":
+                    raise VPError("当前目录是补题或实时比赛工作区。请用 xcpc end 轮次ID 指定要结束的本地 VP。")
+                selected = [(path, state)]
+            else:
+                current = read_json(root / "current.json").get("state_path")
+                active = [(p, s) for p, s in saved if s.get("status") in ("scheduled", "running")
+                          and (boundary(p) is None or time.time() < boundary(p))
+                          and time.time() < s["start_time"] + s["contest"]["rules"]["duration"]]
+                selected = [(p, s) for p, s in active if str(p) == current]
+                if not selected:
+                    if len(active) > 1:
+                        raise VPError("有多场本地 VP 正在进行。请在对应比赛目录运行 xcpc end，或使用 xcpc end 轮次ID。")
+                    selected = active
         if len(selected) != 1:
             raise VPError("未找到正在进行的本地 VP。可用 vp history 查询轮次，再运行 xcpc end 轮次ID。")
         path, _ = selected[0]

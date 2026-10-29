@@ -111,11 +111,31 @@ class ResumeTests(unittest.TestCase):
                 self.assertEqual(cli.prepare_resume(self.state["url"]), (self.path, self.state))
                 self.assert_preserved(before)
 
-    def test_other_active_contest_still_blocks(self):
-        with self.assertRaisesRegex(VPError, "A native VP is already running"):
-            cli.start("https://qoj.ac/contest/4539", resume=True)
-        self.adapter.assert_not_called()
-        self.launch.assert_not_called()
+    def test_other_active_contest_does_not_block_an_independent_vp(self):
+        before = self.path.read_bytes()
+        url = "https://qoj.ac/contest/4539"
+        contest = Contest("qoj", "4539", url, "another contest", "another contest", {"A":"10000"}, Rules(18000))
+        self.api.prepare.side_effect = None
+        self.api.prepare.return_value = contest
+        self.api.start.side_effect = None
+        self.api.start.return_value = 2000
+        with patch.object(cli, "desktop", return_value=self.root):
+            path, state = cli.prepare_resume(url)
+        self.assertNotEqual(path, self.path)
+        self.assertEqual(state["url"], url)
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(self.source.read_text(), "// existing solution\n")
+
+    def test_practice_reopen_refreshes_only_the_score_pane(self):
+        self.state["practice_view"] = True
+        self.tmux.return_value = True
+        cli.open_state(self.path, self.state)
+        commands = [call.args[0] for call in self.run.call_args_list]
+        refreshed = next(command for command in commands if command[:2] == ["tmux", "respawn-pane"])
+        self.assertIn("-k", refreshed)
+        self.assertEqual(refreshed[refreshed.index("-t")+1], self.state["tmux_session"]+":0.0")
+        self.assertFalse(any(command[:2] == ["tmux", "kill-session"] for command in commands))
+        self.api.start.assert_not_called()
 
     def test_account_mismatch_does_not_modify_or_start_vp(self):
         self.api.handle = "someone_else"
@@ -149,6 +169,30 @@ class ResumeTests(unittest.TestCase):
         self.api.start.assert_called_once()
         self.assertEqual(state["start_time"], 2000)
         self.assertTrue(path.is_file())
+
+    @unittest.skipUnless(HAVE_TMUX, "tmux is required for the integration check")
+    def test_real_practice_refresh_preserves_the_lower_shell(self):
+        self.state["practice_view"] = True
+        self.save_state()
+        name = self.state["tmux_session"]
+        with patch.dict(os.environ, {"TMUX_TMPDIR": str(self.root), "SHELL": "/bin/bash"}), \
+                patch.object(cli.subprocess, "run", REAL_RUN), \
+                patch.object(cli, "tmux_exists", REAL_TMUX_EXISTS), \
+                patch.object(cli, "launch", REAL_LAUNCH), \
+                patch.object(cli.shlex, "join", return_value="sleep 60"):
+            try:
+                cli.open_state(self.path, self.state)
+                before = REAL_RUN(["tmux", "list-panes", "-t", name, "-F", "#{pane_pid}"],
+                                  check=True, capture_output=True, text=True).stdout.splitlines()
+                cli.open_state(self.path, self.state)
+                after = REAL_RUN(["tmux", "list-panes", "-t", name, "-F", "#{pane_pid}"],
+                                 check=True, capture_output=True, text=True).stdout.splitlines()
+                self.assertNotEqual(before[0], after[0])
+                self.assertEqual(before[1], after[1])
+                self.assertEqual(self.source.read_text(), "// existing solution\n")
+                self.api.start.assert_not_called()
+            finally:
+                REAL_RUN(["tmux", "kill-server"], capture_output=True)
 
     @unittest.skipUnless(HAVE_TMUX, "tmux is required for the integration check")
     def test_real_tmux_server_can_be_recreated_without_new_participation(self):

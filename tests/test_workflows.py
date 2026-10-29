@@ -240,6 +240,87 @@ class CommandTests(unittest.TestCase):
 
 
 class PracticeTests(Isolated):
+    def test_bt_restores_ended_vp_directory_state_and_submission_context(self):
+        path, state = cli.prepare_start(URL)
+        directory = Path(state["directory"])
+        (directory/"A.cpp").write_text("saved solution")
+        state["submissions"] = [{"id":"1","team":"me","problem":"A","time":60,"verdict":"CORRECT","practice":False}]
+        state["summary"] = {"solved":1,"penalty":1,"rank":"3","prize":"Gold"}
+        write_json(path, state)
+        self.clock = 20000
+        self.api.reset_mock()
+        resumed_path, resumed = practice.prepare(URL)
+        self.assertEqual(resumed_path, path)
+        self.assertEqual(resumed["directory"], state["directory"])
+        self.assertEqual(resumed["start_time"], state["start_time"])
+        self.assertEqual(resumed["mode"], "vp")
+        self.assertEqual(resumed["summary"], state["summary"])
+        self.assertEqual(resumed["submissions"], state["submissions"])
+        self.assertTrue(resumed["practice_view"])
+        self.assertEqual((directory/"A.cpp").read_text(), "saved solution")
+        cfg = read_json(directory/"contest.json")
+        self.assertEqual(cfg["vp_context"]["state_path"], str(path))
+        self.assertEqual(cfg["vp_context"]["start_time"], state["start_time"])
+        self.assertEqual(len(attempts()), 1)
+        self.assertEqual(read_json(path.parent/"current.json")["state_path"], str(path))
+        self.api.prepare.assert_not_called()
+        self.api.start.assert_not_called()
+        self.api._page.assert_not_called()
+
+    def test_bt_chooses_latest_ended_vp_and_reopens_the_same_attempt(self):
+        old_path, old = cli.prepare_start(URL)
+        self.clock = 20000
+        path, state = cli.prepare_start(URL)
+        self.clock = 40000
+        for _ in range(2):
+            resumed_path, resumed = practice.prepare(URL)
+            self.assertEqual(resumed_path, path)
+            self.assertEqual(resumed["attempt_id"], state["attempt_id"])
+        self.assertEqual(len(attempts()), 2)
+        self.assertFalse(read_json(old_path).get("practice_view"))
+
+    def test_bt_does_not_interrupt_active_vp_or_replace_its_files(self):
+        path, state = cli.prepare_start(URL)
+        before = path.read_bytes()
+        config = Path(state["directory"])/"contest.json"
+        config_before = config.read_bytes()
+        with self.assertRaisesRegex(VPError, "xcpc end"):
+            practice.prepare(URL)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(config.read_bytes(), config_before)
+        self.assertIsNone(boundary(path))
+        self.assertEqual(len(attempts()), 1)
+
+    def test_bt_restores_manually_ended_vp_and_new_records_remain_practice(self):
+        path, state = cli.prepare_start(URL)
+        self.clock = 1500
+        end_attempt()
+        stale = read_json(path)
+        resumed_path, resumed = practice.prepare(URL)
+        self.assertEqual(resumed_path, path)
+        self.assertEqual(resumed["status"], "archived")
+        self.assertEqual(boundary(path), 1500)
+        self.clock = 1600
+        record_receipt(read_json(Path(resumed["directory"])/"contest.json"), "77", "A", self.clock)
+        stale["submissions"] = [{"id":"77","team":"me","problem":"A","time":600,"verdict":"CORRECT"}]
+        save_state(path, stale)
+        saved = read_json(path)
+        self.assertTrue(saved["practice_view"])
+        self.assertTrue(saved["submissions"][0]["practice"])
+        self.assertEqual(score_submissions([Submission(**e) for e in saved["submissions"]], ["A"], Rules(18000), 600).solved, 0)
+
+    def test_bt_missing_original_directory_does_not_create_a_replacement(self):
+        path, state = cli.prepare_start(URL)
+        self.clock = 20000
+        state["directory"] = str(self.root/"missing original folder")
+        write_json(path, state)
+        before = path.read_bytes()
+        with self.assertRaisesRegex(VPError, "原 VP 文件夹不存在"):
+            practice.prepare(URL)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertFalse(Path(state["directory"]).exists())
+        self.assertEqual(len(attempts()), 1)
+
     def test_legacy_cf_dispatch_passes_explicit_problem_for_absolute_paths(self):
         source = self.root/"A.cpp"
         source.write_text("source")

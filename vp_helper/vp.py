@@ -100,10 +100,6 @@ def prepare(url: str, scheduled_start: float | None = None) -> tuple[Path, dict]
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     with file_lock(root / "start.lock"):
         current = read_json(root / "current.json")
-        old = read_json(Path(current["state_path"])) if current else {}
-        if (old and old.get("url") != canonical and old.get("status") not in ("complete", "archived", "failed", "cancelled")
-                and time.time() < old.get("start_time", 0) + old.get("contest", {}).get("rules", {}).get("duration", 0)):
-            raise VPError(f"Another contest is still active: {old.get('url')}.")
         config = cli.load_account(platform)
         api = cli.adapter(canonical, config)
         previous = [(p, s) for p, s in attempts(root)

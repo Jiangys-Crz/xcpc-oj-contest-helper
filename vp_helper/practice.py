@@ -11,16 +11,13 @@ import time
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from rich.console import Group
-from rich.table import Table
-from rich.text import Text
-
 from .codeforces_live import CodeforcesLive, apply_metadata, submission_records, verify_login, verify_practice
-from .models import Contest, Rules, VPError
+from .models import Contest, Rules, Submission, VPError
 from .parsing import contest_url
-from .sessions import attempts, merge_records, save_state
+from .scoring import score_submissions
+from .sessions import attempts, boundary, merge_records, save_state
 from .storage import file_lock, read_json, write_json
-from .tui import Dashboard, TerminalDashboard, clock
+from .tui import Dashboard, TerminalDashboard
 
 
 class Practice:
@@ -89,15 +86,45 @@ class Practice:
             self.api.save_statements(contest, directory)
 
 
+def _resume_vp(root: Path, url: str, handle: str, config: dict) -> tuple[Path, dict] | None:
+    from . import cli
+    previous = [(p, s) for p, s in attempts(root) if s.get("mode", "vp") == "vp" and s["url"] == url
+                and s["handle"].casefold() == handle.casefold() and s.get("status") not in ("failed", "cancelled")]
+    if not previous:
+        return None
+    path, state = previous[-1]
+    cutoff = boundary(path)
+    ended = (state.get("status") in ("complete", "archived") or cutoff is not None and time.time() >= cutoff
+             or time.time() >= state["start_time"] + state["contest"]["rules"]["duration"])
+    if state.get("status") == "scheduled" or not ended:
+        raise VPError("这场比赛的本地 VP 尚未结束。请先运行 xcpc end，或等待 VP 结束后再补题。")
+    directory = Path(state["directory"])
+    if not directory.is_dir():
+        raise VPError("原 VP 文件夹不存在，请先恢复该文件夹：" + str(directory))
+    native = cli.adapter(url, config)
+    if native.handle.casefold() != state["handle"].casefold():
+        raise VPError("请恢复此 VP 使用的原账号后再补题。")
+    cli.configure_submit(native, Contest.from_dict(state["contest"]), directory)
+    state["practice_view"] = True
+    save_state(path, state)
+    cli.bind_submit_context(directory, path, state)
+    write_json(root / "current.json", {"state_path": str(path)})
+    cli.console.print("BT · 恢复 VP 原目录：" + str(directory), markup=False)
+    return path, state
+
+
 def prepare(url: str) -> tuple[Path, dict]:
     from . import cli, live
     cli.check_terminal()
     platform, _, url = contest_url(url)
     config = cli.load_account(platform, live=True)
     api = Practice(url, config)
-    contest = api.prepare()
     root = cli.state_directory()
     with file_lock(root / "start.lock"):
+        resumed = _resume_vp(root, url, api.handle, config)
+        if resumed:
+            return resumed
+        contest = api.prepare()
         prior = [(p, s) for p, s in attempts(root) if s.get("mode") == "practice" and s["url"] == url
                  and s["handle"].casefold() == api.handle.casefold()]
         if prior:
@@ -129,26 +156,16 @@ def prepare(url: str) -> tuple[Path, dict]:
         return path, state
 
 
-class PracticeDashboard:
-    def __init__(self, contest, elapsed, records, message=""):
-        self.contest, self.elapsed, self.submissions, self.message = contest, elapsed, records, message
-
-    _record_table = staticmethod(Dashboard._record_table)
-    records = Dashboard.records
-    __rich_console__ = Dashboard.__rich_console__
-
-    def fixed(self, width):
-        table = Table(expand=True)
-        table.add_column("problem")
-        table.add_column("accepted")
-        table.add_column("latest result")
-        for label in self.contest.problems:
-            records = [s for s in self.submissions if s["problem"] == label]
-            table.add_row(label, "✓" if any(s["verdict"] == "CORRECT" for s in records) else "—",
-                          records[0]["verdict"] if records else "—")
-        header = self._record_table()
-        header.add_row("problem", "submission", "time", "result")
-        return Group(Text(self.contest.name + " · BT · " + clock(self.elapsed)), table, header)
+class PracticeDashboard(Dashboard):
+    def __init__(self, contest, elapsed, records, message="", handle=""):
+        # This summary is only a view of the practice workspace. Original
+        # records remain practice and never enter a VP's saved score.
+        rules = Rules(max(1, int(elapsed) + 1), penalty_minutes=contest.rules.penalty_minutes,
+                      compile_penalty=contest.rules.compile_penalty)
+        events = [Submission(str(s["id"]), "me", s["problem"], s["time"], s["verdict"]) for s in records]
+        me = score_submissions(events, list(contest.problems), rules, elapsed, name=handle or "me")
+        super().__init__(contest, elapsed, me, "—", "", None,
+                         [{**s, "practice": True} for s in records], message, practice=True)
 
 
 def monitor(path: Path) -> None:
@@ -184,7 +201,7 @@ def monitor(path: Path) -> None:
                 if future is None and time.monotonic() >= next_poll:
                     future = pool.submit(api.submissions, contest, state["start_time"])
                 records = submission_records(merge_records(path, state, []), "FINISHED")
-                view.update(PracticeDashboard(contest, time.time()-state["start_time"], records, message))
+                view.update(PracticeDashboard(contest, time.time()-state["start_time"], records, message, state["handle"]))
                 time.sleep(0.2)
 
 

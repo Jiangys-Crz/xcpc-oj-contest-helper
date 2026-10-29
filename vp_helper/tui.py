@@ -32,6 +32,7 @@ class Dashboard:
     submissions: list[dict]
     message: str = ""
     revealed: frozenset[str] | None = None
+    practice: bool = False
 
     def fixed(self, width: int):
         # Equal side columns keep the contest title at the screen's center.
@@ -45,8 +46,12 @@ class Dashboard:
                  "None": "No Prize", "Unknown": "Unknown"}.get(self.prize, self.prize)
         result = self.rank + (f"\n{prize}" if prize else "")
         timer = "Starts in " + clock(-self.elapsed) if self.elapsed < 0 else f"{clock(min(self.elapsed, self.contest.rules.duration))} / {clock(self.contest.rules.duration)}"
+        if self.practice:
+            timer = ""
         label = self.contest.name + (f" · VP #{self.contest.extra['attempt']}" if self.contest.extra.get("attempt") else "")
-        if self.contest.extra.get("local_attempt"):
+        if self.practice:
+            label += " · BT"
+        if self.contest.extra.get("local_attempt") and not self.practice:
             label += " · local timer"
         heading.add_row(Text(" " + timer, style="bold default"), Text(label, style="bold"), Text(""))
         table = Table(box=SCORE_BOX, padding=(0, 1), style="default",
@@ -75,13 +80,13 @@ class Dashboard:
         table.add_row(Text(result, style="bold default"), self.me.name, str(self.me.solved),
                       str(self.me.penalty) if self.me.results_complete else "?",
                       *cells, end_section=True)
-        if not self.contest.rules.problem_reveal_count:
+        if not self.practice and not self.contest.rules.problem_reveal_count:
             for key in ("submitted", "attempted", "accepted"):
                 table.add_row("", key, "", "", *(str(self.stats[key][p]) if self.stats else "—"
                                                  for p in self.contest.problems))
         labels = self._record_table()
         labels.add_row("problem", "submission", "time", "result", style="bold black on #eeeeee")
-        if self.contest.rules.problem_reveal_count:
+        if not self.practice and self.contest.rules.problem_reveal_count:
             return Group(heading, Text(" "), table, self.public_statistics(), Text(" "), labels)
         return Group(heading, Text(" "), table, Text(" "), labels)
 

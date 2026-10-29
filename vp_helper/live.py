@@ -77,10 +77,6 @@ def prepare_live(url: str) -> tuple[Path, dict]:
     with file_lock(root / "start.lock"):
         current = read_json(root / "current.json")
         old = read_json(Path(current["state_path"])) if current else {}
-        if (old and (old.get("url") != canonical or old.get("mode") != "live")
-                and old.get("status") != "complete"
-                and time.time() < old.get("start_time", 0) + old.get("contest", {}).get("rules", {}).get("duration", 0)):
-            raise VPError(f"Another contest is still active: {old.get('url')}. Resume it before switching contests.")
         config = cli.load_account(platform, live=True)
         api = live_adapter(canonical, config)
         if old.get("url") == canonical and old.get("mode") == "live" and api.handle.lower() != old.get("handle", "").lower():

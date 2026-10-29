@@ -10,7 +10,9 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sqlite3
+import tempfile
 import threading
 import time
 from urllib.parse import urlsplit
@@ -203,6 +205,63 @@ def _header(values: dict) -> str:
     return "; ".join(m.OutputString() for m in jar.values())
 
 
+def _query_cookie_rows(database: Path, host: str, *, snapshot: bool = False) -> list[tuple[str, str, str]]:
+    # Only the disposable copy may recover a hot journal. The browser database
+    # and its journals are never opened for writing or checkpointed by XCPC.
+    mode = "rw" if snapshot else "ro"
+    with closing(sqlite3.connect(database.as_uri() + "?mode=" + mode, uri=True, timeout=0.5)) as conn:
+        hosts = cookie_hosts(host)
+        return list(conn.execute(
+            "SELECT name, value, host FROM moz_cookies WHERE host IN (" + ",".join("?" for _ in hosts) + ") AND path='/' "
+            "AND expiry > ? AND originAttributes='' ORDER BY lastAccessed", (*hosts, int(time.time()))))
+
+
+def _cookie_snapshot(database: Path, host: str) -> list[tuple[str, str, str]]:
+    """Read a live, locked Firefox database including committed WAL cookies."""
+    def stamp(path):
+        try:
+            stat = path.stat()
+            return stat.st_ino, stat.st_size, stat.st_mtime_ns
+        except FileNotFoundError:
+            return None
+
+    sources = [database, Path(str(database) + "-wal"), Path(str(database) + "-journal")]
+    last_error = None
+    for _ in range(3):
+        before = [stamp(p) for p in sources]
+        if before[0] is None:
+            raise FileNotFoundError(database)
+        with tempfile.TemporaryDirectory(prefix="xcpc-firefox-") as temporary:
+            copied = Path(temporary) / database.name
+            try:
+                for source, metadata in zip(sources, before):
+                    if metadata is not None:
+                        target = Path(temporary) / source.name
+                        shutil.copyfile(source, target)
+                        target.chmod(0o600)
+            except FileNotFoundError:
+                continue
+            if before != [stamp(p) for p in sources]:
+                continue
+            # Do not copy SHM: it describes the browser's locks, not cookie
+            # data. SQLite rebuilds it privately from the copied WAL.
+            try:
+                return _query_cookie_rows(copied, host, snapshot=True)
+            except sqlite3.Error as exc:
+                last_error = exc
+    if last_error:
+        raise last_error
+    raise sqlite3.OperationalError("Firefox cookie files kept changing during snapshot")
+
+
+def _cookie_read_error(exc: Exception) -> str:
+    if isinstance(exc, PermissionError):
+        return "文件权限不足"
+    if isinstance(exc, FileNotFoundError):
+        return "数据库或日志文件暂时不存在"
+    return getattr(exc, "sqlite_errorname", type(exc).__name__)
+
+
 def browser_cookies(platform: str, account: dict, *, errors: list[str] | None = None) -> list[BrowserCookies]:
     host = platform_host(platform)
     candidates = []
@@ -211,15 +270,16 @@ def browser_cookies(platform: str, account: dict, *, errors: list[str] | None = 
         database = profile / "cookies.sqlite"
         try:
             if database.is_file():
-                with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=0.5)) as conn:
-                    hosts = cookie_hosts(host)
-                    rows = list(conn.execute(
-                        "SELECT name, value, host FROM moz_cookies WHERE host IN (" + ",".join("?" for _ in hosts) + ") AND path='/' "
-                        "AND expiry > ? AND originAttributes='' ORDER BY lastAccessed",
-                        (*hosts, int(time.time()))))
-        except (OSError, sqlite3.Error):
+                try:
+                    rows = _query_cookie_rows(database, host)
+                except sqlite3.Error:
+                    rows = _cookie_snapshot(database, host)
+                    if errors is not None:
+                        errors.append(str(profile) + "：Firefox 数据库被占用，已通过临时快照读取（包含 WAL 中的登录状态）。")
+        except (OSError, sqlite3.Error) as exc:
             if errors is not None:
-                errors.append(str(profile) + "：无法读取 Cookie 数据库；请确认使用同一个 Ubuntu 用户运行。")
+                errors.append(str(profile) + "：无法读取 Cookie 数据库（" + _cookie_read_error(exc) +
+                              "）；原 Firefox 文件未改动。")
         persistent = _cookie_values(rows, host)
         session_rows = _session_cookie_rows(profile, host)
         combined_rows = [*rows, *session_rows]
@@ -348,6 +408,7 @@ def login_diagnostics(platform: str, account: dict) -> list[str]:
         return messages + errors + ["未读到该站点的普通窗口 Cookie。请在普通 Firefox 窗口登录对应网站；隐私窗口和容器登录不会混用。",
                                     "若仍失败，可关闭 Firefox 后再试一次，让登录状态写入磁盘。"]
     messages.append(f"读取到 {len(candidates)} 组该站点 Cookie。")
+    messages.extend(errors)
     for candidate in candidates:
         problems = []
         verified = _verify(platform, candidate, account.get("handle", ""), errors=problems)
