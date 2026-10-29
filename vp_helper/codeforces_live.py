@@ -6,6 +6,7 @@ import time
 from urllib.parse import urlsplit
 
 from .http import WebSession
+from .platform_clock import platform_now
 from .models import Contest, Rules, VPError
 from .accounts import refresh_api_credentials
 from .parsing import contest_url
@@ -48,8 +49,8 @@ def verify_practice(api, duration: int) -> None:
         if (state.get("mode", "vp") == "vp" and state["url"] == api.url
                 and state["handle"].casefold() == api.handle.casefold()
                 and state.get("status") not in ("complete", "archived", "failed", "cancelled")
-                and (cutoff is None or time.time() < cutoff)
-                and time.time() < state["start_time"] + state["contest"]["rules"]["duration"]):
+                and (cutoff is None or platform_now(state) < cutoff)
+                and platform_now(state) < state["start_time"] + state["contest"]["rules"]["duration"]):
             raise VPError("这场比赛的本地 VP 尚未结束。请先运行 xcpc end 或等待结束。")
     if api.platform == "cf":
         # Regular contest standings no longer accept handles/showUnofficial.
@@ -63,7 +64,7 @@ def verify_practice(api, duration: int) -> None:
         if (party.get("participantType") == "VIRTUAL"
                 and any(m.get("handle", "").casefold() == api.handle.casefold() for m in party.get("members", []))
                 and party.get("startTimeSeconds") is not None
-                and time.time() < party["startTimeSeconds"] + duration):
+                and platform_now(api.url) < party["startTimeSeconds"] + duration):
             if locally_ended(api.url, api.handle, party["startTimeSeconds"]):
                 continue
             raise VPError("Codeforces still has an active or scheduled virtual participation. Use bt after it ends so practice cannot change that VP.")
@@ -178,7 +179,7 @@ class CodeforcesLive:
                 stats["scored"][problem] += int(scored)
                 stats["attempted"][problem] += int(scored or result.get("rejectedAttemptCount", 0) > 0)
         return {"own": row, "stats": stats, "phase": contest.extra["phase"],
-                "frozen": contest.extra["frozen"], "at": time.time()}
+                "frozen": contest.extra["frozen"], "at": platform_now(self.url)}
 
     def submissions(self, contest: Contest) -> list[dict]:
         result = {}

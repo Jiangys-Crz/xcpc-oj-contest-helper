@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from .codeforces_live import CodeforcesLive, apply_metadata, submission_records, verify_login, verify_practice
+from .platform_clock import platform_now
 from .models import Contest, Rules, Submission, VPError
 from .parsing import contest_url
 from .scoring import score_submissions
@@ -71,7 +72,7 @@ class Practice:
                 raise VPError("QOJ did not expose this contest's problems.")
             c.extra["local_attempt"] = True
         c.extra.update(practice=True, mode="practice", scoring=c.extra.get("scoring", "ICPC"))
-        c.original_start = float(int(time.time()))
+        c.original_start = float(int(platform_now(self.url)))
         self.handle = self.api.handle
         return c
 
@@ -99,8 +100,8 @@ def _resume_vp(root: Path, url: str, handle: str, config: dict) -> tuple[Path, d
         return None
     path, state = previous
     cutoff = boundary(path)
-    ended = (state.get("status") in ("complete", "archived") or cutoff is not None and time.time() >= cutoff
-             or time.time() >= state["start_time"] + state["contest"]["rules"]["duration"])
+    ended = (state.get("status") in ("complete", "archived") or cutoff is not None and platform_now(state) >= cutoff
+             or platform_now(state) >= state["start_time"] + state["contest"]["rules"]["duration"])
     if state.get("status") == "scheduled" or not ended:
         raise VPError("这场比赛尚未结束。VP 可先运行 xcpc end；live 请等待原站比赛结束后补题。")
     directory = Path(state["directory"])
@@ -152,7 +153,7 @@ def prepare(url: str) -> tuple[Path, dict]:
             state = {"mode": "practice", "attempt_id": attempt_id, "url": url,
                      "start_time": contest.original_start, "handle": api.handle, "submissions": [],
                      "directory": str(directory), "tmux_session": path.stem, "status": "running"}
-            state["created_at"] = time.time()
+            state["created_at"] = platform_now(url)
         directory.mkdir(parents=True, exist_ok=True)
         state["contest"] = contest.to_dict()
         if directory != target:
@@ -199,6 +200,7 @@ def monitor(path: Path) -> None:
                 if future is not None and future.done():
                     try:
                         state["submissions"] = merge_records(path, state, future.result())
+                        state['sync_revision'] = state.get('sync_revision', 0) + 1
                         save_state(path, state)
                         message = ""
                     except (VPError, OSError) as exc:
@@ -208,7 +210,7 @@ def monitor(path: Path) -> None:
                 if future is None and time.monotonic() >= next_poll:
                     future = pool.submit(api.submissions, contest, state["start_time"])
                 records = submission_records(merge_records(path, state, []), "FINISHED")
-                view.update(PracticeDashboard(contest, time.time()-state["start_time"], records, message, state["handle"]))
+                view.update(PracticeDashboard(contest, platform_now(state)-state["start_time"], records, message, state["handle"]))
                 time.sleep(0.2)
 
 

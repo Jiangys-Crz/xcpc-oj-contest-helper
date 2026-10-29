@@ -9,6 +9,7 @@ from urllib.parse import urlencode, urljoin, urlsplit
 
 from .http import WebSession, form_values
 from .accounts import refresh_api_credentials
+from .platform_clock import platform_now
 from .models import Cell, Contest, Medals, Reference, Rules, Submission, TeamScore, VPError, StartRejected
 from .originals import OriginalReplay, classify, load_metadata
 from .parsing import ccpc_reveal_count, medals_from_html
@@ -48,7 +49,7 @@ class Gym:
         refresh_api_credentials(self.account, self.platform)
         if not self.account.get("api_key") or not self.account.get("api_secret"):
             raise VPError("请先运行 xcpc api cf 设置 Codeforces API key 和 secret。")
-        p = signed_parameters(method, params, self.account["api_key"], self.account["api_secret"])
+        p = signed_parameters(method, params, self.account["api_key"], self.account["api_secret"], at=int(platform_now(self.url)))
         try:
             # Use the same cross-process rate gate as anonymous standings.
             from .codeforces_live import public_api
@@ -129,7 +130,7 @@ class Gym:
                        and party.get('startTimeSeconds') is not None]
             latest = max(parties, key=lambda party: party['startTimeSeconds'], default=None)
             duration = getattr(self, '_native_duration', None)
-            if latest and isinstance(duration, (int, float)) and time.time() < latest['startTimeSeconds'] + duration:
+            if latest and isinstance(duration, (int, float)) and platform_now(self.url) < latest['startTimeSeconds'] + duration:
                 return latest
             # Before the first submission, regular CF APIs expose no virtual
             # party. Read the account's native countdown using the server's
@@ -179,7 +180,7 @@ class Gym:
         if not profile or not any(urlsplit(a.get("href", "")).path.lower() == f"/profile/{self.handle}".lower() for a in profile.select("a")):
             raise VPError("The Codeforces login cookie does not belong to the configured handle.")
         old = self._virtual_party()
-        if old and time.time() < old["startTimeSeconds"] + contest.rules.duration:
+        if old and platform_now(self.url) < old["startTimeSeconds"] + contest.rules.duration:
             if fresh or requested_start is not None and abs(requested_start - old["startTimeSeconds"]) > 60:
                 raise StartRejected("Codeforces 已有尚未结束或已预约的 VP，本次命令已取消。")
             self.start_time = float(old["startTimeSeconds"])
@@ -207,12 +208,12 @@ class Gym:
             raise VPError("Codeforces did not provide a registration CSRF token.")
         if requested_start is not None:
             from .scheduling import registration_time
-            registration_time(form, payload, requested_start)
+            self.registration_start = registration_time(form, payload, requested_start)
         # The requested time is only a reservation until the platform confirms
         # the actual native VP start below.
         before_post = getattr(self, 'before_native_post', None)
         if callable(before_post):
-            before_post(time.time())
+            before_post(platform_now(self.url))
         self.native_post_sent = True
         response = self.web.post(urljoin(self.origin, form.get("action") or f"/contestRegistration/{self.id}/virtual/true"), payload)
         from bs4 import BeautifulSoup
@@ -239,15 +240,34 @@ class Gym:
         offset = 1
         while True:
             data = self.api("contest.status", contestId=self.id, handle=self.handle, **{"from": offset, "count": 1000})
+            # HTTP Date + native countdown can differ from the API epoch by a
+            # few seconds. Reconcile only this account's same-contest VP near
+            # the confirmed reservation; never import a different participation.
+            starts = {float(raw['author']['startTimeSeconds']) for raw in data
+                      if str(raw.get('contestId', self.id)) == self.id
+                      and raw.get('author', {}).get('participantType') == 'VIRTUAL'
+                      and not raw['author'].get('ghost')
+                      and any(m.get('handle', '').casefold() == self.handle.casefold()
+                              for m in raw['author'].get('members', []))
+                      and isinstance(raw['author'].get('startTimeSeconds'), (int, float))
+                      and abs(raw['author']['startTimeSeconds'] - self.start_time) <= 60}
+            if len(starts) > 1:
+                raise VPError('Codeforces 返回多个相近的 VP 开始时间，暂不混合提交记录。')
+            known_start = getattr(self, 'observed_start_time', None)
+            if starts and isinstance(known_start, (int, float)) and known_start not in starts:
+                raise VPError('Codeforces 返回了另一场 VP 的开始时间，原会话记录已保留。')
+            native_start = next(iter(starts), self.start_time)
+            if starts:
+                self.observed_start_time = native_start
             reached_start = False
             for raw in data:
                 author = raw["author"]
-                if raw["creationTimeSeconds"] < self.start_time:
-                    reached_start = True
-                    continue
                 if not any(m["handle"].lower() == self.handle.lower() for m in author["members"]):
                     continue
-                native = author["participantType"] == "VIRTUAL" and author.get("startTimeSeconds") == self.start_time
+                native = author["participantType"] == "VIRTUAL" and author.get("startTimeSeconds") == native_start
+                if raw["creationTimeSeconds"] < self.start_time and not native:
+                    reached_start = True
+                    continue
                 practice = (author["participantType"] == "PRACTICE"
                             and raw["creationTimeSeconds"] >= self.start_time + contest.rules.duration)
                 local = contest.extra.get("local_attempt") and author.get("participantType") in ("VIRTUAL", "PRACTICE")
@@ -257,7 +277,8 @@ class Gym:
                 if label not in contest.problems:
                     continue
                 sid = str(raw["id"])
-                relative = raw["creationTimeSeconds"] - self.start_time if local else raw["relativeTimeSeconds"] if native else raw["creationTimeSeconds"] - self.start_time
+                relative = (raw["relativeTimeSeconds"] + native_start - self.start_time if native and not local
+                            else raw["creationTimeSeconds"] - self.start_time)
                 result[sid] = Submission(sid, "me", label, float(relative), verdict(raw.get("verdict")))
             if len(data) < 1000 or reached_start:
                 self.submissions_complete = True

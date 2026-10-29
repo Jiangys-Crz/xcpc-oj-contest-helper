@@ -9,6 +9,28 @@ from test_workflows import Isolated, URL
 
 
 class DashboardTests(Isolated):
+    def test_waiting_scoreboard_shows_saved_account_handle_instead_of_internal_me(self):
+        for platform,host,segment,ident in (('cf','codeforces.com','contest','123'),
+                                          ('gym','codeforces.com','gym','123'),
+                                          ('qoj','qoj.ac','contest','123')):
+            with self.subTest(platform=platform):
+                contest=Contest(platform,ident,f'https://{host}/{segment}/{ident}',
+                                'Waiting '+platform,'Waiting '+platform,{'A':'10'},Rules(18000))
+                path=self.root/f'vp-{platform}-waiting.json'
+                state={'mode':'vp','url':contest.url,'contest':contest.to_dict(), 'handle':'ActualCFUser',
+                       'directory':str(self.root),'start_time':1180,'requested_start':1180,
+                       'status':'scheduled','submissions':[]}
+                write_json(path,state)
+                view=self.monitor_view()
+                view.input.side_effect=[True,False]
+                with patch.object(cli,'TerminalDashboard',return_value=view),patch('time.sleep'):
+                    cli.monitor(path)
+                dashboard=view.update.call_args.args[0]
+                self.assertEqual(dashboard.me.name,'ActualCFUser')
+                self.assertEqual(dashboard.me.id,'me')
+                self.assertEqual(dashboard.elapsed,-180)
+                self.api.start.assert_not_called()
+
     def monitor_view(self):
         self.api.submissions.return_value=[]
         self.api.reference.return_value=Reference()

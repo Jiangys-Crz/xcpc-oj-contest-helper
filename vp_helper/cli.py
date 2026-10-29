@@ -17,6 +17,7 @@ from rich.console import Console
 from rich.table import Table
 from rich import box
 
+from .platform_clock import platform_now
 from .models import Contest, Reference, Submission, VPError, StartRejected
 from .accounts import account_key, api_credentials
 from .browser_login import browser_fields, refresh_browser_account, login_diagnostics, verify_stored_session
@@ -343,8 +344,8 @@ def reopen_saved(path: Path, state: dict, config: dict) -> None:
     else:
         cutoff = boundary(path)
         ended = state.get('status') != 'scheduled' and (state.get('status') in ('complete', 'archived')
-                 or cutoff is not None and time.time() >= cutoff
-                 or time.time() >= state['start_time'] + contest.rules.duration)
+                 or cutoff is not None and platform_now(state) >= cutoff
+                 or platform_now(state) >= state['start_time'] + contest.rules.duration)
         with file_lock(state_directory() / 'start.lock'):
             if ended:
                 restored = practice._resume_vp(state_directory(), state['url'], state['handle'], config)
@@ -402,7 +403,7 @@ def start(url: str, *, live: bool = False, practice: bool = False, resume: bool 
             raise VPError("没有可恢复的 VP/live 记录。请先运行 live CONTEST_URL 接入原站比赛。")
         if not resume and scheduled_start is None:
             from .scheduling import prompt_start
-            scheduled_start = prompt_start()
+            scheduled_start = prompt_start(url)
         path, state = prepare_resume(url) if resume else prepare_start(url, scheduled_start)
     open_state(path, state)
 
@@ -486,11 +487,11 @@ def monitor(path: Path) -> None:
                     return
                 from .sessions import boundary
                 cutoff = boundary(path)
-                if cutoff is not None and time.time() >= cutoff:
+                if cutoff is not None and platform_now(waiting) >= cutoff:
                     waiting["status"] = "cancelled"
                     write_json(path, waiting)
                     return
-                remaining = waiting["start_time"] - time.time()
+                remaining = waiting["start_time"] - platform_now(waiting)
                 if remaining <= 0 and time.monotonic() >= retry_at:
                     try:
                         waiting = activate(path, waiting)
@@ -502,7 +503,8 @@ def monitor(path: Path) -> None:
                         retry_at = time.monotonic() + 15
                     continue
                 c = Contest.from_dict(waiting["contest"])
-                view.update(display(c, -max(0, remaining), score_submissions([], list(c.problems), c.rules, 0),
+                view.update(display(c, -max(0, remaining), score_submissions([], list(c.problems), c.rules, 0,
+                                                                          name=waiting["handle"]),
                                     "—", "", None, [], error or "Waiting for scheduled start"))
                 time.sleep(0.2)
         if waiting.get("status") in ("cancelled", "failed"):
@@ -522,6 +524,8 @@ def monitor(path: Path) -> None:
         if state.get("handle") and api.handle.casefold() != state["handle"].casefold():
             raise VPError("The configured account changed; restore this VP's account before resuming it.")
         api.start_time = state["start_time"]
+        if state.get('start_time_source') == 'codeforces_api':
+            api.observed_start_time = state['start_time']
         reference_api = adapter(contest.url, config)
         reference_api.start_time = state["start_time"]
         from .sessions import boundary, merge_submissions, save_state
@@ -542,7 +546,7 @@ def monitor(path: Path) -> None:
         next_render = 0.0
         with ThreadPoolExecutor(max_workers=2) as network, TerminalDashboard() as view:
             while view.input():
-                elapsed = time.time() - state["start_time"]
+                elapsed = platform_now(state) - state["start_time"]
                 cutoff = boundary(path)
                 interrupted = cutoff is not None and cutoff < state["start_time"] + contest.rules.duration
                 scoring_elapsed = min(elapsed, cutoff-state["start_time"]) if interrupted else elapsed
@@ -557,6 +561,22 @@ def monitor(path: Path) -> None:
                     incoming, error = future.result()
                     future = None
                     if incoming is not None:
+                        native_start = getattr(api, 'observed_start_time', None)
+                        if (contest.platform in ('cf', 'gym') and isinstance(native_start, (int, float))
+                                and native_start != state['start_time']):
+                            from .sessions import reconcile_native_start
+                            old_start = state['start_time']
+                            state['submissions'] = [asdict(s) for s in submissions.values()]
+                            save_state(path, state)
+                            state = reconcile_native_start(path, state, native_start)
+                            incoming = [Submission(**{**asdict(s), 'time': s.time + old_start - native_start})
+                                        for s in incoming]
+                            submissions = {s['id']: Submission(**s) for s in state['submissions']}
+                            api.start_time = reference_api.start_time = state['start_time']
+                            receipts = ReceiptReader(path, state)
+                            bind_submit_context(Path(state['directory']), path, state)
+                            elapsed = platform_now(state) - state['start_time']
+                            scoring_elapsed = min(elapsed, cutoff-state['start_time']) if interrupted else elapsed
                         fresh_submissions = True
                         have_polled = True
                         state["submissions"] = [asdict(s) for s in submissions.values()]
@@ -607,7 +627,7 @@ def monitor(path: Path) -> None:
                     shown_message = "Scoreboard frozen"
                 if last_poll and now - last_poll > 15:
                     shown_message = "Results stale · " + shown_message
-                if boundary(path) is not None and time.time() >= boundary(path):
+                if boundary(path) is not None and platform_now(state) >= boundary(path):
                     shown_message = "Archived VP · new submissions from this directory are practice"
                 if now >= next_render:
                     state["practice_view"] = bool(state.get("practice_view") or read_json(path).get("practice_view"))
@@ -631,8 +651,9 @@ def monitor(path: Path) -> None:
                         final_score_key = private.rank_key
                         state["medal_lines"] = medal_lines(current_reference.rows, contest.medals)
                     state.update(contest=contest.to_dict(), submissions=[asdict(x) for x in submissions.values()],
-                                 recent=recent, submission_history=records, last_sync_time=time.time(),
+                                 recent=recent, submission_history=records, last_sync_time=platform_now(state),
                                  status="archived" if interrupted and elapsed >= cutoff-state["start_time"] else "complete" if finalized or preserve_final else "running")
+                    state['sync_revision'] = state.get('sync_revision', 0) + 1
                     state["summary"] = {"solved": private.solved,
                                         "penalty": private.penalty if private.results_complete else "",
                                         "rank": state.get('practice_rank', '—') if state['practice_view'] else rank if finalized else "", "prize": prize}
@@ -641,7 +662,9 @@ def monitor(path: Path) -> None:
                            "contest": contest.name, "url": contest.url, "solved": private.solved,
                            "penalty": private.penalty if private.results_complete else "", "rank": state.get('practice_rank', '—') if state['practice_view'] else rank if finalized else "", "prize": prize}
                     if finalized or not preserve_final:
-                        update_history(Path(state["history_path"]), row)
+                        aliases = [(datetime.fromtimestamp(at, timezone.utc).isoformat(), state['url'])
+                                   for at in state.get('start_time_aliases', [])]
+                        update_history(Path(state["history_path"]), row, previous_keys=tuple(aliases))
                 time.sleep(0.1)
 
 

@@ -330,8 +330,10 @@ def _verify(platform: str, candidate: BrowserCookies, expected: str, *, errors: 
     origin = "https://" + host
     web = WebSession(origin, {"cookie": candidate.cookie}, auto_refresh=False)
     try:
+        from .platform_clock import tick
+        sent_at = tick()
         response = web.session.get(origin + "/", params={"locale": "en"}, timeout=(5, 15))
-        web.check(response)
+        web.check(response, sent_at=sent_at)
         if urlsplit(response.url).hostname != host:
             if errors is not None:
                 errors.append("网站验证跳转到了其他域名。")

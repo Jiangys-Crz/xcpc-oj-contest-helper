@@ -101,7 +101,8 @@ def file_lock(path: Path, *, nonblocking: bool = False):
 
 
 def update_history(path: Path, row: dict, *, fields: list[str] = FIELDS,
-                   key_fields: tuple[str, ...] = ("start_time", "url")) -> None:
+                   key_fields: tuple[str, ...] = ("start_time", "url"),
+                   previous_keys: tuple[tuple[str, ...], ...] = ()) -> None:
     with file_lock(path.with_name("." + path.name + ".lock")):
         path.parent.mkdir(parents=True, exist_ok=True)
         for attempt in range(5):
@@ -110,7 +111,7 @@ def update_history(path: Path, row: dict, *, fields: list[str] = FIELDS,
             key = tuple(str(row[field]) for field in key_fields)
             matched = False
             for old in rows:
-                if tuple(old[field] for field in key_fields) == key:
+                if tuple(old[field] for field in key_fields) in [key, *previous_keys]:
                     old.update({field: str(row.get(field, "")) for field in fields})
                     matched = True
                     break

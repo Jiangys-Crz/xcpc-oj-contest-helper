@@ -9,6 +9,7 @@ import time
 from rich.table import Table
 
 from .codeforces_live import submission_records
+from .platform_clock import platform_now
 from .models import Contest, Submission, VPError
 from .scoring import score_submissions, submission_history
 from .sessions import attempts, boundary, merge_records, save_state
@@ -18,7 +19,7 @@ from .tui import Dashboard
 
 def refresh(path: Path, state: dict) -> str:
     from . import cli, live
-    if state.get("status") in ("scheduled", "failed", "cancelled") or time.time() < state["start_time"]:
+    if state.get("status") in ("scheduled", "failed", "cancelled") or platform_now(state) < state["start_time"]:
         return ""
     contest = Contest.from_dict(state["contest"])
     config = read_json(config_directory() / "config.json")
@@ -35,6 +36,7 @@ def refresh(path: Path, state: dict) -> str:
         incoming = api.submissions(contest, state["start_time"]) if state.get("mode") == "practice" else api.submissions(contest)
         incoming = incoming if state.get("mode") in ("live", "practice") else [asdict(s) for s in incoming]
         state["submissions"] = merge_records(path, state, incoming)
+        state['sync_revision'] = read_json(path).get('sync_revision', state.get('sync_revision', 0)) + 1
         save_state(path, state)
         return ""
     except (VPError, OSError) as exc:
@@ -69,12 +71,12 @@ def history(args: list[str]) -> None:
                     points = str(len({e["problem"] for e in events if e["verdict"] == "CORRECT"}))
             else:
                 score = score_submissions([Submission(**e) for e in events], list(contest.problems),
-                                          contest.rules, time.time()-state["start_time"])
+                                          contest.rules, platform_now(state)-state["start_time"])
                 points = str(score.solved)
             table.add_row(state.get("attempt_id", path.stem), state.get("mode", "vp"), contest.name,
                           datetime.fromtimestamp(state["start_time"]).strftime("%Y-%m-%d %H:%M:%S"),
                           points, str(sum(bool(e.get("practice")) for e in events)),
-                          "archived" if boundary(path) is not None and time.time() >= boundary(path) else state.get("status", ""))
+                          "archived" if boundary(path) is not None and platform_now(state) >= boundary(path) else state.get("status", ""))
         console.print(table)
         console.print("Details: vp history ATTEMPT_ID", markup=False)
         return
@@ -94,7 +96,7 @@ def history(args: list[str]) -> None:
     records = (submission_records(events, state.get("snapshot", {}).get("phase", "FINISHED"))
                if state.get("mode") in ("live", "practice") else
                submission_history([Submission(**e) for e in events], list(contest.problems), contest.rules,
-                                  time.time()-state["start_time"]))
+                                  platform_now(state)-state["start_time"]))
     console.print(contest.name + " · " + state.get("attempt_id", path.stem), markup=False)
     console.print("Directory: " + state["directory"], markup=False)
     if state.get("summary"):

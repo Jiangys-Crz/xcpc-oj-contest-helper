@@ -14,6 +14,7 @@ import time
 from rich.table import Table
 
 from .codeforces_live import CodeforcesLive, submission_records
+from .platform_clock import platform_now
 from .models import Contest, VPError
 from .accounts import account_key
 from .parsing import contest_url
@@ -105,7 +106,7 @@ def prepare_live(url: str) -> tuple[Path, dict]:
                  "start_time": contest.original_start, "handle": api.handle, "directory": str(directory),
                  "tmux_session": name, "status": "running", "submissions": saved.get("submissions", []),
                  "snapshot": snapshot, "history_path": saved.get("history_path") or str(desktop() / PLATFORMS[platform][2])}
-        state.setdefault("created_at", time.time())
+        state.setdefault("created_at", platform_now(canonical))
         if directory != target:
             state["workspace_target"] = str(target)
         write_json(path, state)
@@ -151,6 +152,7 @@ def save_progress(path: Path, state: dict, contest: Contest, snapshot: dict,
     state.update(contest=contest.to_dict(), start_time=contest.original_start, snapshot=snapshot,
                  submissions=merged, status="complete" if final else "running",
                  last_sync_time=submissions_at)
+    state['sync_revision'] = state.get('sync_revision', 0) + 1
     save_state(path, state)
     if snapshot:
         update_history(Path(state["history_path"]), {
@@ -202,7 +204,7 @@ def monitor_live(path: Path) -> None:
                         from .sessions import merge_records
                         state["submissions"] = list(events.values())
                         events = {e["id"]: e for e in merge_records(path, state, incoming)}
-                        submissions_at = time.time()
+                        submissions_at = platform_now(contest.url)
                         changed = True
                     pending = any(e["verdict"] == "PENDING" for e in events.values())
                     backoff = min(60.0, backoff * 2) if submission_error else 2.1 if pending else 5.0
@@ -223,11 +225,11 @@ def monitor_live(path: Path) -> None:
                             next_submissions = 0.0
                     # Refresh near the scheduled start promptly, with normal
                     # API backoff if the official scoreboard is not open yet.
-                    remaining = contest.original_start - time.time()
+                    remaining = contest.original_start - platform_now(contest.url)
                     next_reference = now + (max(2.1, min(30.0, remaining)) if remaining > 0 else 15.0)
                 if reference_future is None and now >= next_reference:
                     reference_future = network.submit(fetch, reference_api, contest.to_dict(), Path(state["directory"]))
-                if submission_future is None and now >= next_submissions and time.time() >= contest.original_start:
+                if submission_future is None and now >= next_submissions and platform_now(contest.url) >= contest.original_start:
                     submission_start = contest.original_start
                     submission_future = network.submit(fetch, api, contest.to_dict())
                 if changed:
@@ -243,15 +245,15 @@ def monitor_live(path: Path) -> None:
                             submission_config["problem_ids"] = contest.problems
                             write_json(config_path, submission_config)
                 phase = snapshot.get("phase", contest.extra["phase"])
-                age = time.time() - snapshot.get("at", 0)
+                age = platform_now(contest.url) - snapshot.get("at", 0)
                 message = submission_error or reference_error or snapshot.get("message", "")
                 if age > 45 and phase != "BEFORE":
                     message = "Standings stale · " + (message or "reconnecting")
-                if submissions_at and time.time() - submissions_at > 15:
+                if submissions_at and platform_now(contest.url) - submissions_at > 15:
                     message = "Submissions stale · " + (message or "reconnecting")
                 if now >= next_render:
                     state["practice_view"] = bool(state.get("practice_view") or read_json(path).get("practice_view"))
-                    dashboard = LiveDashboard(contest, time.time() - contest.original_start, snapshot,
+                    dashboard = LiveDashboard(contest, platform_now(contest.url) - contest.original_start, snapshot,
                                               submission_records(list(events.values()), phase), message,
                                               state["handle"], practice=state["practice_view"],
                                               practice_rank=read_json(path).get('practice_rank', state.get('practice_rank', '—')))

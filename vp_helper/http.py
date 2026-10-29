@@ -124,6 +124,8 @@ class WebSession:
                     from curl_cffi.const import CurlHttpVersion
                     request_options['http_version'] = CurlHttpVersion.V1_1
                 try:
+                    from .platform_clock import tick
+                    sent_at = tick()
                     r = self.session.get(url, timeout=(10, 40), **request_options)
                 except _RequestException as exc:
                     if not (_IMPERSONATE and host == 'codeforces.com' and not self._http1_only
@@ -134,12 +136,14 @@ class WebSession:
                     if urlsplit(url).path.startswith('/api/'):
                         time.sleep(2.1)
                     request_options['http_version'] = CurlHttpVersion.V1_1
+                    sent_at = tick()
                     r = self.session.get(url, timeout=(10, 40), **request_options)
                 if (not refreshed and r.status_code == 200
                         and urlsplit(r.url).path in ("/login", "/user/login", "/enter")):
                     refreshed = True
                     if self._refresh_browser(force=True):
                         # Only an idempotent GET is repeated after refreshing login.
+                        sent_at = tick()
                         r = self.session.get(url, timeout=(10, 40), **request_options)
             except _RequestException as exc:
                 if attempt == retries:
@@ -153,7 +157,7 @@ class WebSession:
                 continue
             if r.status_code in _RETRY_STATUS and attempt < retries:
                 continue
-            return self.check(r)
+            return self.check(r, sent_at=sent_at)
         # The final iteration always returns or raises; this keeps the flow total.
         raise VPError(f"Connection failed: {host}")  # pragma: no cover
 
@@ -164,12 +168,14 @@ class WebSession:
             if self._http1_only:
                 from curl_cffi.const import CurlHttpVersion
                 options['http_version'] = CurlHttpVersion.V1_1
+            from .platform_clock import tick
+            sent_at = tick()
             r = self.session.post(url, data=data, timeout=(10, 40), **options)
         except _RequestException:
             raise VPError("The server did not confirm starting the VP. Run the same URL to check the remote state.") from None
-        return self.check(r)
+        return self.check(r, sent_at=sent_at)
 
-    def check(self, r):
+    def check(self, r, *, sent_at=None):
         if r.status_code != 200:
             if (urlsplit(r.url).hostname == 'codeforces.com' and urlsplit(r.url).path.startswith('/api/')
                     and r.status_code in (400, 403, 429)):
@@ -196,6 +202,8 @@ class WebSession:
                 body = ""
             if "Just a moment..." in body or "cf-chl-" in body:
                 raise VPError("The platform requests browser verification; refresh the login session in the Ubuntu browser.")
+        from .platform_clock import observe
+        observe(r, sent_at)
         return r
 
     def soup(self, url: str, **kwargs) -> BeautifulSoup:

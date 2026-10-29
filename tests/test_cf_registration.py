@@ -52,7 +52,8 @@ class CFRegistrationTests(unittest.TestCase):
             with self.subTest(zone=zone), patch.dict(os.environ, {'TZ': zone}):
                 form = registration().select_one('form.contestRegistration')
                 payload = form_values(form)
-                registration_time(form, payload, when)
+                actual=registration_time(form, payload, when)
+                self.assertEqual(actual, datetime.fromisoformat('2026-10-29T12:31:00+00:00').timestamp())
                 self.assertEqual(payload['startDay'], day)
                 self.assertEqual(payload['startTime'], clock)
                 self.assertEqual(payload['clientTimezoneOffset'], offset)

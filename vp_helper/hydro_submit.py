@@ -11,6 +11,7 @@ from urllib.parse import urlencode, urljoin, urlsplit
 from .browser_login import refresh_submission_login
 from .http import _RequestException, form_values
 from .hydro import HydroLive, ORIGIN, identity_from_html
+from .platform_clock import platform_now
 from .models import Contest, VPError
 from .receipts import record_receipt, valid_submission_id
 from .storage import read_json, state_directory
@@ -111,7 +112,7 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     submit_url = url + ("?" + urlencode(query) if query else "")
     if not confirm_submission(source, config, label, str(options[payload['lang']]), submit_url, config_path):
         return None
-    submitted_at = time.time()
+    submitted_at = platform_now(api.url)
     if submitted_at < contest.original_start:
         raise VPError("The CWNUOJ contest has not started. No code was sent.")
     try:

@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
 import requests
 
 from .http import WebSession, form_values
+from .platform_clock import platform_now
 from .models import Cell, Contest, Reference, Rules, Submission, TeamScore, VPError, StartRejected
 from .originals import OriginalReplay, cache_archive_submissions, classify, eligibility_lookup, identity, load_archive_submissions, load_metadata, lookup_team
 from .parsing import ccpc_reveal_count, js_value, medals_from_html, seconds, timestamp
@@ -228,7 +229,7 @@ class QOJ:
         from .browser_login import identity_from_page
         identity_from_page("qoj", str(soup), self.handle)
         current = self._registration(duration=contest.rules.duration)
-        if current and time.time() < current[0] + current[1]:
+        if current and platform_now(self.url) < current[0] + current[1]:
             raise StartRejected("QOJ 已有尚未结束的 VP，本次命令已取消。")
         form, endpoint = self._start_form(soup)
         return form, endpoint, current
@@ -241,7 +242,7 @@ class QOJ:
             from .browser_login import identity_from_page
             identity_from_page("qoj", str(soup), self.handle)
             current = self._registration(duration=contest.rules.duration)
-        if current and time.time() < current[0] + current[1]:
+        if current and platform_now(self.url) < current[0] + current[1]:
             self.start_time = current[0]
             contest.rules.duration = current[1]
             return self.start_time
@@ -270,7 +271,7 @@ class QOJ:
         try:
             before_post = getattr(self, 'before_native_post', None)
             if callable(before_post):
-                before_post(time.time())
+                before_post(platform_now(self.url))
             self.native_post_sent = True
             response = self.web.post(endpoint, payload, headers={'Origin': self.origin, 'Referer': endpoint})
             site_message = self._start_message(response)

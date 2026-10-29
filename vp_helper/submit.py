@@ -7,6 +7,7 @@ import re
 import sys
 import time
 
+from .platform_clock import platform_now
 from .models import VPError
 from .storage import read_json
 from .submit_context import submission_configuration
@@ -25,7 +26,7 @@ def main() -> None:
             state = read_json(Path(context["state_path"]))
             if state.get("status") in ("cancelled", "failed"):
                 raise VPError("This VP did not start. Use bt CONTEST_URL for practice.")
-            if state.get("status") == "scheduled" or time.time() < state.get("start_time", 0):
+            if state.get("status") == "scheduled" or platform_now(state) < state.get("start_time", 0):
                 raise VPError("This VP has not started yet. Wait for the countdown.")
         platform = config.get("platform")
         if platform in ("cf", "gym") and config.get("mode") in ("live", "practice"):

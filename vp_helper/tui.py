@@ -65,7 +65,7 @@ class Dashboard:
         heading.add_row(Text(" " + timer, style="bold default"), Text(label, style="bold"), Text(""))
         table = Table(box=SCORE_BOX, padding=(0, 1), style="default",
                       header_style="bold black on #eeeeee", border_style="#bbbbbb",
-                      show_edge=False, expand=True)
+                      show_edge=False, expand=True, collapse_padding=True)
         for label in ("rank", "team", "solved", "penalty"):
             table.add_column(label, justify="left" if label == "team" else "center",
                              no_wrap=True)
@@ -191,7 +191,7 @@ class LiveDashboard:
         own = self.snapshot.get("own")
         table = Table(box=SCORE_BOX, padding=(0, 1), style="default",
                       header_style="bold black on #eeeeee", border_style="#bbbbbb",
-                      expand=True, show_edge=False)
+                      expand=True, show_edge=False, collapse_padding=True)
         columns = ["rank", "team", "solved" if scoring == "ICPC" else "points"]
         if scoring == "ICPC":
             columns.append("penalty")

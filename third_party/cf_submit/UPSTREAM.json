@@ -26,7 +26,8 @@
     "Translate RoboBrowser's files= upload payload into a CurlMime so the Codeforces source upload works on the curl_cffi session",
     "Refresh a verified same-account Firefox login before cookie-based submission",
     "Use raw regex strings for Python 3.14 compatibility without invalid escape warnings",
-    "Show the common VP submission preview and require y/n confirmation before the source upload"
+    "Show the common VP submission preview and require y/n confirmation before the source upload",
+    "Use the shared judge clock for submission receipt timestamps"
   ],
   "excluded_files": [
     "cf_test.py"

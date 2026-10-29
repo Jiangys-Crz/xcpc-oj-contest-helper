@@ -12,6 +12,7 @@ Requirements for contest.json
 }
 '''
 
+from vp_helper.platform_clock import platform_now
 import sys
 try:
     # qoj.ac sits behind Cloudflare, which fingerprints the TLS handshake;
@@ -150,7 +151,7 @@ def submit(url: str, lang: str, code: str, problem: str) -> None:
         'submit-answer': (None, 'answer')
     }
 
-    submitted_at = time.time()
+    submitted_at = platform_now(contest["base_url"])
     try:
         submit_response = post_form(session, url, payload_files)
     except _RequestException:

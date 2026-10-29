@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 from bs4 import BeautifulSoup
 
 from .models import Submission, VPError
-from .storage import read_json, state_directory, write_json
+from .storage import file_lock, read_json, state_directory, write_json
 
 
 def receipt_directory(state_path: Path) -> Path:
@@ -30,8 +30,13 @@ def record_receipt(config: dict, submission_id: str, problem: str, submitted_at:
     path = Path(context["state_path"])
     if path.resolve().parent != state_directory().resolve():
         raise VPError("The submission context is outside the VP state directory.")
+    with file_lock(path.with_suffix('.save.lock')):
+        return _record_locked(path, context, sid, problem, submitted_at)
+
+
+def _record_locked(path: Path, context: dict, sid: str, problem: str, submitted_at: float) -> bool:
     state = read_json(path)
-    if (state.get("start_time") != context.get("start_time")
+    if (context.get("start_time") not in [state.get("start_time"), *state.get('start_time_aliases', [])]
             or state.get("url") != context.get("url")
             or state.get("handle") != context.get("handle")
             or problem not in state.get("contest", {}).get("problems", {})):

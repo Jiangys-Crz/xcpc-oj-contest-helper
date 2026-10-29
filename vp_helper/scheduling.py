@@ -48,16 +48,17 @@ def parse_start(value: str, now: float | None = None) -> float:
         raise VPError("请输入 HH:MM、HH:MM:SS 或 YYYY-MM-DD HH:MM；完整日期必须在将来。") from None
 
 
-def prompt_start() -> float:
+def prompt_start(url: str | None = None) -> float:
     while True:
         value = input(f"VP 开始时间（{user_zone()}；回车三分钟后开始，或 HH:MM / YYYY-MM-DD HH:MM）：")
         try:
-            return parse_start(value)
+            from .platform_clock import platform_now
+            return parse_start(value, now=platform_now(url))
         except VPError as exc:
             print(str(exc))
 
 
-def registration_time(form, payload: dict, when: float) -> None:
+def registration_time(form, payload: dict, when: float) -> float:
     """Fill the native datetime widget using its protocol, never OS locale."""
     field = next((n for n in ("startTime", "virtualStartTime")
                   if form.select_one(f'input[name="{n}"]')), None)
@@ -81,11 +82,12 @@ def registration_time(form, payload: dict, when: float) -> None:
                                if date_format == "en" else selected.strftime("%d.%m.%Y"))
         payload["startTime"] = selected.strftime("%H:%M")
         payload["clientTimezoneOffset"] = str(int(selected.utcoffset().total_seconds() / 60))
-        return
+        return selected.timestamp()
     raw = str(payload.get(field, ""))
     if re.fullmatch(r"[0-9]{10,13}", raw):
-        payload[field] = str(int(when * (1000 if len(raw) == 13 else 1)))
-        return
+        scale = 1000 if len(raw) == 13 else 1
+        payload[field] = str(int(when * scale))
+        return int(payload[field]) / scale
     offset_field = next((k for k in payload if k.lower() in ("timezoneoffset", "timezone")), None)
     offset = str(payload.get(offset_field, "")) if offset_field else ""
     from datetime import timezone
@@ -118,3 +120,4 @@ def registration_time(form, payload: dict, when: float) -> None:
         payload[field] = selected.strftime("%d.%m.%Y %H:%M" + (":%S" if raw.count(":") == 2 else ""))
     else:
         raise VPError("Codeforces changed its start time format; no registration was sent.")
+    return selected.replace(microsecond=0).timestamp()

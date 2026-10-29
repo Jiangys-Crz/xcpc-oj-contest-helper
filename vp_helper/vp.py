@@ -5,6 +5,7 @@ from pathlib import Path
 import time
 from uuid import uuid4
 
+from .platform_clock import platform_now
 from .models import Contest, VPError, StartRejected
 from .parsing import contest_url
 from .sessions import attempts, boundary, close_attempt
@@ -47,7 +48,7 @@ def _activate(path: Path) -> dict:
         if state.get("status") != "scheduled":
             return state
         cutoff = boundary(path)
-        if cutoff is not None and time.time() >= cutoff:
+        if cutoff is not None and platform_now(state) >= cutoff:
             state["status"] = "cancelled"
             write_json(path, state)
             return state
@@ -61,7 +62,7 @@ def _activate(path: Path) -> dict:
             _fail(path, state, error)
             raise error
         if (contest.platform == 'qoj' and not state.get('activation_uncertain')
-                and time.time() < state['requested_start']):
+                and platform_now(state) < state['requested_start']):
             return state
         config = cli.load_account(contest.platform)
         api = cli.adapter(contest.url, config)
@@ -74,7 +75,7 @@ def _activate(path: Path) -> dict:
             if contest.platform == 'qoj':
                 # QOJ starts immediately on POST. A delayed response can only
                 # be confirmed by a new native record after this request.
-                return state['activation_target'] - 60 <= started <= time.time() + 60
+                return state['activation_target'] - 60 <= started <= platform_now(state) + 60
             return abs(started-state['activation_target']) <= 60
         try:
             if recovering:
@@ -87,7 +88,7 @@ def _activate(path: Path) -> dict:
                 if not isinstance(recovered, dict):
                     contest.rules.duration = recovered[1]
             else:
-                state["activation_target"] = max(state["requested_start"], time.time())
+                state["activation_target"] = max(state["requested_start"], platform_now(state))
                 # If interrupted during POST, recovery is query-only, even when
                 # the process could not persist the response.
                 state["activation_uncertain"] = False
@@ -97,6 +98,10 @@ def _activate(path: Path) -> dict:
                     state['activation_uncertain'] = True
                     if contest.platform == 'qoj':
                         state['activation_target'] = at
+                    else:
+                        actual = getattr(api, 'registration_start', None)
+                        if isinstance(actual, (int, float)):
+                            state.update(start_time=actual, activation_target=actual)
                     write_json(path, state)
                 api.before_native_post = before_post
                 if contest.platform in ("cf", "gym"):
@@ -145,7 +150,7 @@ def prepare(url: str, scheduled_start: float | None = None) -> tuple[Path, dict]
         contest.directory_name = " ".join(contest.directory_name.split())
         number = len(previous) + 1
         attempt_id = uuid4().hex[:10]
-        requested = scheduled_start if scheduled_start is not None else time.time()
+        requested = scheduled_start if scheduled_start is not None else platform_now(canonical)
         if platform == "qoj":
             api.check_start(contest)
         contest.extra.update(attempt=number, attempt_id=attempt_id)
@@ -162,7 +167,7 @@ def prepare(url: str, scheduled_start: float | None = None) -> tuple[Path, dict]
             except (VPError, OSError) as exc:
                 cli.console.print(f"Statement download skipped: {exc}. Use the original contest page.", markup=False)
         path = root / f"vp-{platform}-{contest.contest_id}-{attempt_id}.json"
-        state = {"mode": "vp", "attempt": number, "attempt_id": attempt_id, "contest": contest.to_dict(), "created_at": time.time(),
+        state = {"mode": "vp", "attempt": number, "attempt_id": attempt_id, "contest": contest.to_dict(), "created_at": platform_now(canonical),
                  "url": canonical, "start_time": requested, "requested_start": requested,
                  "handle": api.handle, "directory": str(directory), "tmux_session": path.stem,
                  "status": "scheduled", "submissions": [], "recent": [], "previous_current": current,
@@ -173,7 +178,7 @@ def prepare(url: str, scheduled_start: float | None = None) -> tuple[Path, dict]
         cli.bind_submit_context(directory, path, state)
         # Codeforces confirms a future registration now; QOJ preflights the
         # reservation and sends its single native start request at the deadline.
-        if platform in ("cf", "gym") or requested <= time.time():
+        if platform in ("cf", "gym") or requested <= platform_now(state):
             try:
                 state = _activate(path)
             except StartRejected:

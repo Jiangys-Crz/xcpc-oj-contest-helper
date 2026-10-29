@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 from bs4 import BeautifulSoup
 
 from .http import WebSession
+from .platform_clock import platform_now
 from .models import Contest, Rules, VPError
 from .parsing import CWNUOJ_HOST, contest_url, timestamp
 from .receipts import valid_submission_id
@@ -161,7 +162,7 @@ class HydroLive:
         contest.original_start = start
         contest.rules = Rules(int(end - start))
         contest.problems = {label(i): str(pid) for i, pid in enumerate(pids)}
-        now = time.time()
+        now = platform_now(self.url)
         phase = "BEFORE" if now < start else "CODING" if now < end else "FINISHED"
         frozen = bool(tdoc.get("lockAt") and timestamp(tdoc["lockAt"]) <= now and not tdoc.get("unlocked"))
         contest.extra.update(mode="live", scoring=SCORING[tdoc["rule"]], phase=phase, frozen=frozen,
@@ -178,7 +179,7 @@ class HydroLive:
         data = details if details is not None else self.details()
         self.apply_metadata(contest, data)
         snapshot = {"own": None, "stats": {}, "phase": contest.extra["phase"],
-                    "frozen": contest.extra["frozen"], "at": time.time()}
+                    "frozen": contest.extra["frozen"], "at": platform_now(self.url)}
         if snapshot["phase"] == "BEFORE":
             return snapshot
         try:

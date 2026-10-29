@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 
 from .browser_login import refresh_submission_login
 from .http import _RequestException
+from .platform_clock import platform_now
 from .models import Contest, VPError
 from .nowcoder import NowcoderLive, ORIGIN, identity_from_html, problem_config
 from .receipts import record_receipt
@@ -99,7 +100,7 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     payload.update(content=source.read_text(encoding="utf8"), language=lang, languageName=LANGUAGES[lang])
     if not confirm_submission(source, config, label, LANGUAGES[lang], url, config_path):
         return None
-    submitted_at = time.time()
+    submitted_at = platform_now(api.url)
     if submitted_at < contest.original_start:
         raise VPError("The Nowcoder contest has not started. No code was sent.")
     try:

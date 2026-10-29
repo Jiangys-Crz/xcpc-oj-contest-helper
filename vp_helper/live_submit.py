@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 from .browser_login import refresh_submission_login
 from .codeforces_live import CodeforcesLive, verify_login, verify_practice
 from .http import _RequestException, form_values
+from .platform_clock import platform_now
 from .models import VPError
 from .receipts import cf_submission_id, cf_submission_ids, record_receipt
 from .storage import read_json, state_directory
@@ -73,8 +74,8 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
         verify_practice(api, raw["durationSeconds"])
     if (str(raw.get("id")) != api.id or raw.get("phase") == "BEFORE" or
             not raw.get("startTimeSeconds") or
-            time.time() < raw["startTimeSeconds"]
-            or raw.get("phase") != "CODING" and time.time() < raw["startTimeSeconds"] + raw["durationSeconds"]):
+            platform_now(api.url) < raw["startTimeSeconds"]
+            or raw.get("phase") != "CODING" and platform_now(api.url) < raw["startTimeSeconds"] + raw["durationSeconds"]):
         raise VPError("The coding phase has not started or practice is not open. No code was submitted.")
     if label not in {p["index"] for p in snapshot["problems"]}:
         raise VPError("This problem is not available in the current contest.")
@@ -105,7 +106,7 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     language_name = form.select_one(f'select[name="programTypeId"] option[value="{payload["programTypeId"]}"]').get_text(' ', strip=True)
     if not confirm_submission(source, config, label, language_name, target, config_path):
         return None
-    submitted_at = time.time()
+    submitted_at = platform_now(api.url)
     try:
         # A POST is sent once. A timeout can mean the server accepted it.
         response = api.web.session.post(target, data=payload, timeout=(10, 40))

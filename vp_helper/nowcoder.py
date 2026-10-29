@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from bs4 import BeautifulSoup
 
 from .http import WebSession
+from .platform_clock import platform_now
 from .models import Contest, Rules, VPError
 from .parsing import NOWCODER_HOST, contest_url, js_value
 
@@ -159,7 +160,7 @@ class NowcoderLive:
         start, end = data.get("startTime"), data.get("endTime")
         if not all(type(t) in (int, float) for t in (start, end)) or start <= 0 or end <= start:
             raise VPError("Nowcoder returned an invalid official schedule.")
-        server_ms = start - data["countDownTime"] if type(data.get("countDownTime")) in (int, float) else time.time() * 1000
+        server_ms = start - data["countDownTime"] if type(data.get("countDownTime")) in (int, float) else platform_now(self.url) * 1000
         phase = "BEFORE" if server_ms < start else "CODING" if server_ms < end else "FINISHED"
         frozen_ms, after_ms = float(setting.get("rankFrozenMillisecond") or 0), float(setting.get("rankEndFrozenMillisecond") or 0)
         frozen = bool(setting.get("needRankFrozen") and frozen_ms > 0 and end - frozen_ms <= server_ms <= end + after_ms)
@@ -201,7 +202,7 @@ class NowcoderLive:
 
     def snapshot(self, contest: Contest) -> dict:
         self.apply_metadata(contest, self.details())
-        snapshot = {"own": None, "stats": {}, "phase": contest.extra["phase"], "frozen": contest.extra["frozen"], "at": time.time()}
+        snapshot = {"own": None, "stats": {}, "phase": contest.extra["phase"], "frozen": contest.extra["frozen"], "at": platform_now(self.url)}
         if snapshot["phase"] == "BEFORE":
             return snapshot
         problems = self.problem_list(contest)

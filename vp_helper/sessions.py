@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import math
 from pathlib import Path
 import time
 
+from .platform_clock import platform_now
 from .models import Contest, Submission, VPError
 from .storage import file_lock, read_json, state_directory, write_json
 
@@ -84,11 +86,58 @@ def merge_submissions(path: Path, state: dict, incoming: list[Submission]) -> li
     return [Submission(**event) for event in merge_records(path, state, [asdict(s) for s in incoming])]
 
 
+def _rebase_start(state: dict, started: float) -> None:
+    old = state['start_time']
+    delta = old - started
+    state['start_time_aliases'] = sorted(set(state.get('start_time_aliases', []) + [old]) - {started})
+    state['start_time'] = started
+    for key in ('submissions', 'submission_history', 'recent'):
+        state[key] = [{**event, 'time': event['time'] + delta} if isinstance(event.get('time'), (int, float))
+                      else event for event in state.get(key, [])]
+
+
+def reconcile_native_start(path: Path, state: dict, started: float) -> dict:
+    """Adopt the same CF/Gym VP's API epoch while preserving absolute record times."""
+    if (state.get('mode', 'vp') != 'vp' or state['contest']['platform'] not in ('cf', 'gym')
+            or not isinstance(started, (int, float)) or not math.isfinite(started)
+            or abs(started - state['start_time']) > 60
+            or state.get('start_time_source') == 'codeforces_api' and started != state['start_time']):
+        raise VPError('Codeforces 的原站开始时间与本地会话不符，未修改比赛记录。')
+    with file_lock(path.with_suffix('.save.lock')):
+        saved = read_json(path)
+        old = saved['start_time']
+        if old == started:
+            return saved
+        if old != state['start_time']:
+            raise VPError('比赛时间已由另一个同步任务更新，请恢复此面板后重试。')
+        _rebase_start(saved, started)
+        saved['start_time_source'] = 'codeforces_api'
+        write_json(path, saved)
+        # An in-flight submit with the old context is accepted via the saved
+        # alias; record_receipt holds this same lock and uses the new epoch.
+        for receipt in path.with_suffix('.receipts').glob('*.json'):
+            event = read_json(receipt)
+            if (event.get('start_time') == old and event.get('url') == saved['url']
+                    and event.get('handle', saved['handle']) == saved['handle']):
+                event.update(start_time=started, time=event['time'] + old - started)
+                cutoff = boundary(path)
+                event['practice'] = bool(saved.get('mode') == 'practice'
+                                         or event['time'] >= saved['contest']['rules']['duration']
+                                         or cutoff is not None and started + event['time'] >= cutoff)
+                write_json(receipt, event)
+        return saved
+
+
 def save_state(path: Path, state: dict) -> None:
     # Only submission data is shared with independent history refreshes. Writers
     # merge IDs under a separate lock, so a slow GET cannot erase new receipts.
     with file_lock(path.with_suffix(".save.lock")):
         previous = read_json(path)
+        if (state['start_time'] != previous.get('start_time', state['start_time'])
+                and state['start_time'] in previous.get('start_time_aliases', [])):
+            _rebase_start(state, previous['start_time'])
+            state['start_time_aliases'] = previous['start_time_aliases']
+            state['start_time_source'] = previous.get('start_time_source', 'codeforces_api')
         if previous.get("workspace_managed"):
             state["directory"] = previous["directory"]
             state["workspace_managed"] = True
@@ -104,11 +153,20 @@ def save_state(path: Path, state: dict) -> None:
             state["practice_view"] = True
         if 'practice_rank' in previous:
             state['practice_rank'] = previous['practice_rank']
-        combined = {str(e["id"]): e for e in previous.get("submissions", [])}
-        combined.update({str(e["id"]): e for e in state.get("submissions", [])})
+        previous_records = {str(e["id"]): e for e in previous.get("submissions", [])}
+        combined = {str(e["id"]): e for e in state.get("submissions", [])}
+        if previous.get('sync_revision', 0) > state.get('sync_revision', 0):
+            combined.update(previous_records)
+            state['sync_revision'] = previous['sync_revision']
+            if 'last_sync_time' in previous:
+                state['last_sync_time'] = previous['last_sync_time']
+            if 'summary' in previous:
+                state['summary'] = previous['summary']
+        else:
+            combined = {**previous_records, **combined}
         state["submissions"] = merge_records(path, state, list(combined.values()))
         cutoff = boundary(path)
-        if state.get("mode", "vp") == "vp" and cutoff is not None and time.time() >= cutoff:
+        if state.get("mode", "vp") == "vp" and cutoff is not None and platform_now(state) >= cutoff:
             state["status"] = "cancelled" if previous.get("status") == "cancelled" or state.get("status") in ("scheduled", "cancelled") else "archived"
             if previous.get("ended_at") is not None:
                 state["ended_at"] = previous["ended_at"]
@@ -138,8 +196,8 @@ def end_attempt(attempt_id: str | None = None) -> tuple[Path, dict]:
             else:
                 current = read_json(root / "current.json").get("state_path")
                 active = [(p, s) for p, s in saved if s.get("status") in ("scheduled", "running")
-                          and (boundary(p) is None or time.time() < boundary(p))
-                          and time.time() < s["start_time"] + s["contest"]["rules"]["duration"]]
+                          and (boundary(p) is None or platform_now(s) < boundary(p))
+                          and platform_now(s) < s["start_time"] + s["contest"]["rules"]["duration"]]
                 selected = [(p, s) for p, s in active if str(p) == current]
                 if not selected:
                     if len(active) > 1:
@@ -152,7 +210,7 @@ def end_attempt(attempt_id: str | None = None) -> tuple[Path, dict]:
             state = read_json(path)
             if state.get("status") in ("failed", "cancelled", "complete", "archived"):
                 return path, state
-            now = time.time()
+            now = platform_now(state)
             cancelled = state.get("status") == "scheduled" or now < state["start_time"]
             close_attempt(path, now, reason="manual")
             state.update(status="cancelled" if cancelled else "archived", ended_at=now)
@@ -171,5 +229,5 @@ def locally_ended(url: str, handle: str, native_start: float) -> bool:
                and s["handle"].casefold() == handle.casefold()
                and s["contest"].get("extra", {}).get("native_start_time", s["start_time"]) == native_start
                and read_json(p.with_suffix(".closed")).get("reason") == "manual"
-               and boundary(p) is not None and time.time() >= boundary(p)
+               and boundary(p) is not None and platform_now(s) >= boundary(p)
                for p, s in attempts())

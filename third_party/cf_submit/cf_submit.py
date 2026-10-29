@@ -1,3 +1,4 @@
+from vp_helper.platform_clock import platform_now
 import sys
 import time
 import json
@@ -148,7 +149,7 @@ def submit_problem(browser, contest, lang, source, guru):
     if not confirm_submission(Path(source), config, problem, available[langcode], browser.url,
                               config_path if config_path.is_file() else None):
         return False
-    browser.vp_submitted_at = time.time()
+    browser.vp_submitted_at = platform_now(browser.url)
     browser.submit_form(submission)
 
     """ check if good """
@@ -196,7 +197,7 @@ def submit(browser, handle, contest, problem, lang, source, show, guru):
         browser.open("https://codeforces.com/contest/" + contest + "/submit/" + problem.upper())
 
     """ show submission """
-    submitted_at = time.time()
+    submitted_at = platform_now(browser.url)
     if submit_problem(browser, contest, lang, source, pid):
         submitted_at = browser.vp_submitted_at
         if previous is not None:
