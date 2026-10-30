@@ -22,7 +22,7 @@ INFO = "/acm/contest/contest-info"
 PROBLEMS = "/acm/contest/problem-list"
 RANK = "/acm-heavy/acm/contest/real-time-rank-data"
 STATUS = "/acm-heavy/acm/contest/status-list"
-SCORING = {1: "ICPC", 2: "OI", 3: "IOI", 4: "WEEKLY"}
+SCORING = {0: "ICPC", 1: "ICPC", 2: "OI", 3: "IOI", 4: "WEEKLY"}
 VERDICTS = {"答案正确": "CORRECT", "已通过": "CORRECT", "通过": "CORRECT", "Accepted": "CORRECT",
             "答案错误": "WRONG-ANSWER", "Wrong Answer": "WRONG-ANSWER", "编译错误": "COMPILER-ERROR",
             "运行错误": "RUN-ERROR", "执行出错": "RUN-ERROR", "异常退出": "RUN-ERROR", "返回非零": "RUN-ERROR",
