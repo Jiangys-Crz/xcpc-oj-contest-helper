@@ -114,15 +114,38 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(self.api.snapshot(self.contest)["phase"], "BEFORE")
         self.api.get_json.assert_not_called()
 
+    def test_type_zero_acm_contest_allows_unregistered_practice(self):
+        # Minimal public contest-info fields from the reported contest 132462.
+        url = ORIGIN + "/acm/contest/132462"
+        info = {"contestId": 132462, "type": 0,
+                "name": "&quot;壹零杯&quot;第三届西华师范大学程序设计竞赛（同步赛）",
+                "startTime": 1779586200000, "endTime": 1779604200000,
+                "contestType": 0, "isSignUp": False}
+        api = NowcoderLive(url, self.api.account)
+        contest = Contest("nowcoder", "132462", url, "", "", {}, Rules(1))
+        with patch("vp_helper.nowcoder.platform_now", return_value=1779604201):
+            api.apply_metadata(contest, info, require_registration=False)
+        self.assertEqual(contest.extra["scoring"], "ICPC")
+        self.assertEqual(contest.extra["phase"], "FINISHED")
+        self.assertEqual(contest.rules.duration, 18000)
+        self.assertEqual(contest.rules.penalty_minutes, 20)
+
+    def test_unknown_scoring_rule_still_rejected(self):
+        with self.assertRaisesRegex(VPError, "unsupported contest identity or scoring rule"):
+            self.api.apply_metadata(self.contest, details(kind=99), require_registration=False)
+
     def test_original_acm_rank_penalty_and_merged_public_statistics(self):
-        snap = self.api.snapshot(self.contest)
-        self.assertEqual((snap["own"]["rank"], snap["own"]["points"], snap["own"]["penalty"]), (17, 1, "20.5"))
-        self.assertEqual([p["display"] for p in snap["own"]["problemResults"]], ["+2", "−1"])
-        self.assertEqual([p["points"] for p in snap["own"]["problemResults"]], [1, 0])
-        self.assertEqual(snap["stats"]["attempted"], {"A": 20, "B": 4})
-        self.assertEqual(snap["stats"]["accepted"]["A"], 12)
-        self.assertEqual(self.contest.problems, {"A": "10", "B": "11"})
-        self.assertFalse(any("ignoreRankFrozen" in c.kwargs for c in self.api.get_json.call_args_list))
+        for kind in (0, 1):
+            with self.subTest(kind=kind):
+                self.info = details(kind)
+                snap = self.api.snapshot(self.contest)
+                self.assertEqual((snap["own"]["rank"], snap["own"]["points"], snap["own"]["penalty"]), (17, 1, "20.5"))
+                self.assertEqual([p["display"] for p in snap["own"]["problemResults"]], ["+2", "−1"])
+                self.assertEqual([p["points"] for p in snap["own"]["problemResults"]], [1, 0])
+                self.assertEqual(snap["stats"]["attempted"], {"A": 20, "B": 4})
+                self.assertEqual(snap["stats"]["accepted"]["A"], 12)
+                self.assertEqual(self.contest.problems, {"A": "10", "B": "11"})
+                self.assertFalse(any("ignoreRankFrozen" in c.kwargs for c in self.api.get_json.call_args_list))
 
     def test_ioi_and_weekly_use_server_total_and_partial_scores(self):
         for kind in (3, 4):
@@ -377,7 +400,7 @@ class SubmitTests(IsolatedState):
         self.config["mode"] = self.state["mode"] = "practice"
         self.state["start_time"] = self.config["vp_context"]["start_time"] = 8500
         write_json(self.path, self.state)
-        self.api.details.return_value = {**details(now=9000), "isSignUp": False}
+        self.api.details.return_value = {**details(kind=0, now=9000), "isSignUp": False}
         with patch("vp_helper.nowcoder_submit.time.time", return_value=9000):
             self.assertEqual(nowcoder_submit.submit(self.source), "77")
         self.assertEqual(self.api.web.session.post.call_args.kwargs["data"]["doneQuestionId"], "123")
