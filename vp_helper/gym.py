@@ -130,24 +130,24 @@ class Gym:
             parties = [party for party in parties if party.get('participantType') == 'VIRTUAL'
                        and any(member.get('handle', '').casefold() == self.handle.casefold() for member in party.get('members', []))
                        and party.get('startTimeSeconds') is not None]
-            latest = max(parties, key=lambda party: party['startTimeSeconds'], default=None)
-            duration = getattr(self, '_native_duration', None)
-            if latest and isinstance(duration, (int, float)) and platform_now(self.url) < latest['startTimeSeconds'] + duration:
-                return latest
-            # Before the first submission, regular CF APIs expose no virtual
-            # party. Read the account's native countdown using the server's
-            # HTTP Date, never the local clock or the requested time.
-            native = self._countdown_party()
-            if native is not None:
-                parties.append(native)
-            return max(parties, key=lambda party: party['startTimeSeconds'], default=None)
-        data = self.api("contest.standings", contestId=self.id, handles=self.handle,
-                        showUnofficial=True, participantTypes="VIRTUAL")
-        parties = [r["party"] for r in data["rows"]
-                   if r["party"]["participantType"] == "VIRTUAL"
-                   and any(m["handle"].lower() == self.handle.lower() for m in r["party"]["members"])
-                   and r["party"].get("startTimeSeconds") is not None]
-        return max(parties, key=lambda p: p["startTimeSeconds"], default=None)
+        else:
+            data = self.api("contest.standings", contestId=self.id, handles=self.handle,
+                            showUnofficial=True, participantTypes="VIRTUAL")
+            parties = [r["party"] for r in data["rows"]
+                       if r["party"]["participantType"] == "VIRTUAL"
+                       and any(m["handle"].lower() == self.handle.lower() for m in r["party"]["members"])
+                       and r["party"].get("startTimeSeconds") is not None]
+        latest = max(parties, key=lambda party: party['startTimeSeconds'], default=None)
+        duration = getattr(self, '_native_duration', None)
+        if latest and isinstance(duration, (int, float)) and platform_now(self.url) < latest['startTimeSeconds'] + duration:
+            return latest
+        # Before the first submission, CF and Gym APIs may expose no current
+        # virtual party. Read the account's native countdown using the server's
+        # HTTP Date, never the local clock or the requested time.
+        native = self._countdown_party()
+        if native is not None:
+            parties.append(native)
+        return max(parties, key=lambda party: party['startTimeSeconds'], default=None)
 
     def _countdown_party(self):
         from bs4 import BeautifulSoup
