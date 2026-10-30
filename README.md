@@ -2,7 +2,7 @@
 
 线上组队、多队虚拟赛、训练历史与队内虚拟打印，配合原有终端完成原站参赛和提交。网站使用 Next.js 全栈，终端继续支持 Ubuntu、macOS 和 Windows。
 
-当前版本：**0.9.0**。线上地址：[CWNU XCPC Vp System](https://vp.cwnupaa.com)。
+当前版本：**0.9.1**。线上地址：[CWNU XCPC Vp System](https://vp.cwnupaa.com)。
 
 一键安装教程：[网站安装教程](https://vp.cwnupaa.com/install)。Ubuntu / macOS 在终端运行：
 
@@ -60,13 +60,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://vp.cwnupaa.c
 
 登录后，本地 VP、live、BT 的比赛信息和提交记录自动同步到“历史记录”。团队记录对参赛时的队员共享，并单独标记“个人 / 队伍”；`VP / live / BT` 是另一项比赛类型。榜单 Rank 显示原站排名。原 AC 为绿色，失败为红色，赛后新 AC 为蓝色；补题记录不显示开始、结束时间。
 
+历史详情和房间“我的提交”按 DOMjudge 的结构显示成绩行、题目尝试次数与提交列表；队伍成员共享本队的提交，提交编号可跳转原站查看结果。VP 进行期间不能查看其他队伍或个人的提交详情，房间创建者也不能绕过此限制。
+
+VP 房间默认在结束前一小时封榜，比赛结束后自动解封。封榜期间，公共排行榜的所有行只显示封榜前的成绩及后续的待公开次数；本人和队友仍可在“我的提交”和本队历史详情查看真实判题结果。Rank 仍取原站排名，没有可用的封榜前原站排名时显示 `?`。比赛时长由终端读取原站比赛后同步；尚未连接终端时暂按五小时显示。
+
 断网时保留本地记录和待同步队列，恢复网络后重试。切换云账号不会把原账号的比赛自动归给新账号。协会密码仅保存在本机私有配置，服务器不保存协会密码；请勿分享个人配置文件。
 
 超级管理员使用登录页“管理员登录”进入，在“网站设置”配置协会外部登录 appKey。初始管理员账号、密码由部署环境提供，不写入代码仓库。服务器部署与备份说明见 [deploy/README.md](deploy/README.md)。
 
 ## 1. 安装
 
-请选择自己的系统。比赛命令和浏览器应使用同一个系统用户运行。
+默认安装到系统公共目录，命令对这台电脑的所有用户生效；安装和更新公共程序需要管理员权限。账号、Cookie、设置和比赛文件按用户分别保存，日常比赛命令和浏览器请使用同一个普通用户运行。
 
 没有 Git 时，可先从 [Gitee 项目仓库](https://gitee.com/Zyihan_Crz/xcpc-vp-system)下载 ZIP 并解压，再进入源码目录运行对应系统的安装脚本。脚本会补齐 Git，安装后即可使用 `xcpc update` 更新。
 
@@ -118,7 +122,7 @@ sh install-macos.sh
 安装器会保留原有设置并自动配置 Bash / Zsh 的命令路径（包括 Homebrew 路径）。**新打开的终端直接生效**；当前终端先执行：
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="/usr/local/bin:$PATH"
 ```
 
 确认命令可用：
@@ -127,7 +131,7 @@ export PATH="$HOME/.local/bin:$PATH"
 xcpc --help
 ```
 
-程序默认安装到 `~/Library/Application Support/XCPC/app`，命令位于 `~/.local/bin`。XCPC 安装在当前用户目录，Homebrew 首次配置可能申请系统权限。首次安装需要联网下载依赖；优先使用 Python 3.13，也支持 Python 3.12+。
+程序默认安装到 `/Library/Application Support/XCPC/app`，命令位于 `/usr/local/bin`，对所有电脑用户生效。安装器配置系统命令路径，并使用公共 Homebrew Python，避免依赖某个用户的 Conda / 私有 Python。安装公共程序时会提示输入本机管理员密码。首次安装需要联网下载依赖。
 
 接下来按第 2 节加载 Chrome / Edge 扩展。macOS 比赛面板使用 tmux。
 
@@ -139,15 +143,15 @@ xcpc --help
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-无需先手动安装 Python、Git 或 Windows Terminal。脚本会复用可用的 Python 3.12+，并通过 WinGet 只补齐缺少的 Python 3.13、Git、Windows Terminal；WinGet 不可用时，会先尝试为当前用户注册或修复 App Installer。Windows 安装器出现确认提示时按提示完成即可。如果自动修复失败，脚本会显示原因和 [App Installer 官方安装入口](https://apps.microsoft.com/detail/9nblggh4nns1)。已有 Git 时，也可以用 `git clone` 获取源码后运行同一条安装命令。
+无需先手动安装 Python、Git 或 Windows Terminal。脚本会复用公共目录内可用的 Python 3.12+，并通过 WinGet 补齐系统级 Python 3.13、Git，以及当前用户缺少的 Windows Terminal；WinGet 不可用时，会先尝试为当前用户注册或修复 App Installer。Windows 安装器出现确认提示时按提示完成即可。如果自动修复失败，脚本会显示原因和 [App Installer 官方安装入口](https://apps.microsoft.com/detail/9nblggh4nns1)。已有 Git 时，也可以用 `git clone` 获取源码后运行同一条安装命令。
 
-`ExecutionPolicy Bypass` 仅作用于这次安装进程，不修改系统的永久执行策略。安装器会为当前用户添加命令路径；安装结束后重新打开 Windows Terminal 的 PowerShell 页签，再执行：
+`ExecutionPolicy Bypass` 仅作用于这次安装进程，不修改系统的永久执行策略。安装器通过 UAC 请求管理员权限，为整台电脑配置命令路径；安装结束后重新打开 Windows Terminal 或 PowerShell，再执行：
 
 ```powershell
 xcpc --help
 ```
 
-XCPC 程序按当前用户安装，默认位于 `%LOCALAPPDATA%\XCPC\app`，命令位于 `%LOCALAPPDATA%\XCPC\bin`。接下来按第 2 节加载已有 Chrome / Edge 的扩展。
+XCPC 程序默认位于 `%ProgramFiles%\XCPC\app`，命令位于 `%ProgramFiles%\XCPC\bin`，所有电脑用户均可运行。每位用户独立登录自己的浏览器和云端账号。接下来按第 2 节加载已有 Chrome / Edge 的扩展。
 
 打开比赛后，Windows Terminal 使用原生分屏：上方显示详情，下方是比赛目录中的 PowerShell，无需 tmux。没有找到 `wt.exe` 时，详情会在独立终端打开，当前终端进入比赛目录；输入 `exit` 返回。
 
@@ -161,7 +165,7 @@ XCPC 程序按当前用户安装，默认位于 `%LOCALAPPDATA%\XCPC\app`，命�
 
 ### macOS / Windows：使用 Chrome 或 Edge 扩展
 
-使用你平时登录比赛网站的普通浏览器配置。**不需要专用窗口，也不需要填写浏览器可执行文件路径。** 已登录的账号可以直接使用。
+使用你平时登录比赛网站的普通浏览器配置。**不需要专用窗口，也不需要填写浏览器可执行文件路径。** 每个电脑用户首次运行 `xcpc login`、`xcpc doctor cf` 或比赛命令时，会自动建立该用户自己的扩展连接和扩展文件夹；也可先运行 `xcpc doctor cf` 再加载扩展。
 
 1. Chrome 打开 `chrome://extensions`；Edge 打开 `edge://extensions`。
 2. 开启“开发者模式”，选择“加载已解压的扩展程序”。
@@ -350,9 +354,12 @@ vp history --live
 ```text
 xcpc update
 xcpc update --gitee
+xcpc --version
 ```
 
 默认从 `vp.cwnupaa.com` 获取版本清单和源码包，验证 SHA256 后安装；网站更新源不可用时自动回退到 Gitee `main`。`--gitee` 可直接使用原更新方式。校验失败时停止安装。两种方式都沿用原安装位置并保留账号、比赛保存路径、代码和历史。
+
+`xcpc --version` 在离线状态下显示当前版本、源码版本、安装与命令目录、Python 和依赖命令路径、比赛保存路径、云端账号资料及各原站配置状态。密码、Cookie、API key / secret 和令牌只显示是否配置，不显示具体值；在线登录验证仍使用 `xcpc doctor`。
 
 0.8.2 等旧版仍可运行原来的 `xcpc update`，从 Gitee 升级到新版；以后默认使用网站更新源。不要手动删除安装目录中的旧 release；原生命令入口和 Windows 本地连接会通过初始启动环境转到当前版本。
 
@@ -369,12 +376,12 @@ xcpc update --gitee
 如果 `xcpc`、`vp`、`submit` 等都因旧版启动器报错，连 `xcpc update` 也无法运行，可以在普通用户 PowerShell 中读取当前版本位置，直接调用安装环境中的 Python 更新：
 
 ```powershell
-$App = Join-Path $env:LOCALAPPDATA 'XCPC\app'
+$App = Join-Path $env:ProgramFiles 'XCPC\app'
 $Current = Get-Content -LiteralPath (Join-Path $App 'current.json') -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json
 & (Join-Path $Current.release 'venv\Scripts\python.exe') -I -m vp_helper.updater
 ```
 
-自定义过 `--target-root` 时，将第一行的 `$App` 改为原来的程序目录。这条命令绕过 `xcpc.exe` 等命令启动器，从 Gitee 更新，并沿用原来的程序目录和命令目录。
+0.9.0 等旧的个人安装，将第一行改为 `$App = Join-Path $env:LOCALAPPDATA 'XCPC\app'`。自定义过 `--target-root` 时，使用原来的程序目录。这条命令绕过 `xcpc.exe` 等命令启动器，从 Gitee 更新，并沿用原来的程序目录和命令目录。
 
 如果 `current.json` 缺失、当前 Python 也无法启动，或旧版本没有更新模块，重新下载最新源码并解压，进入源码目录后运行：
 
@@ -395,7 +402,7 @@ macOS / Windows 先查看扩展弹窗中的各站 Cookie 数量。如果对应�
 3. 确认程序与扩展都已更新并重新加载，再点击同步。
 4. 执行 `xcpc doctor cf`、`xcpc doctor qoj`、`xcpc doctor paa` 或 `xcpc doctor nk` 查看原因。
 
-如果显示“本地连接未建立”，先使用同一个系统用户重新运行本系统安装器，再加载扩展。组织策略限制扩展或 Native Messaging 时，需要浏览器管理者允许。
+如果显示“本地连接未建立”，先在使用浏览器的同一个普通系统用户下运行 `xcpc doctor cf`，初始化或修复个人扩展连接，再重新加载扩展。组织策略限制扩展或 Native Messaging 时，需要浏览器管理者允许。
 
 Ubuntu 使用 `xcpc doctor 站点` 检查 Firefox 配置位置和数据库读取情况；不要使用 sudo 运行比赛命令，也不要把隐私窗口或容器登录当作普通窗口登录。
 
@@ -409,7 +416,7 @@ Ubuntu 使用 `xcpc doctor 站点` 检查 Firefox 配置位置和数据库读取
 
 ### 找不到命令
 
-重新打开终端，确认安装器打印的命令目录已加入 PATH。macOS 默认是 `~/.local/bin`，Windows 默认是 `%LOCALAPPDATA%\XCPC\bin`；Ubuntu 项目本地安装使用项目内的 `bin`。
+重新运行本系统的一键安装命令，按提示完成管理员授权，再打开新终端执行 `xcpc --version`。Ubuntu / macOS 系统命令在 `/usr/local/bin`，Windows 在 `%ProgramFiles%\XCPC\bin`；旧个人安装会保留文件，新的一键安装会建立系统公共版本。明确使用过 `--local` 或自定义程序目录时，按原设置恢复。
 
 ### 原比赛文件夹不见了
 
@@ -424,6 +431,8 @@ macOS / Windows 安装脚本支持 `--target-root`、`--target-bin` 和 `--offli
 `--target-root` 设置程序安装目录，`--target-bin` 设置命令目录；macOS / Windows 安装脚本会自动配置命令路径，包括自定义的 `--target-bin`，完成后重新打开终端。比赛文件保存路径仍使用 `xcpc path` 设置。
 
 ## 配置与数据位置
+
+系统公共程序：Ubuntu `/opt/vp-helper`，macOS `/Library/Application Support/XCPC/app`，Windows `%ProgramFiles%\XCPC\app`。以下个人配置和数据不与其他电脑用户混用。`xcpc --version` 可以查看本机实际安装范围和路径。
 
 | 内容 | Ubuntu | macOS | Windows |
 | --- | --- | --- | --- |

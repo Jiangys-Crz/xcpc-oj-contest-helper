@@ -14,6 +14,7 @@ import unittest
 
 
 SETUP = Path(__file__).resolve().parents[1] / 'install.ps1'
+ONLINE = SETUP.parent / 'deploy/online-install.ps1'
 POWERSHELL = (os.environ.get('XCPC_TEST_POWERSHELL') or shutil.which('pwsh')
               or shutil.which('powershell'))
 
@@ -25,7 +26,7 @@ class WindowsSetupTests(unittest.TestCase):
             script = Path(temporary) / 'scenario.ps1'
             script.write_text(". $env:XCPC_SETUP_SCRIPT\n" + body, encoding='utf-8')
             env = os.environ | {'XCPC_SETUP_SCRIPT': str(SETUP), 'LOCALAPPDATA': temporary,
-                                'OS': 'Windows_NT'}
+                                'OS': 'Windows_NT', 'ProgramFiles': str(Path(temporary)/'Program Files'), 'ProgramW6432': str(Path(temporary)/'Program Files')}
             result = subprocess.run(
                 [POWERSHELL, '-NoLogo', '-NoProfile', '-NonInteractive', '-File', str(script)],
                 env=env, capture_output=True, text=True, timeout=30,
@@ -46,6 +47,56 @@ $status = Invoke-XcpcWindowsSetup -InstallerArgs @('--help')
 Write-Output ('__RESULT__' + (@{ Status = $status; Errors = @($errors | ForEach-Object { $_.Message }) } | ConvertTo-Json -Compress))
 ''')
         self.assertEqual(data, {'Status': 0, 'Errors': []})
+
+    def test_online_wrapper_repairs_machine_and_current_session_paths_after_child_install(self):
+        data = self.run_powershell(". '" + str(ONLINE).replace("'", "''") + "'\n" + r'''
+$script:machinePath = 'C:\Existing;C:\Other'
+$script:writes = 0; $script:confirmed = @()
+$env:Path = 'C:\CondaProcessOnly;C:\Existing'
+function Get-XcpcOnlineEnvironmentPath { param($Scope); if ($Scope -eq 'User') { return 'C:\User commands' }; return $script:machinePath }
+function Set-XcpcOnlineMachinePath { param($Value); $script:machinePath = $Value; $script:writes++ }
+function Test-Path { param($LiteralPath, $PathType); return $true }
+function Confirm-XcpcOnlineCommand { param($Command); $script:confirmed += $Command }
+$bin = Join-Path $env:LOCALAPPDATA 'custom commands'
+Set-XcpcOnlineCommandPath $bin
+Set-XcpcOnlineCommandPath $bin
+Write-Output ('__RESULT__' + (@{ MachinePath = $script:machinePath; ProcessPath = $env:Path; Writes = $script:writes; Bin = $bin; Confirmed = $script:confirmed } | ConvertTo-Json -Compress))
+''')
+        self.assertEqual(data['MachinePath'], data['Bin']+';C:\\Existing;C:\\Other')
+        self.assertEqual(data['ProcessPath'], data['Bin']+';C:\\CondaProcessOnly;C:\\Existing;C:\\Other;C:\\User commands')
+        self.assertEqual(data['Writes'], 1)
+        self.assertEqual(len(data['Confirmed']), 2)
+
+    def test_online_noop_global_update_reapplies_the_machine_command_path(self):
+        data = self.run_powershell(". '" + str(ONLINE).replace("'", "''") + "'\n" + r'''
+$script:repaired = @(); $script:calls = @()
+$bin = Join-Path $env:ProgramFiles 'XCPC/bin'
+$command = Join-Path $bin 'xcpc.exe'
+function Test-Path { param($LiteralPath, $PathType); return $true }
+function Get-XcpcOnlineEnvironmentPath { param($Scope); return $bin }
+function Invoke-FixtureXcpc { param($Operation); $script:calls += $Operation; $global:LASTEXITCODE=0 }
+Set-Alias -Name $command -Value Invoke-FixtureXcpc
+function Set-XcpcOnlineCommandPath { param($Bin); $script:repaired += $Bin }
+function Initialize-XcpcOnlineUserBridge {param($Bin);$script:initialized=$Bin}
+Invoke-XcpcOnlineSetup
+Write-Output ('__RESULT__' + (@{ Calls = $script:calls; Repaired = $script:repaired; Bin=$bin;Initialized=$script:initialized } | ConvertTo-Json -Compress))
+''')
+        self.assertEqual(data['Calls'], ['update'])
+        self.assertEqual(data['Repaired'], [data['Bin']])
+        self.assertEqual(data['Initialized'],data['Bin'])
+
+    def test_online_legacy_private_command_uses_the_new_global_installer(self):
+        data = self.run_powershell(". '" + str(ONLINE).replace("'", "''") + "'\n" + r'''
+$script:downloaded=$false
+function Test-Path { param($LiteralPath, $PathType); return $false }
+function Get-Command { throw 'Legacy private command must not be upgraded by the global installer' }
+function Get-XcpcOnlineEnvironmentPath { param($Scope); return 'C:\Windows\System32' }
+function Invoke-RestMethod { param($Uri,$TimeoutSec); $script:downloaded=$true; throw 'fixture-download-stop' }
+try { Invoke-XcpcOnlineSetup } catch { $message=$_.Exception.Message }
+Write-Output ('__RESULT__' + (@{ Downloaded=$script:downloaded; Message=$message } | ConvertTo-Json -Compress))
+''')
+        self.assertTrue(data['Downloaded'])
+        self.assertEqual(data['Message'],'fixture-download-stop')
 
     def test_python_prefers_313_then_3_then_compatible_python_and_skips_store_alias(self):
         for available, expected, expected_calls in (
@@ -121,6 +172,9 @@ builtins.__import__ = fixture_import
 $script:present = @($config.Present)
 $script:installs = @(); $script:pythonArgs = @(); $script:pathWrites = @()
 $script:refreshes = 0; $script:wingetCalls = 0
+function Test-XcpcAdministrator { return $true }
+function Set-XcpcGlobalPermissions { param($Root,$Bin) }
+function Initialize-XcpcUserBridge { param($Root) }
 function Update-XcpcProcessPath { $script:refreshes++ }
 function Get-XcpcPrerequisites {
     $python = $null
@@ -160,6 +214,7 @@ Write-Output ('__RESULT__' + (@{ Status = $status; Installs = @($script:installs
                 for args in data['Installs']:
                     self.assertEqual(args[:3], ['install', '--exact', '--id'])
                     self.assertEqual(args[4:6], ['--source', 'winget'])
+                    self.assertEqual(args[-2:], ['--scope','machine'] if args[3] in ('Python.Python.3.13','Git.Git') else ['--accept-source-agreements','--disable-interactivity'])
                 self.assertEqual(data['Refreshes'], 1 + len(expected))
                 self.assertEqual(data['WingetCalls'], int(bool(expected)))
 
@@ -251,3 +306,86 @@ $status = Invoke-XcpcNative $executable @('-NoLogo', '-NoProfile', '-NonInteract
 Write-Output ('__RESULT__' + (@{ Status = $status } | ConvertTo-Json -Compress))
 ''')
         self.assertEqual(data['Status'], 23)
+
+    def test_default_install_is_machinewide_but_explicit_custom_paths_are_retained(self):
+        data=self.run_powershell(r'''
+$default=Get-XcpcLayout @()
+$custom=Get-XcpcLayout @('--target-root','custom app','--target-bin','custom commands')
+Write-Output ('__RESULT__'+(@{Default=$default;Custom=$custom;ProgramFiles=$env:ProgramFiles}|ConvertTo-Json -Compress -Depth 5))
+''')
+        self.assertTrue(data['Default']['Global'])
+        self.assertEqual(Path(data['Default']['Root']),Path(data['ProgramFiles'])/'XCPC/app')
+        self.assertEqual(Path(data['Default']['Bin']),Path(data['ProgramFiles'])/'XCPC/bin')
+        self.assertFalse(data['Custom']['Global'])
+        self.assertEqual(Path(data['Custom']['Root']).name,'custom app')
+        self.assertEqual(Path(data['Custom']['Bin']).name,'custom commands')
+
+    def test_machine_path_is_persisted_without_writing_a_users_private_path(self):
+        data=self.run_powershell(r'''
+$script:machinePath='C:\Windows\System32;C:\Shared tools';$script:writes=0
+$env:Path='C:\Conda process;C:\Windows\System32'
+function Get-XcpcEnvironmentPath {param($Scope);if($Scope -ne 'Machine'){throw 'Private user PATH must not be changed'};return $script:machinePath}
+function Set-XcpcMachinePath {param($Value);$script:machinePath=$Value;$script:writes++}
+function Set-XcpcUserPath {throw 'Private user PATH must not be changed'}
+Add-XcpcCommandPath 'C:\Program Files\XCPC\bin' -SystemWide
+Add-XcpcCommandPath 'C:\Program Files\XCPC\bin' -SystemWide
+Write-Output ('__RESULT__'+(@{Machine=$script:machinePath;Process=$env:Path;Writes=$script:writes}|ConvertTo-Json -Compress))
+''')
+        self.assertEqual(data['Machine'],r'C:\Program Files\XCPC\bin;C:\Windows\System32;C:\Shared tools')
+        self.assertEqual(data['Process'],r'C:\Program Files\XCPC\bin;C:\Conda process;C:\Windows\System32')
+        self.assertEqual(data['Writes'],1)
+
+    def test_default_install_requests_elevation_before_running_any_installer(self):
+        for child_status in (0,23):
+            data=self.run_powershell(r'''
+$script:events=@()
+function Test-XcpcAdministrator {return $false}
+function Invoke-XcpcElevatedSetup {param($InstallerArgs);$script:events+='elevate';return CHILD_STATUS}
+function Get-XcpcPrerequisites {throw 'Unelevated parent must not install prerequisites'}
+function Initialize-XcpcUserBridge {param($Root);$script:events+='bridge'}
+function Update-XcpcProcessPath {$script:events+='refresh'}
+$status=Invoke-XcpcWindowsSetup
+Write-Output ('__RESULT__'+(@{Status=$status;Events=$script:events}|ConvertTo-Json -Compress))
+'''.replace('CHILD_STATUS',str(child_status)))
+            self.assertEqual(data['Status'],child_status)
+            self.assertEqual(data['Events'],['elevate','refresh','bridge'] if child_status==0 else ['elevate'])
+
+    def test_elevation_preserves_unicode_paths_arguments_and_source_revision_without_shell_interpolation(self):
+        data=self.run_powershell(r'''
+$env:SystemRoot=$env:LOCALAPPDATA;$env:XCPC_SOURCE_REVISION='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+function Start-Process {param($FilePath,$Verb,$ArgumentList,[switch]$Wait,[switch]$PassThru);$script:file=$FilePath;$script:verb=$Verb;$script:arguments=$ArgumentList;return [pscustomobject]@{ExitCode=17}}
+$status=Invoke-XcpcElevatedSetup @('--target-root',"C:\应用 app\O'Brien",'--target-bin','C:\commands;literal')
+$code=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($script:arguments[-1]))
+Write-Output ('__RESULT__'+(@{Status=$status;Verb=$script:verb;Arguments=$script:arguments;Code=$code;File=$script:file}|ConvertTo-Json -Compress))
+''')
+        self.assertEqual(data['Status'],17)
+        self.assertEqual(data['Verb'],'RunAs')
+        self.assertEqual(data['Arguments'][:4],['-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand'])
+        self.assertIn("'C:\\应用 app\\O''Brien'",data['Code'])
+        self.assertIn("'C:\\commands;literal'",data['Code'])
+        self.assertIn("$env:XCPC_SOURCE_REVISION='"+'a'*40+"'",data['Code'])
+
+    def test_shared_python_probe_rejects_an_interpreter_in_a_private_user_profile(self):
+        data=self.run_powershell(r'''
+function Get-ChildItem {param($LiteralPath,[switch]$Directory,$Filter,$ErrorAction)}
+function Get-XcpcApplicationPaths {param($Name,[switch]$SkipWindowsApps);if($Name -eq 'python.exe'){return 'python-fixture'}}
+function Invoke-XcpcNative {param($FilePath,$ArgumentList,[switch]$Quiet);$script:probe=$ArgumentList[2];return 0}
+$null=Find-XcpcPython -SystemWide
+Write-Output ('__RESULT__'+(@{Code=$script:probe}|ConvertTo-Json -Compress))
+''')
+        code=data['Code']
+        for prefix,expected in (('/machine/Program Files/Python313',0),('/users/alice/AppData/Local/Python313',1)):
+            fixture="import sys,os; sys.base_prefix="+repr(prefix)+"; os.environ['ProgramFiles']='/machine/Program Files'; os.environ.pop('ProgramW6432',None); os.environ.pop('ProgramFiles(x86)',None); "
+            result=subprocess.run([sys.executable,'-I','-c',fixture+code],capture_output=True,text=True,timeout=10)
+            self.assertEqual(result.returncode,expected,result.stderr)
+
+    def test_global_permissions_grant_other_users_read_execute_without_write(self):
+        data=self.run_powershell(r'''
+$env:SystemRoot=$env:LOCALAPPDATA;$script:calls=@()
+function Invoke-XcpcNative {param($FilePath,$ArgumentList,[switch]$Quiet);$script:calls+=,@($ArgumentList);return 0}
+Set-XcpcGlobalPermissions 'C:\Program Files\XCPC\app' 'C:\Program Files\XCPC\bin'
+Write-Output ('__RESULT__'+(@{Calls=$script:calls}|ConvertTo-Json -Compress -Depth 4))
+''')
+        self.assertEqual(len(data['Calls']),2)
+        for arguments in data['Calls']:
+            self.assertEqual(arguments[1:],['/grant','*S-1-5-32-545:(OI)(CI)RX','/T','/C'])

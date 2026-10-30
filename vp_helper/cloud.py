@@ -289,7 +289,8 @@ def sync_payload(path, state):
     solved = practice_score.solved if mode == 'bt' else sum(c['solved'] for c in cells.values())
     payload = {'localId':path.stem,'contest':{'platform':contest.platform,'contestId':contest.contest_id,
                'url':contest.url,'name':contest.name,'problems':list(contest.problems),
-               'rules':{'duration':duration,'penalty_minutes':contest.rules.penalty_minutes}},
+               'rules':{'duration':duration,'penalty_minutes':contest.rules.penalty_minutes,
+                        'compile_penalty':contest.rules.compile_penalty}},
                'mode':mode,'status':state.get('status','running'),'rank':str(rank),'solved':solved,
                'penalty':0 if mode == 'bt' else int(own.get('penalty', score.penalty) or 0),'cells':cells,
                'submissions':[{'id':str(e['id']),'problem':e['problem'],'submittedAt':_iso(state['start_time']+e['time']),

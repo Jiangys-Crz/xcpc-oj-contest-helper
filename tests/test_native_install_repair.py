@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import subprocess
+import shutil
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -37,6 +38,66 @@ class NativeInstallRepairTests(unittest.TestCase):
             link.symlink_to(target, target_is_directory=directory)
         except (NotImplementedError, OSError) as exc:
             self.skipTest('Symlinks are unavailable: ' + type(exc).__name__)
+
+    @unittest.skipUnless(os.name=='posix','POSIX application permissions')
+    def test_private_download_modes_become_public_runtime_without_exposing_account_data_or_links(self):
+        runtime=self.root/'private-extracted-runtime'
+        library=runtime/'venv/lib/package'
+        library.mkdir(parents=True)
+        code=library/'module.py'
+        code.write_text('VALUE = 1\n')
+        command=runtime/'venv/bin/xcpc'
+        command.parent.mkdir()
+        command.write_text('#!/bin/sh\nexit 0\n')
+        secret=self.root/'cloud-account.json'
+        secret.write_text('private fixture account\n')
+        secret.chmod(0o600)
+        parent_mode=self.root.stat().st_mode&0o777
+        self.symlink(secret,library/'external-file')
+        self.symlink(self.root,library/'external-directory',directory=True)
+        for folder in (runtime,runtime/'venv',runtime/'venv/lib',library,command.parent):folder.chmod(0o700)
+        code.chmod(0o666);command.chmod(0o777)
+        installer.make_runtime_readable(runtime)
+        for folder in (runtime,runtime/'venv',runtime/'venv/lib',library,command.parent):
+            self.assertEqual(folder.stat().st_mode&0o555,0o555)
+        self.assertEqual(code.stat().st_mode&0o777,0o644)
+        self.assertEqual(command.stat().st_mode&0o777,0o755)
+        self.assertEqual(secret.stat().st_mode&0o777,0o600)
+        self.assertEqual(self.root.stat().st_mode&0o777,parent_mode)
+        self.assertTrue((library/'external-directory').is_symlink())
+        self.assertTrue((library/'external-file').is_symlink())
+
+    def test_native_default_targets_are_machine_wide_and_explicit_legacy_targets_stay_local(self):
+        args=SimpleNamespace(target_root=None,target_bin=None)
+        root,commands,global_install,shared=installer.installation_targets(args,windows=False)
+        self.assertEqual(root,Path('/Library/Application Support/XCPC/app'))
+        self.assertEqual(commands,Path('/usr/local/bin'));self.assertTrue(global_install)
+        machine=self.root.parent/'Program Files'
+        personal=self.root.parent/'User AppData'
+        with patch.dict(os.environ,{'ProgramW6432':str(machine),'ProgramFiles':str(self.root.parent/'PF32'),'LOCALAPPDATA':str(personal)}):
+            root,commands,global_install,shared=installer.installation_targets(args,windows=True)
+            self.assertEqual(root,machine/'XCPC/app');self.assertEqual(commands,machine/'XCPC/bin')
+            self.assertTrue(global_install)
+            args=SimpleNamespace(target_root=str(personal/'old app'),target_bin=str(personal/'old commands'))
+            root,commands,global_install,_=installer.installation_targets(args,windows=True)
+            self.assertFalse(global_install)
+            self.assertEqual(root,personal/'old app');self.assertEqual(commands,personal/'old commands')
+        for root,commands in (('/Library/Application Support/XCPC/app',str(self.root/'private bin')),
+                              (str(self.root/'private app'),'/usr/local/bin')):
+            with self.subTest(root=root,commands=commands),self.assertRaisesRegex(SystemExit,'mix shared and private'):
+                installer.installation_targets(SimpleNamespace(target_root=root,target_bin=commands),windows=False)
+
+    def test_path_setup_prioritizes_shared_command_over_legacy_user_command(self):
+        home=self.root.parent/'home';home.mkdir()
+        global_bin=home/'shared bin';global_bin.mkdir()
+        private_bin=home/'old user bin';private_bin.mkdir()
+        for directory in (global_bin,private_bin):
+            entry=directory/'xcpc';entry.write_text('#!/bin/sh\nexit 0\n');entry.chmod(0o755)
+        installer.configure_macos_path(global_bin,home=home,shell='/bin/bash')
+        environment={**os.environ,'PATH':str(private_bin)+':/usr/bin:/bin:'+str(global_bin)}
+        result=subprocess.run(['/bin/sh','-c','. "$1"; command -v xcpc','fixture',str(home/'.bashrc')],
+                              env=environment,capture_output=True,text=True,check=True)
+        self.assertEqual(result.stdout.strip(),str(global_bin/'xcpc'))
 
     def test_original_modules_are_repaired_and_can_be_rolled_back(self):
         before={p:p.read_bytes() for p in self.package.glob('*.py')}
@@ -362,3 +423,35 @@ class NativeInstallRepairTests(unittest.TestCase):
         self.assertTrue((home/'.zshrc').is_file())
         self.assertFalse((foreign/'.zprofile').exists())
         self.assertEqual(config.read_bytes(),b'# other shell configuration\n')
+
+    def test_macos_path_setup_covers_bash_and_zsh_even_when_login_shell_differs(self):
+        home=self.root.parent/'multiple shells'
+        home.mkdir()
+        commands=home/'XCPC commands'
+        commands.mkdir()
+        entry=commands/'xcpc'
+        entry.write_text('#!/bin/sh\nexit 0\n')
+        entry.chmod(0o755)
+        files=installer.configure_macos_path(commands,home=home,shell='/bin/bash',all_shells=True)
+        self.assertEqual({file.name for file in files},{'.bash_profile','.bashrc','.zprofile','.zshrc'})
+        for shell in ('bash','zsh'):
+            binary=shutil.which(shell)
+            if not binary:
+                continue
+            environment={'HOME':str(home),'ZDOTDIR':str(home),'PATH':'/usr/bin:/bin'}
+            result=subprocess.run([binary,'-lic','command -v xcpc'],env=environment,
+                                  capture_output=True,text=True,timeout=10)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(result.stdout.strip(),str(entry))
+
+    def test_path_setup_creates_missing_custom_zsh_parent_and_fish_conf_directory(self):
+        home=self.root.parent/'home'
+        home.mkdir()
+        dotdir=home/'new dotfiles'
+        with patch.object(Path,'home',return_value=home),patch.dict(os.environ,{'ZDOTDIR':str(dotdir)}):
+            files=installer.configure_macos_path(home/'bin',shell='/bin/zsh')
+        self.assertTrue(all(file.is_file() for file in files))
+        files=installer.configure_macos_path(home/"commands with 'quote",home=home,shell='/usr/bin/fish')
+        self.assertEqual(files,[home/'.config/fish/conf.d/xcpc-path.fish'])
+        self.assertIn("commands with \\'quote",files[0].read_text())
+        self.assertIn('set -gx PATH',files[0].read_text())

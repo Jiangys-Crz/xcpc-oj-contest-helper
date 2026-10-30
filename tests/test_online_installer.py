@@ -28,6 +28,10 @@ class OnlineInstallerTests(unittest.TestCase):
         self.fixtures = self.root / 'fixtures'
         self.downloads = self.root / 'temporary downloads'
         self.home = self.root / 'home'
+        self.machine_bin = self.root / 'shared commands'
+        self.machine_root = self.root / 'shared application'
+        self.bootstrap = self.root / 'online-install.sh'
+        self.bootstrap.write_text(BOOTSTRAP.read_text().replace('/usr/local/bin', str(self.machine_bin)).replace('/opt/vp-helper', str(self.machine_root)))
         for directory in (self.bin, self.fixtures, self.downloads, self.home):
             directory.mkdir()
         self.manifest = self.fixtures / 'manifest.json'
@@ -35,16 +39,19 @@ class OnlineInstallerTests(unittest.TestCase):
         self.installer_log = self.root / 'installer-call'
         self.curl_log = self.root / 'curl-calls'
         self.xcpc_log = self.root / 'xcpc-calls'
-        for name in ('bash', 'sh', 'mktemp', 'sed', 'cut', 'tar', 'awk', 'mkdir', 'rm', 'cp'):
+        for name in ('bash', 'sh', 'mktemp', 'sed', 'cut', 'tar', 'awk', 'mkdir', 'rm', 'cp', 'mv', 'dirname', 'readlink'):
             command = shutil.which(name)
             self.assertIsNotNone(command, name)
             (self.bin / name).symlink_to(command)
         self.command('uname', "[ \"$1\" = -s ]\nprintf '%s\\n' \"$FIXTURE_OS\"\n")
         # An explicit false updater blocks discovery of the user's real xcpc.
         self.command('xcpc', '''
-printf '%s\\0' "$@" > "$FIXTURE_XCPC_LOG"
+printf '%s\\0' "$@" >> "$FIXTURE_XCPC_LOG"
+[ "$1" != --help ] || exit "$FIXTURE_HELP_EXIT"
 exit "$FIXTURE_UPDATE_EXIT"
 ''')
+        self.cli_template = self.fixtures/'cli-template'
+        shutil.copy2(self.bin/'xcpc',self.cli_template)
         self.command('curl', '''
 output= url=
 while [ "$#" -gt 0 ]; do
@@ -71,13 +78,14 @@ esac
             'FIXTURE_ARCHIVE': str(self.archive), 'FIXTURE_MANIFEST': str(self.manifest),
             'FIXTURE_INSTALL_LOG': str(self.installer_log), 'FIXTURE_CURL_LOG': str(self.curl_log),
             'FIXTURE_XCPC_LOG': str(self.xcpc_log), 'FIXTURE_REVISION': REVISION,
-            'FIXTURE_UPDATE_EXIT': '1', 'FIXTURE_INSTALL_EXIT': '0',
+            'FIXTURE_GLOBAL_BIN':str(self.machine_bin), 'FIXTURE_CLI_TEMPLATE':str(self.cli_template),
+            'FIXTURE_UPDATE_EXIT': '1', 'FIXTURE_INSTALL_EXIT': '0', 'FIXTURE_HELP_EXIT': '0',
         }
         self.make_archive()
 
     def tearDown(self):
         self.assertEqual(list(self.downloads.iterdir()), [], 'bootstrap left its temporary download directory')
-        self.assertEqual(list(self.home.iterdir()), [], 'bootstrap modified the real/fake user home')
+        self.assertFalse(list(self.home.rglob('.xcpc-path.*')), 'bootstrap left a shell configuration temporary file')
 
     def command(self, name, body):
         path = self.bin / name
@@ -88,6 +96,7 @@ esac
         installer = '''#!/bin/sh
 set -eu
 printf '%s\\0' "$XCPC_SOURCE_REVISION" "$0" "$PWD" "$@" > "$FIXTURE_INSTALL_LOG"
+[ "$FIXTURE_INSTALL_EXIT" != 0 ] || { mkdir -p "$FIXTURE_GLOBAL_BIN"; cp "$FIXTURE_CLI_TEMPLATE" "$FIXTURE_GLOBAL_BIN/xcpc"; }
 exit "$FIXTURE_INSTALL_EXIT"
 '''.encode()
         files = {'VP/install.py': b'# No Python installation is executed by this fixture.\n',
@@ -123,8 +132,14 @@ exit "$FIXTURE_INSTALL_EXIT"
 
     def run_bootstrap(self, *arguments, operating_system='Linux'):
         env = self.env | {'FIXTURE_OS': operating_system}
-        return subprocess.run(['/bin/bash', str(BOOTSTRAP), *arguments], cwd=self.root,
+        return subprocess.run(['/bin/bash', str(self.bootstrap), *arguments], cwd=self.root,
                               env=env, text=True, capture_output=True, timeout=20)
+
+    def global_install(self):
+        self.machine_bin.mkdir(exist_ok=True)
+        shutil.copy2(self.cli_template,self.machine_bin/'xcpc')
+        (self.machine_bin/'.xcpc-native-commands.json').write_text('{"owner":"xcpc-native","global":true}')
+        self.env['FIXTURE_UPDATE_EXIT']='0'
 
     def calls(self, file):
         return file.read_text().splitlines() if file.exists() else []
@@ -176,17 +191,69 @@ exit "$FIXTURE_INSTALL_EXIT"
                 self.assertEqual(list(self.downloads.iterdir()), [])
 
     def test_existing_updater_success_never_downloads_or_uses_fresh_default_directories(self):
-        self.env['FIXTURE_UPDATE_EXIT'] = '0'
+        self.global_install()
         custom_directory = self.root / 'existing custom install'
         custom_directory.mkdir()
         preserved = custom_directory / 'settings'
         preserved.write_text('keep existing configuration\n')
-        result = self.run_bootstrap()
+        result = self.run_bootstrap(operating_system='Darwin')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.xcpc_log.read_bytes(), b'update\0')
+        self.assertEqual(self.xcpc_log.read_bytes(), b'update\0--help\0')
         self.assertFalse(self.installer_log.exists())
         self.assertFalse(self.curl_log.exists())
         self.assertEqual(preserved.read_text(), 'keep existing configuration\n')
+
+    def test_noop_update_repairs_new_bash_and_zsh_terminals_with_stale_shell_environment(self):
+        self.global_install()
+        self.env['SHELL'] = '/bin/bash'  # macOS Terminal may actually open zsh.
+        first = self.run_bootstrap(operating_system='Darwin')
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        profiles = ('.bash_profile', '.bashrc', '.zprofile', '.zshrc')
+        before = {name:(self.home/name).read_bytes() for name in profiles}
+        second = self.run_bootstrap(operating_system='Darwin')
+        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+        self.assertEqual(before, {name:(self.home/name).read_bytes() for name in profiles})
+        for shell in ('bash', 'zsh'):
+            binary = shutil.which(shell)
+            if not binary:
+                continue
+            env = {'HOME':str(self.home), 'ZDOTDIR':str(self.home), 'PATH':'/usr/bin:/bin'}
+            check = subprocess.run([binary, '-lic', 'command -v xcpc'], env=env,
+                                   text=True, capture_output=True, timeout=10)
+            self.assertEqual(check.returncode, 0, check.stderr)
+            self.assertEqual(check.stdout.strip(), str(self.machine_bin/'xcpc'))
+        self.assertFalse(self.curl_log.exists())
+
+    def test_legacy_private_macos_command_migrates_to_shared_install_without_deleting_private_files(self):
+        standard = self.home/'.local/bin'
+        standard.mkdir(parents=True)
+        shutil.copy2(self.bin/'xcpc', standard/'xcpc')
+        (self.bin/'xcpc').unlink()
+        result = self.run_bootstrap(operating_system='Darwin')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(self.curl_log.exists())
+        self.assertTrue((standard/'xcpc').is_file())
+        check = subprocess.run(['/bin/bash', '-c', '. "$1"; command -v xcpc', 'fixture', str(self.home/'.zshrc')],
+                               env=self.env, text=True, capture_output=True, timeout=10)
+        self.assertEqual(check.returncode, 0, check.stderr)
+        self.assertEqual(check.stdout.strip(), str(self.machine_bin/'xcpc'))
+
+    def test_path_repair_preserves_shell_symlinks_and_existing_settings(self):
+        target = self.home/'saved shell settings'
+        target.write_text('export KEEP_ME=1\n')
+        (self.home/'.bashrc').symlink_to(target)
+        self.global_install()
+        result = self.run_bootstrap()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.home/'.bashrc').is_symlink())
+        self.assertIn('export KEEP_ME=1', target.read_text())
+        self.assertEqual(target.read_text().count('# >>> XCPC command path >>>'), 1)
+
+    def test_successful_updater_with_broken_command_does_not_report_installation_complete(self):
+        self.env.update(FIXTURE_UPDATE_EXIT='0', FIXTURE_HELP_EXIT='17')
+        result = self.run_bootstrap()
+        self.assertEqual(result.returncode, 17, result.stdout + result.stderr)
+        self.assertNotIn('Installation complete', result.stdout)
 
     def test_invalid_manifest_stops_before_archive_download(self):
         self.write_manifest(revision='not-a-git-revision')
@@ -206,7 +273,7 @@ exit "$FIXTURE_INSTALL_EXIT"
         self.env['FIXTURE_INSTALL_EXIT'] = '17'
         result = self.run_bootstrap()
         self.assertEqual(result.returncode, 17)
-        self.assertNotIn('Installation complete.', result.stdout)
+        self.assertNotIn('Installation complete', result.stdout)
 
     def test_help_needs_no_system_probe_update_or_download(self):
         result = self.run_bootstrap('--help')

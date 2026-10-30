@@ -66,6 +66,7 @@ Codeforces API 设置
 
 帮助
   xcpc --help
+  xcpc --version       查看版本、安装位置和配置信息（敏感值隐藏）
 
 只有原站允许并确认启动，vp 才创建有效轮次；原站拒绝则取消本次命令。
 不同比赛可同时进行 VP / live，各轮计分与提交互不混用；补题不占用 VP。
@@ -80,11 +81,17 @@ VP 标题含 CCPC 时使用 CCPC 新赛制，否则按 ICPC。
 def main() -> None:
     args = sys.argv[1:]
     try:
+        if args not in ([], ['--help'], ['-h'], ['--version'], ['update'], ['update', '--gitee']):
+            from .chromium_login import ensure_user_bridge
+            ensure_user_bridge(force=bool(args and args[0] == 'doctor'))
         if args in ([], ["-h"], ["--help"]):
             help_text = HELP.replace("XCPC 比赛终端助手", "XCPC 比赛终端助手 " + __version__, 1)
             if sys.platform in ('darwin', 'win32'):
                 help_text = help_text.replace('Firefox 登录', 'Chrome / Edge 扩展登录')
             print(help_text)
+        elif args == ["--version"]:
+            from .version_info import print_version_info
+            print_version_info()
         elif args and args[0] == "login":
             from .cloud import login_command
             login_command(args[1:])

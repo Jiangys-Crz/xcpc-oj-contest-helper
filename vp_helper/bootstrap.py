@@ -20,7 +20,7 @@ def launch_python(python, arguments, *, native_host=False):
     except OSError as exc:
         detail = getattr(exc, 'winerror', None) or exc.errno
         raise SystemExit(f'XCPC could not start its Python runtime (Windows error {detail}). '
-                         f'Rerun install.ps1 as the same user. Runtime: {python}') from None
+                         f'Rerun install.ps1 to repair XCPC. Runtime: {python}') from None
     except KeyboardInterrupt:
         raise SystemExit(130) from None
     raise SystemExit(result.returncode)
@@ -40,7 +40,13 @@ def main():
     release = Path(json.loads((root / 'current.json').read_text(encoding='utf8'))['release'])
     if not release.resolve().is_relative_to((root / 'releases').resolve()):
         raise SystemExit('Invalid XCPC installation pointer')
-    os.environ['PATH'] = installation['bin_directory'] + os.pathsep + os.environ.get('PATH', '')
+    commands = [installation['bin_directory']]
+    if installation.get('global') and sys.platform == 'darwin':
+        for prefix in ('/opt/homebrew', '/usr/local'):
+            if (Path(prefix) / 'bin/brew').is_file():
+                commands += [prefix + '/bin', prefix + '/sbin']
+                break
+    os.environ['PATH'] = os.pathsep.join([*commands, os.environ.get('PATH', '')])
     if release.resolve() != Path(sys.prefix).parent.resolve():
         python = release / 'venv' / ('Scripts/python.exe' if sys.platform == 'win32' else 'bin/python')
         return launch_python(python, ['-I', '-m', 'vp_helper.' + MODULES[name], *sys.argv[1:]])

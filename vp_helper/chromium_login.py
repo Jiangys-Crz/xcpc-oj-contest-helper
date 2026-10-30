@@ -9,6 +9,7 @@ import sys
 
 from .storage import config_directory, read_json, state_directory, write_json
 from .browser_sites import BASES, PARENTS, canonical_host, group_domains, first_party
+from .models import VPError
 
 HOST = 'com.xcpc.browser'
 NAMES = {'chrome': 'Google Chrome', 'edge': 'Microsoft Edge'}
@@ -27,6 +28,26 @@ def extension_id():
     key = read_json(extension_source() / 'manifest.json')['key']
     digest = hashlib.sha256(base64.b64decode(key)).hexdigest()[:32]
     return ''.join(chr(ord('a') + int(c, 16)) for c in digest)
+
+
+def ensure_user_bridge(*, force=False):
+    """A shared program registers only the current user's private browser bridge."""
+    if not enabled():
+        return
+    installed = read_json(Path(sys.prefix).parent / 'installation.json')
+    if not installed.get('global'):
+        return
+    marker = config_directory() / 'browser-bridge/user-setup.json'
+    expected = {'installRoot': installed['install_root'], 'revision': installed.get('source_revision', '')}
+    launcher = marker.parent / ('host.exe' if sys.platform == 'win32' else 'host')
+    extension = config_directory() / 'browser-extension/manifest.json'
+    if not force and read_json(marker) == expected and launcher.is_file() and extension.is_file():
+        return
+    try:
+        register_bridge()
+        write_json(marker, expected)
+    except (OSError, ValueError) as exc:
+        raise VPError('无法配置当前用户的浏览器扩展连接；请检查个人配置目录权限：' + str(config_directory())) from exc
 
 
 def register_bridge():
@@ -77,6 +98,7 @@ def register_bridge():
 
 
 def cookies(platform, account, *, errors=None):
+    ensure_user_bridge()
     from .browser_login import BrowserCookies, _cookie_values, _header
     import time
     candidates = []

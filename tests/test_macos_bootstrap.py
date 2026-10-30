@@ -38,9 +38,23 @@ class MacOSBootstrapTests(unittest.TestCase):
             self.assertIsNotNone(real)
             (self.bin / command).symlink_to(real)
         self.command(self.bin / 'uname', "printf '%s\\n' Darwin\n")
+        self.command(self.bin / 'id', "[ \"$1\" = -u ]\nprintf '%s\\n' \"${FIXTURE_UID:-1000}\"\n")
+        self.command(self.bin / 'sudo', '''
+printf '%s\\0' "$@" >> "$FIXTURE_SUDO_LOG"
+if [ "$1" = -u ]; then
+    shift 2
+    [ "$1" = -H ] && shift
+    FIXTURE_UID=1000
+    export FIXTURE_UID
+    unset SUDO_USER
+fi
+[ "$1" = -- ] && shift
+exec "$@"
+''')
         self.env = {
             'PATH': str(self.bin), 'HOME': str(self.home),
             'TMPDIR': str(self.downloads), 'SHELL': '/bin/sh', 'LC_ALL': 'C',
+            'FIXTURE_SUDO_LOG': str(self.root/'sudo-calls'),
         }
         self.python_fixture = self.python(self.assets / 'python3.13')
         self.command(self.assets / 'git', "[ \"$1\" = --version ]\n")
@@ -57,14 +71,16 @@ class MacOSBootstrapTests(unittest.TestCase):
         path.chmod(0o755)
         return path
 
-    def python(self, path, probe_status=0):
+    def python(self, path, probe_status=0, shared_status=0):
         return self.command(path, f'''
 if [ "${{1:-}}" = -I ]; then
     printf '%s\\n' "$*" >> {shlex.quote(str(self.root / 'python-probes'))}
+    case "$*" in *XCPC_GLOBAL_PYTHON_CHECK*) exit {shared_status} ;; esac
     exit {probe_status}
 fi
 printf '%s\\0' "$0" "$@" > {shlex.quote(str(self.root / 'installer-call'))}
 printf '%s' "$PATH" > {shlex.quote(str(self.root / 'installer-path'))}
+exit "${{FIXTURE_INSTALL_EXIT:-0}}"
 ''')
 
     def tools(self, directory=None, python_name='python3.13', git=True, tmux=True):
@@ -82,6 +98,7 @@ printf '%s\\n' "$*" >> {shlex.quote(str(self.root / 'brew-calls'))}
 case "$1" in
     --prefix) printf '%s\\n' {shlex.quote(str(self.prefix))} ;;
     install)
+        umask > {shlex.quote(str(self.root / 'brew-install-umask'))}
         if [ {install_status} -ne 0 ]; then exit {install_status}; fi
         shift
         for formula in "$@"; do
@@ -103,6 +120,7 @@ esac
         self.brew(self.assets / 'brew')
         installer = self.command(self.assets / 'homebrew-install.sh', f'''
 printf '%s\\n' "${{NONINTERACTIVE-unset}}" > {shlex.quote(str(self.root / 'homebrew-ran'))}
+umask > {shlex.quote(str(self.root / 'homebrew-install-umask'))}
 if [ {installer_status} -ne 0 ]; then exit {installer_status}; fi
 cp {shlex.quote(str(self.assets / 'brew'))} {shlex.quote(str(self.prefix / 'bin/brew'))}
 ''')
@@ -122,7 +140,8 @@ exit 93
 
     def run_installer(self, *arguments):
         return subprocess.run(['/bin/sh', str(self.script), *arguments],
-                              env=self.env, text=True, capture_output=True, timeout=20)
+                              env=self.env, text=True, capture_output=True, timeout=20,
+                              preexec_fn=lambda: os.umask(0o077))
 
     def calls(self, name):
         file = self.root / name
@@ -155,6 +174,98 @@ exit 93
                                               str(self.root / 'install.py'), *arguments])
         self.assertEqual(self.calls('curl-calls'), [])
         self.assertEqual(self.calls('brew-calls'), [])
+        self.assertFalse((self.root/'sudo-calls').exists())
+
+    def test_default_install_elevates_only_the_shared_application_stage(self):
+        self.tools()
+        self.env['XCPC_SOURCE_REVISION']='a'*40
+        result=self.run_installer('--offline')
+        self.assertEqual(result.returncode,0,result.stderr)
+        arguments=self.installer_call()
+        self.assertIn('/Library/Application Support/XCPC/app',arguments)
+        self.assertIn('/usr/local/bin',arguments)
+        elevated=(self.root/'sudo-calls').read_bytes().split(b'\0')
+        self.assertEqual(elevated[:2],[b'--',b'/usr/bin/env'])
+        self.assertIn(('XCPC_SOURCE_REVISION='+'a'*40).encode(),elevated)
+        self.assertIn(str(self.root/'install.py').encode(),elevated)
+        self.assertFalse((self.root/'brew-calls').exists())
+        self.assertIn('vp_helper.chromium_login',(self.root/'python-probes').read_text())
+        self.assertNotIn(b'vp_helper.chromium_login',elevated)
+
+    def test_explicit_skip_browser_registration_is_honored(self):
+        self.tools()
+        result=self.run_installer('--skip-browser-registration')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertNotIn('vp_helper.chromium_login',(self.root/'python-probes').read_text())
+
+    def test_failed_shared_install_does_not_register_a_browser_bridge(self):
+        self.tools()
+        self.env['FIXTURE_INSTALL_EXIT']='17'
+        result=self.run_installer()
+        self.assertEqual(result.returncode,17,result.stderr)
+        self.assertNotIn('vp_helper.chromium_login',(self.root/'python-probes').read_text())
+
+    def test_private_user_python_is_replaced_with_shared_homebrew_python(self):
+        self.tools(python_name=None)
+        self.python(self.bin/'python3.13',shared_status=1)
+        self.brew()
+        result=self.run_installer()
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(self.calls('brew-calls'),['--prefix','install python@3.13'])
+        self.assertEqual(self.installer_call()[0],str(self.prefix/'bin/python3.13'))
+
+    def test_explicit_private_targets_keep_the_existing_user_runtime_without_sudo(self):
+        self.tools(python_name=None)
+        self.python(self.bin/'python3.13',shared_status=1)
+        arguments=('--target-root',str(self.home/'XCPC app'),'--target-bin',str(self.home/'XCPC commands'))
+        result=self.run_installer(*arguments)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(self.installer_call()[2:],list(arguments))
+        self.assertFalse((self.root/'sudo-calls').exists())
+
+    def test_private_git_and_tmux_are_replaced_by_shared_homebrew_tools(self):
+        self.tools(git=False,tmux=False)
+        private=self.home/'bin'
+        private.mkdir()
+        self.tools(private,python_name=None)
+        self.env['PATH']=str(private)+os.pathsep+str(self.bin)
+        self.brew()
+        try:
+            result=self.run_installer()
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(self.calls('brew-calls'),['--prefix','install git tmux'])
+        finally:
+            shutil.rmtree(private)
+
+    def test_mixed_private_and_shared_targets_are_rejected_before_setup(self):
+        for arguments in (
+            ('--target-root','/Library/Application Support/XCPC/app','--target-bin',str(self.home/'bin')),
+            ('--target-root',str(self.home/'app'),'--target-bin','/usr/local/bin'),
+        ):
+            with self.subTest(arguments=arguments):
+                result=self.run_installer(*arguments)
+                self.assertNotEqual(result.returncode,0)
+                self.assertIn('mixed shared/private',result.stderr)
+                self.assertFalse((self.root/'sudo-calls').exists())
+                self.assertFalse((self.root/'installer-call').exists())
+
+    def test_sudo_launch_prepares_homebrew_as_the_invoking_user(self):
+        self.env.update(FIXTURE_UID='0',SUDO_USER='fixture-admin')
+        self.download()
+        result=self.run_installer()
+        self.assertEqual(result.returncode,0,result.stderr)
+        calls=(self.root/'sudo-calls').read_bytes().split(b'\0')
+        self.assertEqual(calls[:4],[b'-u',b'fixture-admin',b'-H',b'--'])
+        self.assertEqual(self.calls('brew-calls'),['--prefix','install python@3.13 git tmux'])
+
+    def test_root_without_an_invoking_user_does_not_run_homebrew_setup(self):
+        self.env['FIXTURE_UID']='0'
+        self.download()
+        result=self.run_installer()
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('normal administrator account',result.stderr)
+        self.assertEqual(self.calls('brew-calls'),[])
+        self.assertEqual(self.calls('curl-calls'),[])
 
     def test_existing_python_312_can_run_offline_without_homebrew(self):
         self.tools(python_name='python3.12')
@@ -172,9 +283,9 @@ exit 93
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(Path(self.installer_call()[0]).name, 'python3.12')
         probes = self.calls('python-probes')
-        self.assertEqual(len(probes), 3)
-        self.assertTrue(all('sys.version_info < (3, 12)' in probe and
-                            'import venv, ensurepip' in probe for probe in probes))
+        native=[probe for probe in probes if 'sys.version_info < (3, 12)' in probe]
+        self.assertEqual(len(native), 3)
+        self.assertTrue(all('import venv, ensurepip' in probe for probe in native))
 
     def test_offline_reports_all_missing_tools_without_downloads(self):
         self.download()
@@ -240,6 +351,8 @@ exit 93
         self.assertIn('https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh',
                       self.calls('curl-calls')[0])
         self.assertEqual(self.calls('homebrew-ran'), ['unset'])
+        self.assertEqual(int((self.root/'homebrew-install-umask').read_text().strip(),8),0o022)
+        self.assertEqual(int((self.root/'brew-install-umask').read_text().strip(),8),0o022)
         self.assertEqual(self.calls('brew-calls'), ['--prefix', 'install python@3.13 git tmux'])
         self.assertEqual(self.installer_call()[0], str(self.prefix / 'bin/python3.13'))
 

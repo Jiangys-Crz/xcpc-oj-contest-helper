@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from
 import { resolve } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { Store, type Row } from './db';
+import { roomTiming, publicScore, frozenRank } from './scoreboard';
 
 export class ApiError extends Error { constructor(public status: number, message: string) { super(message); } }
 const fail = (status: number, message: string): never => { throw new ApiError(status, message); };
@@ -153,10 +154,10 @@ export class CloudService {
   private captain(teamId:string,user:User) {const team=this.team(teamId);if(team.captain_id!==user.id)return fail(403,'只有队长可以管理队伍');return team;}
   private participant(roomId:string,uid:string):Row|undefined { return this.store.one('SELECT p.* FROM participants p JOIN participant_members m ON p.id=m.participant_id WHERE m.room_id=? AND m.user_id=?',roomId,uid); }
   private participantView(row:Row) { return {id:row.id,type:row.type,userId:row.user_id,teamId:row.team_id,captainId:row.captain_id,label:row.label,members:JSON.parse(row.members_json)}; }
-  private room(roomId:string):Row { const row=this.store.one('SELECT * FROM rooms WHERE id=?',roomId);if(!row)return fail(404,'VP 房间不存在');return row; }
+  private room(roomId:string):Row { const row=this.store.one('SELECT r.*,rules.duration_seconds FROM rooms r LEFT JOIN room_rules rules ON rules.room_id=r.id WHERE r.id=?',roomId);if(!row)return fail(404,'VP 房间不存在');return row; }
   private visibleRoom(roomId:string,user:User):Row {const room=this.room(roomId);if(room.creator_id!==user.id && !this.participant(roomId,user.id))return fail(403,'你尚未接受此 VP 房间的邀请');return room;}
   private manager(roomId:string,user:User):Row {const room=this.room(roomId);if(room.creator_id!==user.id)return fail(403,'只有创建者可以管理 VP 房间');return room;}
-  private roomView(room:Row,user:User) {const p=this.participant(room.id,user.id);return {id:room.id,name:room.name,contestUrl:room.contest_url,startsAt:room.starts_at,createdBy:room.creator_id,createdAt:room.created_at,canManage:room.creator_id===user.id,participants:this.store.all('SELECT * FROM participants WHERE room_id=? ORDER BY created_at',room.id).map(p=>this.participantView(p)),participation:p?this.participantView(p):null,serverNow:now()};}
+  private roomView(room:Row,user:User) {const p=this.participant(room.id,user.id),duration=this.store.one('SELECT duration_seconds FROM room_rules WHERE room_id=?',room.id)?.duration_seconds;return {id:room.id,name:room.name,contestUrl:room.contest_url,startsAt:room.starts_at,...roomTiming({...room,duration_seconds:duration}),createdBy:room.creator_id,createdAt:room.created_at,canManage:room.creator_id===user.id,participants:this.store.all('SELECT * FROM participants WHERE room_id=? ORDER BY created_at',room.id).map(p=>this.participantView(p)),participation:p?this.participantView(p):null,serverNow:now()};}
   private notificationView(row:Row) {return {id:row.id,kind:row.kind,title:row.title,message:row.message,status:row.status,createdAt:row.created_at,respondedAt:row.responded_at,teamId:row.team_id,roomId:row.room_id,canRespond:row.status==='pending'};}
   private inviteTeam(teamId:string,user:User,body:Row) {
     const team=this.captain(teamId,user), uid=text(body.userId,'用户ID',80);this.user(uid);
@@ -215,12 +216,20 @@ export class CloudService {
   private historyVisible(row:Row,user:User,details=false) {
     if(row.owner_id===user.id)return true;
     if(row.participant_id && this.store.one('SELECT 1 FROM participant_members WHERE participant_id=? AND user_id=?',row.participant_id,user.id))return true;
-    return Boolean(details && row.room_id && (this.room(row.room_id).creator_id===user.id || this.participant(row.room_id,user.id)));
+    if(!details || !row.room_id)return false;
+    const room=this.room(row.room_id);
+    if(Date.now()<Date.parse(roomTiming(room).endsAt))return false;
+    return Boolean(room.creator_id===user.id || this.participant(row.room_id,user.id));
   }
-  private historyView(row:Row, details=false) {
+  private historyView(row:Row, details=false, viewer?:User, publicBoard=false) {
     const participantType=row.participant_id?this.store.one('SELECT type FROM participants WHERE id=?',row.participant_id)?.type||'individual':'individual';
-    const value={id:row.id,participantType,contestName:row.contest_name,contestUrl:row.contest_url,platform:row.platform,mode:row.mode,rank:row.rank,solved:row.solved,penalty:row.penalty,problems:JSON.parse(row.problems_json),cells:JSON.parse(row.cells_json),startedAt:row.mode==='bt'?null:row.started_at,endedAt:row.mode==='bt'?null:row.ended_at,participantLabel:row.participant_label,roomId:row.room_id,status:row.status,updatedAt:row.updated_at};
-    return details?{...value,submissions:JSON.parse(row.submissions_json)}:value;
+    const room=row.room_id?this.room(row.room_id):undefined,timing=room?roomTiming(room):undefined;
+    const frozen=Boolean(timing?.frozen && (publicBoard || (viewer && !this.historyVisible(row,viewer))));
+    const at=Date.now(), submissions:Row[]=JSON.parse(row.submissions_json);
+    const hidePractice=Boolean(publicBoard && timing && at<Date.parse(timing.endsAt));
+    const filtered=room && (frozen || submissions.some(s=>Date.parse(s.submittedAt)>at || (hidePractice && s.practice)))?publicScore(row,room,at,frozen,hidePractice):undefined;
+    const value={id:row.id,participantType,contestName:row.contest_name,contestUrl:row.contest_url,platform:row.platform,mode:row.mode,rank:frozen?frozenRank(row,room!):row.rank,solved:filtered?.solved??row.solved,penalty:filtered?.penalty??row.penalty,problems:JSON.parse(row.problems_json),cells:filtered?.cells??JSON.parse(row.cells_json),startedAt:row.mode==='bt'?null:row.started_at,endedAt:row.mode==='bt'?null:row.ended_at,participantLabel:row.participant_label,roomId:row.room_id,status:row.status,updatedAt:row.updated_at,rules:JSON.parse(row.rules_json||'{}'),...(timing?{...timing,freezeActive:timing.frozen,frozen}: {frozen:false})};
+    return details?{...value,submissions:filtered?.submissions??submissions.filter(s=>Date.parse(s.submittedAt)<=at)}:value;
   }
   private sanitizeSnapshot(body:Row) {
     const localId=text(body.localId,'本地记录标识',200), c=body.contest;
@@ -229,6 +238,14 @@ export class CloudService {
     if(!['vp','live','bt'].includes(mode))return fail(400,'参赛类型无效');
     const platform=url.includes('codeforces.com/gym/')?'gym':url.includes('codeforces.com/')?'cf':url.includes('nowcoder.com/')?'nowcoder':url.includes('cwnupaa.com/')?'cwnuoj':'qoj';
     const name=text(c.name,'比赛名称',300);
+    const rules:Row={};
+    if(c.rules!==undefined) {
+      if(!c.rules || typeof c.rules!=='object' || Array.isArray(c.rules))return fail(400,'比赛规则无效');
+      if(c.rules.duration!==undefined) {rules.duration=number(c.rules.duration,'比赛时长',7*86400);if(!Number.isInteger(rules.duration)||rules.duration<1)return fail(400,'比赛时长必须为正整数秒');}
+      if(c.rules.penalty_minutes!==undefined)rules.penalty_minutes=number(c.rules.penalty_minutes,'错误提交罚时',1000);
+      if(c.rules.compile_penalty!==undefined && typeof c.rules.compile_penalty!=='boolean')return fail(400,'编译错误罚时配置无效');
+      rules.compile_penalty=c.rules.compile_penalty===true;
+    }
     if(!Array.isArray(c.problems) || c.problems.length>100 || c.problems.some((v:unknown)=>typeof v!=='string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,15}$/.test(v) || ['constructor','prototype','__proto__'].includes(v)) || new Set(c.problems).size!==c.problems.length)return fail(400,'题目列表无效');
     const problems=c.problems as string[], cells:Row=Object.create(null);
     for(const key of problems) {
@@ -248,7 +265,7 @@ export class CloudService {
     const endedAt=mode==='bt'?null:body.endedAt?iso(body.endedAt,'结束时间'):null;
     if(status==='failed')startedAt=null;
     if(startedAt && endedAt && endedAt<startedAt) {if(['failed','cancelled'].includes(status))startedAt=null;else return fail(400,'结束时间不能早于开始时间');}
-    return {localId,url,mode,status,platform,name,problems,cells,submissions,startedAt,endedAt,rank:text(String(body.rank??'—'),'原站排名',100),solved:number(body.solved,'解决题数',100),penalty:number(body.penalty,'罚时'),revision:number(body.revision,'同步版本',Number.MAX_SAFE_INTEGER)};
+    return {localId,url,mode,status,platform,name,problems,rules,cells,submissions,startedAt,endedAt,rank:text(String(body.rank??'—'),'原站排名',100),solved:number(body.solved,'解决题数',100),penalty:number(body.penalty,'罚时'),revision:number(body.revision,'同步版本',Number.MAX_SAFE_INTEGER)};
   }
   private sync(user:User,body:Row) {
     const data=this.sanitizeSnapshot(body);
@@ -280,6 +297,10 @@ export class CloudService {
         }
         return {id:old.id,stale:true};
       }
+      if(room && data.rules.duration!==undefined) {
+        if(room.duration_seconds && room.duration_seconds!==data.rules.duration)return fail(409,'比赛时长与房间已同步的原站时长不一致');
+        if(!room.duration_seconds) {this.store.run('INSERT INTO room_rules(room_id,duration_seconds) VALUES(?,?)',room.id,data.rules.duration);room.duration_seconds=data.rules.duration;}
+      }
       const records=new Map<string,Row>();
       if(old)for(const s of JSON.parse(old.submissions_json))records.set(s.id,s);
       for(const s of data.submissions) {
@@ -301,6 +322,10 @@ export class CloudService {
       if(old)this.store.run('UPDATE histories SET owner_id=?,local_id=?,room_id=?,participant_id=?,participant_label=?,contest_name=?,contest_url=?,platform=?,mode=?,started_at=?,ended_at=?,rank=?,solved=?,penalty=?,problems_json=?,cells_json=?,submissions_json=?,revision=?,updated_at=? WHERE id=?',...values,hid);
       else this.store.run('INSERT INTO histories(id,owner_id,local_id,room_id,participant_id,participant_label,contest_name,contest_url,platform,mode,started_at,ended_at,rank,solved,penalty,problems_json,cells_json,submissions_json,revision,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',hid,...values);
       this.store.run('UPDATE histories SET status=? WHERE id=?',data.status,hid);
+      const rules={...JSON.parse(old?.rules_json||'{}'),...data.rules};
+      this.store.run('UPDATE histories SET rules_json=? WHERE id=?',JSON.stringify(rules),hid);
+      // Only server receipt time establishes that an original rank predates freezing.
+      if(room && Date.now()<Date.parse(roomTiming(room).freezeAt))this.store.run('UPDATE histories SET freeze_rank=?,freeze_rank_at=? WHERE id=?',data.rank,now(),hid);
       return {id:hid};
     });
   }
@@ -354,7 +379,7 @@ export class CloudService {
     if(segments[0]==='notifications' && segments.length===3 && segments[2]==='respond' && method==='POST')return {data:this.respond(segments[1],user,body)};
     if(path==='rooms') {
       if(method==='GET')return {data:this.store.all('SELECT DISTINCT r.* FROM rooms r LEFT JOIN participant_members m ON m.room_id=r.id WHERE r.creator_id=? OR m.user_id=? ORDER BY r.starts_at DESC',user.id,user.id).map(r=>this.roomView(r,user))};
-      if(method==='POST') {const name=text(body.name,'VP名称',200),url=contestUrl(body.contestUrl,true),startsAt=iso(body.startsAt,'开始时间');if(Date.parse(startsAt)<=Date.now())return fail(400,'开始时间必须晚于当前时间');const rid=id();this.store.run('INSERT INTO rooms VALUES(?,?,?,?,?,?)',rid,name,url,startsAt,user.id,now());this.audit(user,'room.create',rid);return {data:this.roomView(this.room(rid),user)};}
+      if(method==='POST') {const name=text(body.name,'VP名称',200),url=contestUrl(body.contestUrl,true),startsAt=iso(body.startsAt,'开始时间');if(Date.parse(startsAt)<=Date.now())return fail(400,'开始时间必须晚于当前时间');const rid=id();this.store.run('INSERT INTO rooms(id,name,contest_url,starts_at,creator_id,created_at) VALUES(?,?,?,?,?,?)',rid,name,url,startsAt,user.id,now());this.audit(user,'room.create',rid);return {data:this.roomView(this.room(rid),user)};}
     }
     if(segments[0]==='rooms' && segments.length>=2) {
       const rid=segments[1];
@@ -370,10 +395,21 @@ export class CloudService {
         }
       }
       if(segments.length===3 && segments[2]==='invitations' && method==='POST')return {data:this.inviteRoom(rid,user,body)};
+      if(segments.length===3 && segments[2]==='mysubmit' && method==='GET') {
+        const room=this.visibleRoom(rid,user),part=this.participant(rid,user.id);
+        if(!part)return fail(403,'请先接受 VP 参赛邀请后查看我的提交');
+        const row=this.store.one('SELECT * FROM histories WHERE participant_id=?',part.id);
+        const history=row?this.historyView(row,true,user):null;
+        return {data:{room:this.roomView(room,user),participation:this.participantView(part),history,submissions:history && 'submissions' in history?history.submissions:[],serverNow:now()}};
+      }
       if(segments.length===3 && segments[2]==='leaderboard' && method==='GET') {
-        const room=this.visibleRoom(rid,user), rows=this.store.all('SELECT p.*,h.id history_id,h.rank,h.solved,h.penalty,h.cells_json,h.problems_json,h.updated_at,h.status FROM participants p LEFT JOIN histories h ON h.participant_id=p.id WHERE p.room_id=? ORDER BY COALESCE(h.solved,0) DESC,COALESCE(h.penalty,0),p.created_at',rid);
-        const problems=[...new Set<string>(rows.flatMap(r=>r.problems_json?JSON.parse(r.problems_json):[]))];
-        return {data:{room:this.roomView(room,user),rows:rows.map(r=>({participantId:r.id,label:r.label,rank:r.rank||'—',solved:r.solved??0,penalty:r.penalty??0,cells:r.cells_json?JSON.parse(r.cells_json):{},historyId:r.history_id,lastSyncedAt:r.updated_at,status:r.status||'scheduled'})),problems,serverNow:now()}};
+        const room=this.visibleRoom(rid,user), histories=this.store.all('SELECT h.*,p.id participant_key,p.label participant_name FROM participants p LEFT JOIN histories h ON h.participant_id=p.id WHERE p.room_id=? ORDER BY p.created_at,p.id',rid);
+        const problems=[...new Set<string>(histories.flatMap(r=>r.problems_json?JSON.parse(r.problems_json):[]))];
+        const rows=histories.map(r=>{
+          const view=r.id?this.historyView(r,false,user,true):undefined;
+          return {participantId:r.participant_key,label:r.participant_name,rank:view?.rank||'—',solved:view?.solved??0,penalty:view?.penalty??0,cells:view?.cells||{},historyId:r.id,lastSyncedAt:r.updated_at,status:r.status||'scheduled',frozen:view?.frozen||false,canViewHistory:Boolean(r.id && this.historyVisible(r,user,true))};
+        }).sort((a,b)=>b.solved-a.solved||a.penalty-b.penalty);
+        return {data:{room:this.roomView(room,user),...roomTiming(room),rows,problems,serverNow:now()}};
       }
       if(segments.length===3 && segments[2]==='prints' && method==='GET') {
         this.visibleRoom(rid,user);const part=this.participant(rid,user.id);return {data:part?this.store.all('SELECT j.*,p.label FROM prints j JOIN participants p ON p.id=j.participant_id WHERE j.participant_id=? ORDER BY j.created_at DESC LIMIT 1000',part.id).map(j=>this.printView(j)):[]};
@@ -384,9 +420,9 @@ export class CloudService {
     }
     if(path==='history' && method==='GET') {
       const query=new URL(request.url).searchParams,search=(query.get('search')||'').slice(0,200).toLowerCase(),type=query.get('type');
-      return {data:this.store.all('SELECT DISTINCT h.* FROM histories h LEFT JOIN participant_members m ON m.participant_id=h.participant_id WHERE h.owner_id=? OR m.user_id=? ORDER BY h.updated_at DESC',user.id,user.id).filter(h=>(!search||h.contest_name.toLowerCase().includes(search))&&(!type||type===h.mode)).map(h=>this.historyView(h))};
+      return {data:this.store.all('SELECT DISTINCT h.* FROM histories h LEFT JOIN participant_members m ON m.participant_id=h.participant_id WHERE h.owner_id=? OR m.user_id=? ORDER BY h.updated_at DESC',user.id,user.id).filter(h=>(!search||h.contest_name.toLowerCase().includes(search))&&(!type||type===h.mode)).map(h=>this.historyView(h,false,user))};
     }
-    if(segments[0]==='history' && segments.length===2 && method==='GET') {const h=this.store.one('SELECT * FROM histories WHERE id=?',segments[1]);if(!h||!this.historyVisible(h,user,true))return fail(404,'比赛记录不存在或无权查看');return {data:this.historyView(h,true)};}
+    if(segments[0]==='history' && segments.length===2 && method==='GET') {const h=this.store.one('SELECT * FROM histories WHERE id=?',segments[1]);if(!h||!this.historyVisible(h,user,true))return fail(404,'比赛记录不存在或无权查看');return {data:this.historyView(h,true,user)};}
     if(segments[0]==='client') {
       if(segments.length===4 && segments[1]==='rooms' && segments[3]==='authorize' && method==='POST') {const room=this.visibleRoom(segments[2],user),p=this.participant(room.id,user.id);if(!p)return fail(403,'请先接受 VP 参赛邀请');return {data:{room:{id:room.id,name:room.name,contestUrl:room.contest_url,startsAt:room.starts_at},participant:this.participantView(p),canSubmit:p.captain_id===user.id,serverNow:now()}};}
       if(path==='client/sync' && method==='POST')return {data:this.sync(user,body)};

@@ -82,6 +82,12 @@ def installer_command(source: Path, data: dict) -> list[str]:
         python = getattr(sys, "_base_executable", sys.executable)
     python = str(Path(python).resolve())
     if data.get('portable'):
+        if data.get('global'):
+            targets = ['--target-root', data['install_root'], '--target-bin', data['bin_directory']]
+            if sys.platform == 'win32':
+                return ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                        str(source / 'install.ps1'), *targets]
+            return ['sh', str(source / 'install-macos.sh'), *targets]
         return [python, str(source / 'install.py'), '--target-root', data['install_root'],
                 '--target-bin', data['bin_directory']]
     command = ["bash", str(source/"install.sh"), "--python", python,
@@ -245,7 +251,7 @@ def update(*, repository: str = REPOSITORY, gitee: bool = False) -> None:
             with log.open("w") as output:
                 log.chmod(0o600)
                 subprocess.run(installer_command(source, data), stdout=output, stderr=subprocess.STDOUT,
-                               check=True, timeout=1800)
+                               check=True, timeout=1800, env={**os.environ, 'XCPC_SOURCE_REVISION': revision})
         except (subprocess.SubprocessError, OSError):
             raise VPError("更新安装未完成，请查看日志：" + str(log)) from None
         print("更新完成（" + revision[:8] + "）。查看帮助：xcpc --help")

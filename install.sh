@@ -48,8 +48,14 @@ case "$(uname -m)" in
     *) printf '%s\n' 'Supported architectures: x86_64 and ARM64 (aarch64).' >&2; exit 1 ;;
 esac
 if ! $vp_local && [[ $EUID -ne 0 ]]; then
+    if [[ "${XCPC_SOURCE_REVISION:-}" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
+        exec sudo -- env XCPC_SOURCE_REVISION="$XCPC_SOURCE_REVISION" bash "$vp_source/install.sh" "${vp_args[@]}"
+    fi
     exec sudo -- bash "$vp_source/install.sh" "${vp_args[@]}"
 fi
+# The public bootstrap deliberately downloads with umask 077. Global program
+# files must be usable by the invoking user after sudo finishes.
+if ! $vp_local; then umask 022; fi
 vp_prefix=/opt/vp-helper
 vp_bin=/usr/local/bin
 if $vp_local; then
@@ -237,7 +243,22 @@ if [[ -z "$vp_submit_path" && -L "$vp_selected" && ! -e "$vp_selected" ]]; then
     esac
 fi
 if [[ -z "$vp_submit_path" && -d "$vp_release/third_party" && ! -e "$vp_selected" && ! -L "$vp_selected" ]]; then
-    install -d -m 700 "$(dirname -- "$vp_selected")"
+    # Create missing per-user ancestors as that user, not as root. Otherwise a
+    # fresh ~/.local/state would be root-owned after a global installation.
+    "$vp_python" - "$vp_owner" "$(dirname -- "$vp_selected")" <<'PY_USER_STATE'
+import os
+from pathlib import Path
+import pwd
+import sys
+account = pwd.getpwnam(sys.argv[1])
+if os.geteuid() == 0 and account.pw_uid != 0:
+    os.initgroups(account.pw_name, account.pw_gid)
+    os.setgid(account.pw_gid)
+    os.setuid(account.pw_uid)
+if os.geteuid() != account.pw_uid:
+    raise PermissionError("Cannot create another user's state directory.")
+Path(sys.argv[2]).mkdir(parents=True, exist_ok=True, mode=0o700)
+PY_USER_STATE
     ln -s "$vp_prefix/current/venv/bin/vp-submit" "$vp_selected"
     if [[ $EUID -eq 0 ]]; then
         chown "$vp_owner:$vp_owner_group" "$(dirname -- "$vp_selected")"
@@ -252,10 +273,10 @@ if [[ -z "$vp_submit_path" && -L "$vp_selected" ]]; then
 fi
 # Record the install target independently from the source checkout. The updater
 # can then install a clean cached checkout back into the same local/global path.
-"$vp_release/venv/bin/python" - "$vp_release" "$vp_source" "$vp_prefix" "$vp_bin" "$vp_local" "$vp_python" "$vp_submit_path" <<'PY_INSTALLATION'
-import json, os, re, shutil, subprocess, sys
+"$vp_release/venv/bin/python" - "$vp_release" "$vp_source" "$vp_prefix" "$vp_bin" "$vp_local" "$vp_python" "$vp_submit_path" "${vp_runtime_root:-}" <<'PY_INSTALLATION'
+import importlib.util, json, os, re, shlex, shutil, subprocess, sys
 from pathlib import Path
-release, source, prefix, commands, local, python, submit = sys.argv[1:]
+release, source, prefix, commands, local, python, submit, runtime = sys.argv[1:]
 revision = ""
 if shutil.which("git"):
     try:
@@ -273,9 +294,22 @@ if re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", os.environ.get("XCPC_SOURCE_RE
 path = Path(release) / "installation.json"
 path.write_text(json.dumps({"install_root": str(Path(prefix).absolute()), "bin_directory": str(Path(commands).absolute()),
                            "source_directory": str(Path(source).resolve()), "source_revision": revision,
-                           "local": local == "true", "python": shutil.which(python) or python,
+                           "local": local == "true", "global": local != "true", "python": shutil.which(python) or python,
                            "submit_path": submit}, ensure_ascii=False, indent=2))
 path.chmod(0o644)
+if local != 'true':
+    sys.dont_write_bytecode = True
+    spec = importlib.util.spec_from_file_location('xcpc_runtime_permissions', Path(source)/'install.py')
+    installer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(installer)
+    installer.make_runtime_readable(release)
+    if runtime:
+        installer.make_runtime_readable(runtime)
+    profile = Path('/etc/profile.d/xcpc-vp-system.sh')
+    profile.parent.mkdir(parents=True, exist_ok=True)
+    quoted = shlex.quote(commands)
+    installer.replace_file(profile, ('# XCPC shared command directory\ncase "$PATH" in\n'
+        f'  {quoted}|{quoted}:*) ;;\n  *) export PATH={quoted}:"$PATH" ;;\nesac\n').encode('utf8'),mode=0o644)
 PY_INSTALLATION
 # Publish only after the new environment and both submitters have passed checks.
 ln -s "$vp_release" "$vp_prefix/.current-new-$$"
@@ -303,11 +337,10 @@ elif [[ -z "$vp_submit_path" && "$(readlink -- "$vp_bin/submit" || true)" != "$v
 fi
 printf 'Installed VP Helper using %s (%s).\n' "$("$vp_release/venv/bin/python" --version)" "$(uname -m)"
 printf 'Commands: %s/xcpc, %s/vp, %s/live, %s/bt and %s/submit\n' "$vp_bin" "$vp_bin" "$vp_bin" "$vp_bin" "$vp_bin"
-if $vp_local || [[ "$vp_bin" != /usr/local/bin || ":$PATH:" != *":$vp_bin:"* ]]; then
-    # Configure the invoking user's shell, even when the global installer was
-    # elevated with sudo. Load the helper before dropping privileges so a source
-    # checkout inside a private parent directory remains usable.
-    if ! "$vp_python" - "$vp_source/install.py" "$vp_bin" "$vp_owner" <<'PY_PATH'
+# Configure the invoking user's shell, even when the global installer was
+# elevated with sudo. Load the helper before dropping privileges so a source
+# checkout inside a private parent directory remains usable.
+if ! "$vp_python" - "$vp_source/install.py" "$vp_bin" "$vp_owner" <<'PY_PATH'
 import importlib.util
 import os
 from pathlib import Path
@@ -333,8 +366,7 @@ if files:
 else:
     print('Shell PATH could not be configured automatically for ' + account.pw_shell)
 PY_PATH
-    then
-        printf '%s\n' 'Could not configure shell PATH automatically; add the export below to your shell configuration.' >&2
-    fi
-    printf 'For this terminal, run:\n  export PATH=%q:"$PATH"\n' "$vp_bin"
+then
+    printf '%s\n' 'Could not configure shell PATH automatically; add the export below to your shell configuration.' >&2
 fi
+printf 'For this terminal, run:\n  export PATH=%q:"$PATH"\n' "$vp_bin"

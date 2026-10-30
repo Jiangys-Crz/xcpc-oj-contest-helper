@@ -104,6 +104,17 @@ class UpdateTests(unittest.TestCase):
             commands.main()
         run.assert_called_once()
 
+    def test_global_native_updates_use_os_installers_for_admin_elevation(self):
+        data = {**self.data, 'portable': True, 'global': True, 'local': False}
+        for system, executable, script in (
+                ('darwin', 'sh', 'install-macos.sh'), ('win32', 'powershell.exe', 'install.ps1')):
+            with self.subTest(system=system), patch.object(updater.sys, 'platform', system):
+                command = updater.installer_command(self.repo, data)
+                self.assertEqual(command[0], executable)
+                self.assertIn(str(self.repo / script), command)
+                self.assertEqual(command[command.index('--target-root') + 1], data['install_root'])
+                self.assertEqual(command[command.index('--target-bin') + 1], data['bin_directory'])
+
 
 class InstallationMetadataTests(unittest.TestCase):
     def test_metadata_matches_the_running_release(self):

@@ -56,6 +56,38 @@ class ExtensionLoginTests(Isolated):
             with self.assertRaises(ValueError):
                 bridge.read_message(io.BytesIO(data))
 
+    def test_global_program_initializes_each_users_private_bridge_once_per_release(self):
+        release = self.root / 'shared-program/releases/current'
+        storage.write_json(release / 'installation.json', {
+            'global': True, 'install_root': str(release.parent.parent), 'source_revision': 'a' * 40})
+        calls = []
+        def register_private_bridge():
+            calls.append(storage.config_directory())
+            launcher = storage.config_directory() / 'browser-bridge/host'
+            launcher.parent.mkdir(parents=True, exist_ok=True)
+            launcher.write_text('private user launcher')
+            storage.write_json(storage.config_directory() / 'browser-extension/manifest.json', {'version': 'test'})
+        with patch.object(chromium_login, 'enabled', return_value=True), \
+                patch.object(chromium_login.sys, 'platform', 'darwin'), \
+                patch.object(chromium_login.sys, 'prefix', str(release / 'venv')), \
+                patch.object(chromium_login, 'register_bridge', side_effect=register_private_bridge):
+            for user in ('alice', 'bob'):
+                with patch.dict(os.environ, {'XDG_CONFIG_HOME': str(self.root / user)}):
+                    chromium_login.ensure_user_bridge()
+                    chromium_login.ensure_user_bridge()
+            self.assertEqual(len(calls), 2)
+            self.assertNotEqual(calls[0], calls[1])
+            chromium_login.ensure_user_bridge(force=True)
+            self.assertEqual(len(calls), 3)
+        self.assertEqual(list(release.parent.parent.glob('browser-*')), [])
+
+    def test_non_global_program_does_not_implicitly_register_a_browser_bridge(self):
+        with patch.object(chromium_login, 'enabled', return_value=True), \
+                patch.object(chromium_login, 'read_json', return_value={'global': False}), \
+                patch.object(chromium_login, 'register_bridge') as register:
+            chromium_login.ensure_user_bridge(force=True)
+        register.assert_not_called()
+
     def test_host_filters_unrelated_private_partitioned_expired_and_unsafe_cookies(self):
         value = snapshot()
         value['cookies'] += [dict(name='bad', value='excluded', domain=domain, path='/')

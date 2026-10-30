@@ -13,10 +13,86 @@ fetch() {
     else echo 'curl or wget is required to download this installer.' >&2; return 1; fi
 }
 interactive() { if ( : </dev/tty ) >/dev/null 2>&1; then "$@" </dev/tty; else "$@"; fi; }
-# Prefer an existing installation's own updater, retaining its custom directories.
-if command -v xcpc >/dev/null 2>&1; then
-    if interactive xcpc update; then exit 0; fi
-    echo 'The existing command could not update. Preparing the standard installer.' >&2
+configure_command_path() {
+    # A successful/no-op updater may not have installed any shell PATH block.
+    # The public installer must repair that too, without changing user settings.
+    local commands="$1" platform="$2" shell_name="${SHELL:-/bin/bash}"
+    shell_name="${shell_name##*/}"
+    local configs=() directories=("$commands") profile candidate config target parent staged hops quoted prefix index
+    if [[ "$platform" == Darwin ]]; then
+        for prefix in "${HOMEBREW_PREFIX:-}" /opt/homebrew /usr/local; do
+            if [[ -n "$prefix" && -f "$prefix/bin/brew" ]]; then
+                directories+=("$prefix/bin" "$prefix/sbin"); break
+            fi
+        done
+    fi
+    if [[ "$platform" == Darwin || "$shell_name" == bash ]]; then
+        profile="$HOME/.bash_profile"
+        for candidate in .bash_profile .bash_login .profile; do
+            if [[ -f "$HOME/$candidate" ]]; then profile="$HOME/$candidate"; break; fi
+        done
+        configs+=("$profile" "$HOME/.bashrc")
+    fi
+    if [[ "$platform" == Darwin || "$shell_name" == zsh ]]; then
+        configs+=("${ZDOTDIR:-$HOME}/.zprofile" "${ZDOTDIR:-$HOME}/.zshrc")
+    fi
+    if [[ "$shell_name" == fish ]]; then configs+=("${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/xcpc-path.fish"); fi
+    if (( ${#configs[@]} == 0 )); then
+        printf 'Add the XCPC command directory to your shell PATH: %s\n' "$commands" >&2
+        return 1
+    fi
+    for config in "${configs[@]}"; do
+        target="$config"; hops=0
+        while [[ -L "$target" ]]; do
+            (( hops += 1 )); [[ "$hops" -le 40 ]] || return 1
+            parent="$(dirname -- "$target")"
+            target="$(readlink -- "$target")"
+            [[ "$target" == /* ]] || target="$parent/$target"
+        done
+        parent="$(dirname -- "$target")"; mkdir -p -- "$parent"
+        staged="$(mktemp "$parent/.xcpc-path.XXXXXXXX")"
+        if [[ -f "$target" ]]; then
+            cp -p -- "$target" "$staged"
+            awk '$0=="# >>> XCPC command path >>>"{skip=1;next} $0=="# <<< XCPC command path <<<"{skip=0;next} !skip{if($0==""){blank++;next} while(blank-->0)print ""; blank=0; print}' "$target" > "$staged"
+        fi
+        printf '\n# >>> XCPC command path >>>\n' >> "$staged"
+        for (( index=${#directories[@]}-1; index>=0; index-- )); do
+            if [[ "$config" == *.fish ]]; then
+                quoted="${directories[index]//\\/\\\\}"; quoted="${quoted//\'/\\\'}"
+                printf "if test \"\$PATH[1]\" != '%s'\n  set -gx PATH '%s' \$PATH\nend\n" "$quoted" "$quoted" >> "$staged"
+            else
+                printf -v quoted '%q' "${directories[index]}"
+                printf 'case "$PATH" in\n  %s|%s:*) ;;\n  *) export PATH=%s:"$PATH" ;;\nesac\n' "$quoted" "$quoted" "$quoted" >> "$staged"
+            fi
+        done
+        printf '# <<< XCPC command path <<<\n' >> "$staged"
+        mv -f -- "$staged" "$target"
+    done
+    printf 'Command directory: %s\nPATH configured for new terminals.\n' "$commands"
+    printf 'For this terminal, run:\n  export PATH=%q:"$PATH"\n' "$commands"
+}
+platform="$(uname -s)"
+shared_command="/usr/local/bin/xcpc"
+existing_command=
+# A legacy per-user updater only updates that private installation. The online
+# installer now migrates those users to a shared application instead.
+if [[ -x "$shared_command" ]]; then
+    if [[ "$platform" == Linux && -L "$shared_command" && "$(readlink -- "$shared_command")" == "/opt/vp-helper/current/venv/bin/xcpc" ]]; then
+        existing_command="$shared_command"
+    elif [[ "$platform" == Darwin && -f "/usr/local/bin/.xcpc-native-commands.json" ]] &&
+         awk '/"global"[[:space:]]*:[[:space:]]*true/{found=1} END{exit !found}' "/usr/local/bin/.xcpc-native-commands.json"; then
+        existing_command="$shared_command"
+    fi
+fi
+if [[ -n "$existing_command" ]]; then
+    if interactive "$existing_command" update; then
+        configure_command_path "/usr/local/bin" "$platform"
+        export PATH="/usr/local/bin:$PATH"
+        "$existing_command" --help >/dev/null
+        printf '\n%s\n' 'Installation complete for all computer users. Open a new terminal and run: xcpc login'
+        exit 0
+    fi
+    echo 'The existing shared command could not update. Preparing the standard installer.' >&2
 fi
 temporary="$(mktemp -d "${TMPDIR:-/tmp}/xcpc-online.XXXXXXXX")"
 trap 'rm -rf -- "$temporary"' EXIT
@@ -35,6 +111,9 @@ tar -xzf "$temporary/source.tar.gz" -C "$temporary/source"
 source="$temporary/source/VP"
 [[ -f "$source/install.py" && -f "$source/install.sh" ]] || { echo 'Incomplete source archive.' >&2; exit 1; }
 export XCPC_SOURCE_REVISION="$revision"
-if [[ "$(uname -s)" == Darwin ]]; then interactive sh "$source/install-macos.sh"
+if [[ "$platform" == Darwin ]]; then interactive sh "$source/install-macos.sh"
 else interactive bash "$source/install.sh"; fi
-printf '\n%s\n' 'Installation complete. Open a new terminal and run: xcpc login'
+configure_command_path "/usr/local/bin" "$platform"
+export PATH="/usr/local/bin:$PATH"
+"$shared_command" --help >/dev/null
+printf '\n%s\n' 'Installation complete for all computer users. Open a new terminal and run: xcpc login'

@@ -91,6 +91,19 @@ class CloudTerminalTests(unittest.TestCase):
         self.assertEqual(payload['solved'],2)
         self.assertTrue(all(s['practice'] for s in payload['submissions']))
 
+    def test_payload_preserves_compiler_error_scoring_rule_for_frozen_board(self):
+        self.state['submissions']=[
+            {'id':'1','team':'me','problem':'A','time':10,'verdict':'COMPILER-ERROR'},
+            {'id':'2','team':'me','problem':'A','time':70,'verdict':'CORRECT'}]
+        for compile_penalty in (False,True):
+            with self.subTest(compile_penalty=compile_penalty):
+                self.state['contest']['rules']['compile_penalty']=compile_penalty
+                payload=cloud.sync_payload(self.path,self.state)
+                self.assertEqual(payload['contest']['rules'],{
+                    'duration':3600,'penalty_minutes':20,'compile_penalty':compile_penalty})
+                self.assertEqual(payload['cells']['A']['tries'],2 if compile_penalty else 1)
+                self.assertEqual(payload['penalty'],21 if compile_penalty else 1)
+
     def test_unconfigured_local_sessions_do_not_start_network_or_write_outbox(self):
         cloud.configuration_path().unlink()
         cloud.queue_state(self.path,self.state)

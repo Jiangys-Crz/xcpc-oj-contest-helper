@@ -1,4 +1,4 @@
-XCPC 0.9.0 · Ubuntu ARM64 快速安装
+XCPC 0.9.1 · Ubuntu ARM64 快速安装
 
 完整安装与使用教程请阅读同目录的 README.md。
 Ubuntu 24.04 / 26.04 ARM64 使用系统 Python 3.12+；仓库带有适配
@@ -8,8 +8,8 @@ Ubuntu 26.04、Python 3.14 ARM64 的依赖 wheels。
 
 2. 使用日常 Linux 用户运行：
 
-   bash install.sh --local --offline
-   export PATH="$PWD/bin:$PATH"
+   bash install.sh --offline
+   export PATH="/usr/local/bin:$PATH"
    xcpc --help
 
    安装器会自动补齐 Python、venv、Git、tmux 和证书，缺少系统包时
@@ -17,9 +17,9 @@ Ubuntu 26.04、Python 3.14 ARM64 的依赖 wheels。
    apt 安装系统包仍可能需要网络。其他 Python 版本缺少对应 wheel 时，
    去掉 --offline 后重试。不要在比赛命令前加 sudo。
 
-   程序保存在 .vp-install，命令在 bin。安装器自动配置 Bash / Zsh
-   的命令路径，新终端可直接运行 xcpc；当前终端先执行上面的 export。
-   本地安装后不要移动程序目录，移动后需要重新安装。
+   程序保存在 /opt/vp-helper，命令在 /usr/local/bin，全电脑用户可用。
+   安装器自动配置命令路径，新终端可直接运行 xcpc；当前终端先执行
+   上面的 export。账号、浏览器登录与比赛文件仍按用户分别保存。
 
 3. 在同一系统用户的普通 Firefox 窗口登录比赛网站，无需退出浏览器。
    Ubuntu 继续直接读取 Firefox 登录，不使用 Chrome / Edge 扩展。
