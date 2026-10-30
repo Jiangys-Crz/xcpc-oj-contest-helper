@@ -27,6 +27,14 @@ HELP = """XCPC 比赛终端助手
   submit A.cpp     在比赛或补题目录中提交
   优先恢复最新 VP/live 的原目录；补题不计时，Rank 固定，不显示公共统计区。
 
+云端账号与多人组队 VP
+  xcpc login              登录协会账号；再次运行可更新密码或切换账号
+  xcpc logout             退出云端登录
+  xcpc account            查看云端账号和同步状态
+  vp https://vp.cwnupaa.com/vp/房间ID
+  printfile A.cpp         虚拟打印代码，仅本队成员可见，需英文确认
+  云端队伍参赛仅队长可本地创建和提交；比赛数据自动同步到线上。
+
 历史记录
   vp history
   vp history 轮次ID
@@ -53,7 +61,8 @@ Codeforces API 设置
   xcpc api gym          配置 Gym 使用的 Codeforces 账号
 
 更新
-  xcpc update           更新到 Gitee 最新版本，保留原安装位置及个人数据
+  xcpc update           优先从 VP 云端更新，失败回退 Gitee，保留原安装位置及个人数据
+  xcpc update --gitee   使用 Gitee 更新
 
 帮助
   xcpc --help
@@ -76,6 +85,15 @@ def main() -> None:
             if sys.platform in ('darwin', 'win32'):
                 help_text = help_text.replace('Firefox 登录', 'Chrome / Edge 扩展登录')
             print(help_text)
+        elif args and args[0] == "login":
+            from .cloud import login_command
+            login_command(args[1:])
+        elif args == ["logout"]:
+            from .cloud import logout
+            logout()
+        elif args == ["account"]:
+            from .cloud import account_status
+            account_status()
         elif args == ["path"]:
             print("当前保存目录：" + str(workspace_directory()))
             try:
@@ -109,8 +127,9 @@ def main() -> None:
             _, state = end_attempt(args[1] if len(args) == 2 else None)
             print("本地 VP 已结束：" + state.get("attempt_id", "") + " · " + state["directory"])
             print("代码与历史记录已保留；已开始轮次的后续提交计为补题，新 AC 方格显示蓝色，记录保留判定颜色。")
-        elif args == ["update"]:
+        elif args in (["update"], ["update", "--gitee"]):
             from .updater import main as update
+            sys.argv = [sys.argv[0], *args[1:]]
             update()
         elif args == ['dashboard']:
             from .cli import dashboard

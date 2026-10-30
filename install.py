@@ -125,13 +125,14 @@ def install(args):
         if previous.get('owner') != 'xcpc-native' or Path(previous.get('install_root', '')).resolve() != root:
             raise SystemExit('The command directory belongs to another installation; it was preserved.')
     if not marker.exists():
-        for name in ('xcpc','vp','live','bt','submit'):
+        for name in ('xcpc','vp','live','bt','submit','printfile'):
             if (commands / (name + '.exe' if windows else name)).exists():
                 raise SystemExit('Existing command was preserved: ' + str(commands / name))
     release = Path(tempfile.mkdtemp(prefix=time.strftime('%Y%m%dT%H%M%S')+'-', dir=root / 'releases'))
     published = False
     new_commands = not marker.exists()
     bootstrap_backups = {}
+    added_printfile = False
     try:
         app = release / 'app'
         app.mkdir()
@@ -162,6 +163,8 @@ def install(args):
                 revision = subprocess.check_output(['git','-C',str(source),'rev-parse','HEAD'],text=True,stderr=subprocess.DEVNULL).strip()
             except subprocess.CalledProcessError:
                 pass
+        if re.fullmatch(r'[0-9a-f]{40}(?:[0-9a-f]{24})?', os.environ.get('XCPC_SOURCE_REVISION','')):
+            revision = os.environ['XCPC_SOURCE_REVISION']
         metadata = {'install_root':str(root),'bin_directory':str(commands),'local':True,'portable':True,
                     'source_directory':str(source),'source_revision':revision,'python':sys.executable,'submit_path':''}
         (release / 'installation.json').write_text(json.dumps(metadata,ensure_ascii=False,indent=2), encoding='utf8')
@@ -186,15 +189,24 @@ def install(args):
         # Windows EXEs bootstrap through current.json, so an update need not replace a running command.
         if not marker.exists():
             if windows:
-                generator = "from pip._vendor.distlib.scripts import ScriptMaker; import sys; m=ScriptMaker(None,sys.argv[1]); m.variants={''}; [m.make(n+' = vp_helper.bootstrap:main') for n in ('xcpc','vp','live','bt','submit')]"
+                generator = "from pip._vendor.distlib.scripts import ScriptMaker; import sys; m=ScriptMaker(None,sys.argv[1]); m.variants={''}; [m.make(n+' = vp_helper.bootstrap:main') for n in ('xcpc','vp','live','bt','submit','printfile')]"
                 run([python, '-c', generator, commands])
             else:
-                for name in ('xcpc','vp','live','bt','submit'):
+                for name in ('xcpc','vp','live','bt','submit','printfile'):
                     entry = commands / name
                     entry.write_text('#!/bin/sh\nexec ' + shlex.quote(str(python)) + ' -c ' + shlex.quote(
                         'import sys; sys.argv[0]='+repr(name)+'; from vp_helper.bootstrap import main; main()') + ' "$@"\n')
                     entry.chmod(0o755)
             marker.write_text(json.dumps({'owner':'xcpc-native','initial_release':str(release),'install_root':str(root)},ensure_ascii=False),encoding='utf8')
+        print_entry = commands / ('printfile.exe' if windows else 'printfile')
+        if not print_entry.exists():
+            if windows:
+                run([python, '-c', "from pip._vendor.distlib.scripts import ScriptMaker; import sys; m=ScriptMaker(None,sys.argv[1]); m.variants={''}; m.make('printfile = vp_helper.bootstrap:main')", commands])
+            else:
+                print_entry.write_text('#!/bin/sh\nexec ' + shlex.quote(str(python)) + ' -c ' + shlex.quote(
+                    'import sys; sys.argv[0]="printfile"; from vp_helper.bootstrap import main; main()') + ' "$@"\n')
+                print_entry.chmod(0o755)
+            added_printfile = True
         replace_file(root/'current.json',json.dumps({'release':str(release)},ensure_ascii=False).encode('utf8'))
         published = True
         print('XCPC installed. Command directory: ' + str(commands))
@@ -211,9 +223,11 @@ def install(args):
             print('export PATH=' + shlex.quote(str(commands)) + ':"$PATH"')
     finally:
         if not published:
+            if added_printfile:
+                (commands / ('printfile.exe' if windows else 'printfile')).unlink(missing_ok=True)
             restore_bootstraps(bootstrap_backups)
             if new_commands:
-                for name in ('xcpc','vp','live','bt','submit'):
+                for name in ('xcpc','vp','live','bt','submit','printfile'):
                     (commands / (name + '.exe' if windows else name)).unlink(missing_ok=True)
                 marker.unlink(missing_ok=True)
             shutil.rmtree(release)

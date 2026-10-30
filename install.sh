@@ -253,7 +253,7 @@ fi
 # Record the install target independently from the source checkout. The updater
 # can then install a clean cached checkout back into the same local/global path.
 "$vp_release/venv/bin/python" - "$vp_release" "$vp_source" "$vp_prefix" "$vp_bin" "$vp_local" "$vp_python" "$vp_submit_path" <<'PY_INSTALLATION'
-import json, shutil, subprocess, sys
+import json, os, re, shutil, subprocess, sys
 from pathlib import Path
 release, source, prefix, commands, local, python, submit = sys.argv[1:]
 revision = ""
@@ -268,6 +268,8 @@ if shutil.which("git"):
             revision = subprocess.check_output([*git, "rev-parse", "HEAD"], stderr=subprocess.DEVNULL, text=True, timeout=5).strip()
     except (subprocess.SubprocessError, OSError):
         pass
+if re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", os.environ.get("XCPC_SOURCE_REVISION", "")):
+    revision = os.environ["XCPC_SOURCE_REVISION"]
 path = Path(release) / "installation.json"
 path.write_text(json.dumps({"install_root": str(Path(prefix).absolute()), "bin_directory": str(Path(commands).absolute()),
                            "source_directory": str(Path(source).resolve()), "source_revision": revision,
@@ -283,6 +285,13 @@ ln -sfn "$vp_prefix/current/venv/bin/vp" "$vp_bin/vp"
 ln -sfn "$vp_prefix/current/venv/bin/live" "$vp_bin/live"
 ln -sfn "$vp_prefix/current/venv/bin/bt" "$vp_bin/bt"
 ln -sfn "$vp_prefix/current/venv/bin/xcpc" "$vp_bin/xcpc"
+if [[ ! -e "$vp_bin/printfile" && ! -L "$vp_bin/printfile" ]]; then
+    ln -s -- "$vp_prefix/current/venv/bin/printfile" "$vp_bin/printfile"
+elif [[ "$(readlink -- "$vp_bin/printfile" || true)" == "$vp_prefix/current/venv/bin/printfile" ]]; then
+    ln -sfn "$vp_prefix/current/venv/bin/printfile" "$vp_bin/printfile"
+else
+    printf 'Preserved existing printfile command: %s\n' "$vp_bin/printfile"
+fi
 if [[ ! -e "$vp_bin/submit" && ! -L "$vp_bin/submit" ]]; then
     if [[ -n "$vp_submit_path" ]]; then
         ln -s -- "$vp_submit_path" "$vp_bin/submit"

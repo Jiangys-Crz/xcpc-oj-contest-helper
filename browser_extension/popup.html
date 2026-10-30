@@ -5,4 +5,10 @@
 <button id="sync">同步登录状态</button>
 <p>在当前普通窗口登录 Codeforces、QOJ、CWNUOJ 或牛客即可。登录信息仅传给本机 XCPC。</p>
 <p>某站 Cookie 为 0 时，请确认使用同一浏览器用户配置，并在扩展详情允许访问该网站。</p>
+<hr><h3>VP 云端账号</h3>
+<p id="cloud-status">正在检查云端账号…</p>
+<form id="cloud-login"><label>协会账号或邮箱<input id="cloud-account" autocomplete="username" maxlength="200" required></label><br>
+<label>密码<input id="cloud-password" type="password" autocomplete="current-password" maxlength="1000" required></label><br>
+<button type="submit">登录并保存 / 切换账号</button> <button type="button" id="cloud-logout">退出</button></form>
+<p>云端账号用于组队 VP 和同步比赛记录。更新密码后重新登录即可。</p>
 <script src="popup.js"></script></html>

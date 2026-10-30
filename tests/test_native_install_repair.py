@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from vp_helper.storage import write_json
+from vp_helper.storage import read_json, write_json
 
 spec=importlib.util.spec_from_file_location('xcpc_installer',Path(__file__).resolve().parent.parent/'install.py')
 installer=importlib.util.module_from_spec(spec)
@@ -132,6 +132,45 @@ class NativeInstallRepairTests(unittest.TestCase):
         self.assertEqual(external.read_bytes(),b'foreign contents; must remain unchanged')
         self.assertFalse(target.is_symlink())
         self.assertEqual(target.read_bytes(),(self.source/'bootstrap.py').read_bytes())
+
+    def test_upgrading_owned_old_install_adds_printfile_without_replacing_commands(self):
+        for operating_system in ('darwin','win32'):
+            with self.subTest(operating_system=operating_system):
+                source=self.root.parent/('source-'+operating_system)
+                (source/'vp_helper').mkdir(parents=True)
+                for name in ('bootstrap.py','bridge_bootstrap.py'):
+                    (source/'vp_helper'/name).write_bytes((self.source/name).read_bytes())
+                (source/'pyproject.toml').write_text('[project]\nname="fixture"\nversion="0"\n')
+                (source/'third_party').mkdir();(source/'browser_extension').mkdir()
+                windows=operating_system=='win32'
+                suffix='.exe' if windows else ''
+                commands=self.root.parent/('commands-'+operating_system);commands.mkdir()
+                originals={commands/(name+suffix):b'original 0.8.2 entry' for name in ('xcpc','vp','live','bt','submit')}
+                for path,data in originals.items():path.write_bytes(data)
+                marker=commands/'.xcpc-native-commands.json'
+                write_json(marker,{'owner':'xcpc-native','initial_release':str(self.first),'install_root':str(self.root)})
+                before=marker.read_bytes()
+                def create(directory):
+                    scripts=directory/('Scripts' if windows else 'bin');scripts.mkdir(parents=True)
+                    (scripts/('python.exe' if windows else 'python')).write_bytes(b'fixture interpreter')
+                def run(arguments,**kwargs):
+                    if windows and any("m.make('printfile =" in str(a) for a in arguments):
+                        (commands/'printfile.exe').write_bytes(b'new entry using new interpreter')
+                args=SimpleNamespace(target_root=str(self.root),target_bin=str(commands),offline=True,
+                                     skip_browser_registration=True,skip_path_configuration=True)
+                with patch('sys.platform',operating_system),patch('sys.stdout',new=io.StringIO()), \
+                        patch.object(installer,'__file__',str(source/'install.py')), \
+                        patch.object(installer.shutil,'which',return_value=None), \
+                        patch('vp_helper.storage.config_directory',return_value=self.root.parent/'fixture-config'), \
+                        patch.object(installer.venv,'EnvBuilder',return_value=SimpleNamespace(create=create)), \
+                        patch.object(installer,'run',side_effect=run):
+                    installer.install(args)
+                self.assertTrue((commands/('printfile'+suffix)).is_file())
+                self.assertEqual(marker.read_bytes(),before)
+                for path,data in originals.items():self.assertEqual(path.read_bytes(),data)
+                if not windows:
+                    current=read_json(self.root/'current.json')['release']
+                    self.assertIn(current,(commands/'printfile').read_text())
 
     def test_windows_install_failure_before_publication_restores_both_initial_runtimes(self):
         source=self.root.parent/'source-fixture'

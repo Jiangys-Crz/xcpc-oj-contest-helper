@@ -58,6 +58,31 @@ def store_snapshot(value):
                 'read_errors': [host for host in value.get('read_errors', []) if host in HOSTS]})
 
 
+
+def cloud_message(value):
+    from . import cloud
+    from .models import VPError
+    import contextlib
+    import io
+    try:
+        if value['type'] == 'cloud-login':
+            account, password = value.get('account'), value.get('password')
+            if not isinstance(account, str) or not isinstance(password, str) or len(account)>200 or len(password)>1000:
+                raise VPError('请输入有效的协会账号和密码。')
+            cloud.login(account, password, interactive=False)
+            cloud.queue_all()
+            cloud.kick_sync_process()
+        elif value['type'] == 'cloud-logout':
+            with contextlib.redirect_stdout(io.StringIO()):
+                cloud.logout()
+        elif value['type'] != 'cloud-status':
+            raise VPError('不支持的云端操作。')
+        saved = cloud.read_json(cloud.configuration_path())
+        return {'type':'cloud-account', 'user':saved.get('user'), 'serverUrl':saved.get('serverUrl',cloud.DEFAULT_SERVER)}
+    except (VPError, OSError):
+        return {'type':'cloud-account', 'error':'云端操作未完成，请检查协会账号密码和本机网络，或运行 xcpc login。'}
+
+
 def main():
     if not sys.argv[1:] or sys.argv[1] != 'chrome-extension://' + extension_id() + '/':
         raise SystemExit(1)
@@ -67,7 +92,9 @@ def main():
         msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
     try:
         while (value := read_message(sys.stdin.buffer)) is not None:
-            if value.get('type') == 'snapshot':
+            if str(value.get('type', '')).startswith('cloud-'):
+                send_message(sys.stdout.buffer, cloud_message(value))
+            elif value.get('type') == 'snapshot':
                 store_snapshot(value)
                 send_message(sys.stdout.buffer, {'type': 'stored'})
     except (OSError, ValueError, TypeError, KeyError, AttributeError):

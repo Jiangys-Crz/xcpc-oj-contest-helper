@@ -1,0 +1,26 @@
+[Unit]
+Description=XCPC VP isolated PM2 process manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+User=xcpc-vp
+Group=xcpc-vp
+WorkingDirectory=/home/paa/xcpc-vp-system
+Environment=PM2_HOME=/home/paa/xcpc-vp-system/shared/pm2
+Environment=PATH=/home/paa/xcpc-vp-system/runtime:/usr/local/bin:/usr/bin:/bin
+PIDFile=/home/paa/xcpc-vp-system/shared/pm2/pm2.pid
+ExecStart=/home/paa/xcpc-vp-system/runtime/node /home/paa/xcpc-vp-system/runtime/pm2/node_modules/pm2/bin/pm2 startOrReload /home/paa/xcpc-vp-system/ecosystem.config.cjs --only xcpc-vp-web --update-env
+ExecReload=/home/paa/xcpc-vp-system/runtime/node /home/paa/xcpc-vp-system/runtime/pm2/node_modules/pm2/bin/pm2 startOrReload /home/paa/xcpc-vp-system/ecosystem.config.cjs --only xcpc-vp-web --update-env
+ExecStop=/home/paa/xcpc-vp-system/runtime/node /home/paa/xcpc-vp-system/runtime/pm2/node_modules/pm2/bin/pm2 kill
+Restart=on-failure
+LimitNOFILE=65536
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/paa/xcpc-vp-system/shared /home/paa/xcpc-vp-system/releases
+
+[Install]
+WantedBy=multi-user.target

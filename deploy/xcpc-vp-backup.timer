@@ -1,0 +1,8 @@
+[Unit]
+Description=Daily XCPC VP data backup
+[Timer]
+OnCalendar=*-*-* 04:20:00 Asia/Shanghai
+Persistent=true
+RandomizedDelaySec=300
+[Install]
+WantedBy=timers.target

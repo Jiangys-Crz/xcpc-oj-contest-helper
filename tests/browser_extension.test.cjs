@@ -78,6 +78,16 @@ async function test() {
   await pending.shift()();
   await flush();
   assert.ok(messages.length>count);
+  let cloudRpc;
+  chrome.runtime.sendNativeMessage=(name,message,reply)=>{
+    assert.equal(name,'com.xcpc.browser'); cloudRpc=message;
+    reply({type:'cloud-account',user:{id:'fixture-user',username:'Member'}});
+  };
+  let cloudReply;
+  assert.equal(listeners.message({type:'cloud-login',account:'fixture',password:'private-fixture-password'}, {}, value=>{cloudReply=value;}),true);
+  assert.equal(cloudRpc.type,'cloud-login');
+  assert.equal(cloudReply.user.id,'fixture-user');
+  assert.ok(!JSON.stringify(values).includes('private-fixture-password'));
   const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'../browser_extension/manifest.json')));
   assert.equal(manifest.incognito,'not_allowed');
   assert.ok(!manifest.host_permissions.some(host=>host.includes('*://')||host.includes('<all_urls>')));

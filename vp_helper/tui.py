@@ -216,6 +216,7 @@ class LiveDashboard:
     handle: str = ""
     practice: bool = False
     practice_rank: str | None = None
+    participant_label: str = ""
 
     _record_table = staticmethod(Dashboard._record_table)
     records = Dashboard.records
@@ -268,6 +269,7 @@ class LiveDashboard:
             color = "#b8860b" if preliminary and points else "#008000" if points else "#ff0000" if rejected else "default"
             cells.append(Text(value, style=color))
         name = (own["party"].get("teamName") or ";".join(m["handle"] for m in own["party"]["members"])) if own else self.handle
+        name = self.participant_label or name
         value = (str(int(own["points"])) if scoring == "ICPC" else f"{own['points']:g}") if own else "—"
         rank = self.practice_rank if self.practice else str(own['rank']) if own else '—'
         values = [str(rank) if rank is not None else '—', Text(name), value]

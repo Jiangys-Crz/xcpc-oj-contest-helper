@@ -1,4 +1,4 @@
-// No page scripts or network uploads: only judge cookies -> local Native Messaging.
+// Judge cookies stay local. Cloud account RPC is handled by the local XCPC host.
 const bases = ['codeforces.com','qoj.ac','contest.ucup.ac','oj.cwnupaa.com','cwnupaa.com','ac.nowcoder.com','nowcoder.com'];
 const hosts = bases.flatMap(host => [host,'www.'+host]);
 const domains = new Set(hosts.flatMap(host => [host,'.'+host]));
@@ -67,6 +67,13 @@ chrome.cookies.onChanged.addListener(change => {
 chrome.runtime.onInstalled.addListener(synchronize);
 chrome.runtime.onStartup.addListener(synchronize);
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  if (['cloud-login','cloud-status','cloud-logout'].includes(message.type)) {
+    chrome.runtime.sendNativeMessage('com.xcpc.browser',message,response => {
+      const error = chrome.runtime.lastError;
+      reply(error ? {error:'本地连接未建立，请先更新 XCPC。'} : response);
+    });
+    return true;
+  }
   if (message.type === 'sync') { synchronize().then(() => reply({ok:true})); return true; }
 });
 chrome.alarms.onAlarm.addListener(synchronize);

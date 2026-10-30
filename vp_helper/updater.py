@@ -8,6 +8,10 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import tarfile
+import tempfile
+
+import requests
 import sys
 
 from .models import VPError
@@ -89,8 +93,124 @@ def installer_command(source: Path, data: dict) -> list[str]:
     return command
 
 
-def update(*, repository: str = REPOSITORY) -> None:
+
+CLOUD_SERVER = "https://vp.cwnupaa.com"
+
+
+class CloudUnavailable(VPError):
+    """A connectivity failure permits fallback; integrity failures never do."""
+
+
+def _download(url, *, stream=False):
+    try:
+        result = requests.get(url, timeout=(4, 30), allow_redirects=False, stream=stream,
+                              headers={'User-Agent':'XCPC-Updater/0.9','Accept':'application/json' if not stream else 'application/gzip'})
+    except requests.RequestException:
+        raise CloudUnavailable('云端更新连接失败。') from None
+    if result.status_code != 200:
+        result.close()
+        raise CloudUnavailable('云端更新暂不可用。')
+    return result
+
+
+def safe_extract(archive, destination):
+    """Extract only bounded regular files/directories into a new owned directory."""
+    destination = Path(destination).resolve()
+    with tarfile.open(archive, 'r:gz') as source:
+        members = source.getmembers()
+        if len(members) > 20000 or sum(max(0,m.size) for m in members) > 1024*1024*1024:
+            raise VPError('更新源码包过大，原版本未修改。')
+        for member in members:
+            # Backslashes and drive prefixes are paths on Windows too.
+            path = Path(member.name)
+            if (path.is_absolute() or '..' in path.parts or '\\' in member.name or ':' in member.name
+                    or not (member.isfile() or member.isdir())
+                    or not (destination/path).resolve().is_relative_to(destination)):
+                raise VPError('更新源码包包含不安全的路径或链接，原版本未修改。')
+        for member in members:
+            target = destination/member.name
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True, mode=0o700)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                with source.extractfile(member) as reader, target.open('xb') as writer:
+                    shutil.copyfileobj(reader,writer)
+                target.chmod(0o600 | (member.mode & 0o111))
+    roots = [destination, *[p for p in destination.iterdir() if p.is_dir()]]
+    matches = [p for p in roots if (p/'install.py').is_file() and (p/'install.sh').is_file()]
+    if len(matches) != 1:
+        raise VPError('更新源码包缺少唯一安装入口，原版本未修改。')
+    return matches[0]
+
+
+def cloud_update(data):
+    print('正在检查 VP 云端最新版本…', flush=True)
+    response = _download(CLOUD_SERVER + '/api/client/releases/latest')
+    try:
+        manifest = response.json()['data']
+    except (ValueError, KeyError, TypeError):
+        raise VPError('云端更新清单无效，原版本未修改。') from None
+    finally:
+        response.close()
+    if not isinstance(manifest, dict):
+        raise VPError('云端更新清单必须为对象，原版本未修改。')
+    revision = manifest.get('revision','')
+    checksum = manifest.get('sha256','')
+    if (not isinstance(revision,str) or not isinstance(checksum,str)
+            or not re.fullmatch(r'[0-9a-f]{40}(?:[0-9a-f]{24})?', revision)
+            or not re.fullmatch(r'[0-9a-f]{64}',checksum)
+            or manifest.get('sourceUrl') != CLOUD_SERVER + '/downloads/terminal/' + revision + '.tar.gz'):
+        raise VPError('云端更新清单的来源或校验值无效，原版本未修改。')
+    key = hashlib.sha256(data['install_root'].encode()).hexdigest()[:16]
+    cache = Path(os.environ.get('XDG_CACHE_HOME', Path.home()/'.cache'))/'vp/updates'/key
+    with update_lock(cache/'update.lock'):
+        if revision == data.get('source_revision'):
+            print('已是最新版本（' + revision[:8] + '）。')
+            return
+        with tempfile.TemporaryDirectory(prefix='cloud-source-',dir=cache) as temporary:
+            folder = Path(temporary)
+            archive = folder/'release.tar.gz'
+            response = _download(manifest['sourceUrl'], stream=True)
+            digest = hashlib.sha256()
+            total = 0
+            try:
+                with archive.open('wb') as target:
+                    for chunk in response.iter_content(1024*1024):
+                        total += len(chunk)
+                        if total > 512*1024*1024:
+                            raise VPError('更新源码压缩包过大，原版本未修改。')
+                        digest.update(chunk)
+                        target.write(chunk)
+            except requests.RequestException:
+                raise CloudUnavailable('云端源码下载未完成。') from None
+            finally:
+                response.close()
+            if digest.hexdigest() != checksum:
+                raise VPError('更新源码 SHA256 校验失败，原版本未修改。')
+            try:
+                source = safe_extract(archive, folder/'source')
+            except tarfile.TarError:
+                raise VPError('更新源码包格式无效，原版本未修改。') from None
+            log = cache/'last-update.log'
+            print('正在安装云端新版本，保留原安装路径、账号和比赛数据…', flush=True)
+            try:
+                with log.open('w') as output:
+                    log.chmod(0o600)
+                    subprocess.run(installer_command(source,data), stdout=output, stderr=subprocess.STDOUT,
+                                   check=True, timeout=1800, env={**os.environ,'XCPC_SOURCE_REVISION':revision})
+            except (subprocess.SubprocessError, OSError):
+                raise VPError('更新安装未完成，请查看日志：' + str(log)) from None
+        print('更新完成（' + revision[:8] + '）。查看帮助：xcpc --help')
+
+
+def update(*, repository: str = REPOSITORY, gitee: bool = False) -> None:
     data = installation()
+    if not gitee and repository == REPOSITORY:
+        try:
+            cloud_update(data)
+            return
+        except CloudUnavailable:
+            print("云端更新暂不可用，正在尝试 Gitee…", flush=True)
     ensure_git()
     key = hashlib.sha256(data["install_root"].encode()).hexdigest()[:16]
     cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home()/".cache"))/"vp/updates"/key
@@ -133,7 +253,9 @@ def update(*, repository: str = REPOSITORY) -> None:
 
 def main() -> None:
     try:
-        update()
+        if sys.argv[1:] not in ([], ["--gitee"]):
+            raise VPError("Usage: xcpc update [--gitee]")
+        update(gitee=True) if sys.argv[1:] else update()
     except (VPError, OSError) as exc:
         print("xcpc update: " + str(exc), file=sys.stderr)
         raise SystemExit(1) from None

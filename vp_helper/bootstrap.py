@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-MODULES = {'xcpc':'commands','vp':'cli','live':'live','bt':'practice','submit':'submit'}
+MODULES = {'xcpc':'commands','vp':'cli','live':'live','bt':'practice','submit':'submit','printfile':'printfile'}
 
 
 def launch_python(python, arguments, *, native_host=False):

@@ -1,0 +1,28 @@
+# XCPC Cloud contract
+
+Next.js App Router full-stack app. Node 24, node:sqlite (WAL + foreign keys). Durable file at VP_DATA_DIR outside releases. UI imitates NovaJudge: light academic/contest tables, restrained blue navigation, green/red/blue problem cells. No judge cookies/API secrets/source code are included in client state synchronization. Only virtual print jobs contain code.
+
+## JSON API
+
+All success bodies are `{data: ...}`; failures `{error: string}`, meaningful HTTP status. User fields: `id,useraccount,username,realname,numberid,email,role`. IDs strings. Auth: HttpOnly SameSite=Lax secure production cookie plus Bearer token for CLI; login response data `{user,token,expiresAt}`. UTC ISO timestamps.
+
+- POST /api/auth/login `{account,password}` external association login; POST /api/auth/admin-login `{account,password}` local bootstrap admin; GET /api/auth/me returns user; POST /api/auth/logout.
+- GET/PUT /api/admin/settings admin only `{externalBaseUrl,externalAppKey}` (GET masked key + configured flag); env initial VP_EXTERNAL_APP_KEY, VP_EXTERNAL_BASE_URL. Bootstrap account env VP_ADMIN_ACCOUNT default admin and VP_ADMIN_PASSWORD required at first boot. No secrets in source.
+- GET /api/users?search=... authenticated search by real name/student number/account; minimum 2 characters; only public member profile fields.
+- GET/POST /api/teams `{nameZh,nameEn}`. GET/PATCH/DELETE /api/teams/:id. Team `{id,nameZh,nameEn,captainId,members:User[],createdAt}`; creator captain included, 1–3 members; captain edits/removes members via PATCH `{nameZh?,nameEn?,removeUserId?}`. Deletion retains historical data.
+- POST /api/teams/:id/invitations `{userId}` captain only; membership change on accept is transactional and capacity checked.
+- GET /api/notifications includes `{id,kind,title,message,status,createdAt,teamId?,roomId?,canRespond}`; POST /api/notifications/:id/respond `{accept:boolean}`. Rejects can be re-invited. Notifications remain for audit; only target recipient responds. Team room invitations target team captain.
+- GET/POST /api/rooms `{name,contestUrl,startsAt}`. Only cf/gym/qoj contest URLs accepted. Creator is NOT automatically participating. List visible to creator or accepted participants; invitations appear in notifications. Room `{id,name,contestUrl,startsAt,createdBy,createdAt,participants:[{id,type,userId?,teamId?,label,captainId,members:User[]}],canManage,participation?,serverNow}`.
+- GET/PATCH /api/rooms/:id; POST /api/rooms/:id/invitations `{userId}` OR `{teamId}`. PATCH only before start. Creator manages, invites self explicitly. Each user can only occupy one accepted participation per room. Team member snapshot and captain frozen on invitation acceptance; overlapping accepted participation rejected.
+- GET /api/rooms/:id/leaderboard => `{room,rows:[{participantId,label,rank,solved,penalty,cells,historyId?,lastSyncedAt?}],problems:string[],serverNow}`. Rank is ORIGINAL platform rank, never local-relative rank; sort rows by solved/penalty only. Poll 5 seconds while visible.
+- GET /api/rooms/:id/prints => own accepted participant's jobs ONLY, even room creator cannot inspect others. GET /api/prints/:id same restriction. Print `{id,roomId,participantLabel,filename,language,createdAt,code?}`; list omits code.
+- GET /api/history?search=&type=vp|live|bt => array `{id,contestName,contestUrl,mode,rank,solved,penalty,problems:string[],cells,startedAt,endedAt,participantLabel,updatedAt}` own/accepted team records. GET /api/history/:id also `{submissions:[{id,problem,submittedAt,verdict,practice,url?}],...}`. BT has null startedAt/endedAt. Detail accessible to owner, same participant snapshot members, room owner/other accepted room participants (records only, never prints).
+
+## Terminal API
+
+- POST /api/client/rooms/:id/authorize `{}` => `{room:{id,name,contestUrl,startsAt},participant:{id,type,label,captainId,members},canSubmit,serverNow}`. Require accepted participant. Team only captain may start/submit/sync; other members web readonly.
+- POST /api/client/sync `{localId,roomId?,contest:{platform,contestId,url,name,problems:string[],rules?},mode:'vp'|'live'|'bt',startedAt?:ISO,endedAt?:ISO,rank:string,solved:number,penalty:number,cells:{[label]:{tries:number,pending:number,solved:boolean,practiceSolved:boolean,solveTime?:number}},submissions:[{id,problem,submittedAt:ISO,verdict,practice:boolean,url?}],revision:number}` => `{id}`. Idempotent by user/localId or room/participant; server verifies room contest URL and accepted captain. Limit request 2 MiB, max 20k records; reject foreign/replayed stale snapshots, preserve final verdicts. Never accept cookies/API keys/passwords; whitelist persisted fields. Original local source submission stays in current platform workflow.
+- POST /api/client/prints `{roomId,filename,code,language?}` => `{id,url}`; authorized participant only; code <=512KiB UTF8; basename filename, HTTPS plain text code page, no execution.
+- GET /api/health => `{status:'ok'}`.
+
+Frontend owns app/layout.tsx, app/globals.css, app/[[...path]]/page.tsx and components. Backend owns lib + app/api/[...path]/route.ts + API tests. Root owns package/config/build/deployment. Terminal agent owns Python and browser extension integration + terminal tests. Website base https://vp.cwnupaa.com. CLI commands `xcpc login`, `xcpc logout`, `xcpc account`, `printfile a.cpp`; `vp https://vp.cwnupaa.com/vp/ID` must route to cloud authorization and current native VP scheduling. Store cloud credentials separately, private mode 0600; website never persists association password. Sync standalone VP/live/BT too, including web-origin submissions already captured by current monitor.

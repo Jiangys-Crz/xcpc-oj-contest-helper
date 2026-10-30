@@ -1,0 +1,39 @@
+vp.cwnupaa.com {
+    encode zstd gzip
+    request_body {
+        max_size 2MiB
+    }
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy strict-origin-when-cross-origin
+        X-Frame-Options DENY
+        -Server
+    }
+    handle /install.sh {
+        root * /home/paa/xcpc-vp-system/shared/public
+        header Content-Type "text/plain; charset=utf-8"
+        header Cache-Control "no-store"
+        file_server
+    }
+    handle /install.ps1 {
+        root * /home/paa/xcpc-vp-system/shared/public
+        header Content-Type "text/plain; charset=utf-8"
+        header Cache-Control "no-store"
+        file_server
+    }
+    handle /downloads/terminal/* {
+        root * /home/paa/xcpc-vp-system/shared/public
+        header Cache-Control "public, max-age=31536000, immutable"
+        file_server
+    }
+    handle {
+        reverse_proxy 127.0.0.1:3100
+    }
+    log {
+        output file /home/paa/xcpc-vp-system/shared/logs/caddy-access.log {
+            roll_size 10MiB
+            roll_keep 5
+        }
+        format json
+    }
+}

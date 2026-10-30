@@ -267,6 +267,7 @@ def monitor_live(path: Path) -> None:
                                               submission_records(list(events.values()), phase), message,
                                               state["handle"], practice=state["practice_view"],
                                               practice_rank=read_json(path).get('practice_rank', state.get('practice_rank', '—')))
+                    dashboard.participant_label = state.get("cloud", {}).get("label", "")
                     view.update(dashboard)
                     next_render = now + 0.25
                 time.sleep(0.1)

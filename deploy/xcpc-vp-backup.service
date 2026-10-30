@@ -1,0 +1,9 @@
+[Unit]
+Description=XCPC VP SQLite online backup
+[Service]
+Type=oneshot
+User=xcpc-vp
+Group=xcpc-vp
+ExecStart=/home/paa/xcpc-vp-system/runtime/node /home/paa/xcpc-vp-system/backup.mjs
+NoNewPrivileges=true
+PrivateTmp=true

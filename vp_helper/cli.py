@@ -387,6 +387,10 @@ def dashboard() -> None:
 
 def start(url: str, *, live: bool = False, practice: bool = False, resume: bool = False,
           restart: bool = False, scheduled_start: float | None = None) -> None:
+    from .cloud import room_url, start_room
+    if room_url(url):
+        start_room(url)
+        return
     # Release the cross-shell preparation lock before entering an attached TUI.
     if restart:
         raise VPError('已取消重复 VP；每场比赛只支持一次 VP，再次运行原命令会恢复已有会话。')
@@ -418,6 +422,8 @@ def start(url: str, *, live: bool = False, practice: bool = False, resume: bool 
 
 
 def open_state(path: Path, state: dict) -> None:
+    from .cloud import ensure_access
+    ensure_access(state)
     if not Path(state['directory']).is_dir():
         config = load_account(state['contest']['platform'], live=True)
         path, state = restore_contest(path, read_json(path), config)
@@ -660,6 +666,7 @@ def monitor(path: Path) -> None:
                     elif shown_rank not in ('', '?', '—') and state.get('last_rank') != shown_rank:
                         state['last_rank'] = shown_rank
                         save_state(path, state)
+                    private.name = state.get('cloud', {}).get('label', private.name)
                     dashboard = display(contest, max(0, scoring_elapsed) if interrupted else elapsed,
                                         private, shown_rank, prize, stats, records, shown_message)
                     dashboard.practice = state["practice_view"]
@@ -703,8 +710,12 @@ def main() -> None:
         elif len(args) == 2 and args[0] in ("cf", "qoj", "gym"):
             start(contest_id_url(*args))
         elif len(args) == 1 and args[0] not in ("-h", "--help"):
-            platform, _, url = contest_url(args[0])
-            start(url)
+            from .cloud import room_url
+            if room_url(args[0]):
+                start(args[0])
+            else:
+                platform, _, url = contest_url(args[0])
+                start(url)
         elif args in ([], ["-h"], ["--help"]):
             console.print("查看全部命令和设置：xcpc --help", markup=False)
         else:

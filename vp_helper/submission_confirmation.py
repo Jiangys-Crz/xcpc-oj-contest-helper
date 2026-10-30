@@ -4,6 +4,8 @@ from pathlib import Path
 
 def confirm_submission(source: Path, config: dict, problem: str, language: str, url: str,
                        config_path: Path | None = None) -> bool:
+    from .cloud import check_submission
+    check_submission(config)
     print('Submission information:')
     print(f'  filename:    {source}')
     if config_path is not None:

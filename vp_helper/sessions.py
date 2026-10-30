@@ -168,6 +168,8 @@ def save_state(path: Path, state: dict) -> None:
             if state.get('mode', 'vp') == 'vp':
                 from .parsing import ccpc_reveal_count
                 state['contest']['rules']['problem_reveal_count'] = ccpc_reveal_count(state['workspace_name'])
+        if previous.get("cloud"):
+            state["cloud"] = previous["cloud"]
         if previous.get("practice_view"):
             state["practice_view"] = True
         if 'practice_rank' in previous:
@@ -190,6 +192,8 @@ def save_state(path: Path, state: dict) -> None:
             if previous.get("ended_at") is not None:
                 state["ended_at"] = previous["ended_at"]
         write_json(path, state)
+    from .cloud import queue_state
+    queue_state(path, state)
 
 
 def end_attempt(attempt_id: str | None = None) -> tuple[Path, dict]:

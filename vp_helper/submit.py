@@ -21,6 +21,8 @@ def main() -> None:
     try:
         source = Path(args[0]).expanduser().resolve()
         config_path, config = submission_configuration(source)
+        from .cloud import check_submission
+        check_submission(config)
         context = config.get("vp_context", {})
         if context.get("state_path"):
             state = read_json(Path(context["state_path"]))

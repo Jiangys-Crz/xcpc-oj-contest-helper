@@ -32,6 +32,8 @@ def _publish_started(path: Path, state: dict, api) -> None:
 def _fail(path: Path, state: dict, error: Exception) -> None:
     state.update(status="failed", activation_error=str(error), activation_uncertain=False)
     write_json(path, state)
+    from .cloud import queue_state
+    queue_state(path, state)
     current = path.parent / "current.json"
     if read_json(current).get("state_path") == str(path):
         write_json(current, state.get("previous_current", {}))
@@ -52,7 +54,11 @@ def _activate(path: Path) -> dict:
         if cutoff is not None and platform_now(state) >= cutoff:
             state["status"] = "cancelled"
             write_json(path, state)
+            from .cloud import queue_state
+            queue_state(path, state)
             return state
+        from .cloud import ensure_access
+        ensure_access(state)
         contest = Contest.from_dict(state["contest"])
         if not state.get('activation_uncertain') and any(
                 other_path != path and other.get('mode', 'vp') == 'vp'
@@ -125,7 +131,7 @@ def _activate(path: Path) -> dict:
         return state
 
 
-def prepare(url: str, scheduled_start: float | None = None) -> tuple[Path, dict]:
+def prepare(url: str, scheduled_start: float | None = None, *, cloud: dict | None = None) -> tuple[Path, dict]:
     from . import cli
     cli.check_terminal()
     platform, _, canonical = contest_url(url)
@@ -173,6 +179,8 @@ def prepare(url: str, scheduled_start: float | None = None) -> tuple[Path, dict]
                  "handle": api.handle, "directory": str(directory), "tmux_session": path.stem,
                  "status": "scheduled", "submissions": [], "recent": [], "previous_current": current,
                  "history_path": str(cli.desktop() / "vp_history.csv")}
+        if cloud:
+            state["cloud"] = cloud
         if directory != target:
             state["workspace_target"] = str(target)
         write_json(path, state)
