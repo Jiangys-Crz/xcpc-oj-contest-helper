@@ -197,6 +197,9 @@ class WebSession:
         return self.check(r, sent_at=sent_at)
 
     def check(self, r, *, sent_at=None):
+        if urlsplit(r.url).hostname in ('codeforces.com', 'www.codeforces.com'):
+            from .cf_forms import honor_response_cookies
+            honor_response_cookies(self.session, r)
         if r.status_code != 200:
             if (urlsplit(r.url).hostname == 'codeforces.com' and urlsplit(r.url).path.startswith('/api/')
                     and r.status_code in (400, 403, 429)):

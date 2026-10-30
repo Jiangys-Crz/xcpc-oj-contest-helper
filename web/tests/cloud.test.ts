@@ -208,6 +208,53 @@ test('team history is shared with every accepted snapshot member and explicitly 
   await api('GET',`history/${personal}`,undefined,member.token,404);
 });
 
+test('all three VP teammates share one history while later roster changes do not expand private access',async(t)=>{
+  t.mock.timers.enable({apis:['Date'],now:Date.parse('2030-01-01T00:00:00Z')});
+  const {api,login,room,invite,service}=fixture(t);
+  const owner=await login('owner'),captain=await login('captain'),member=await login('member'),third=await login('other'),late=await login('fourth');
+  const team=(await api('POST','teams',{nameZh:'完整历史队',nameEn:'Full History'},captain.token)).data;
+  for(const person of [member,third]) {
+    const nid=(await api('POST',`teams/${team.id}/invitations`,{userId:person.user.id},captain.token)).data.id;
+    await api('POST',`notifications/${nid}/respond`,{accept:true},person.token);
+  }
+  const r=await room(owner.token),rn=await invite(r.id,owner.token,{teamId:team.id});
+  await api('POST',`notifications/${rn}/respond`,{accept:true},captain.token);
+  t.mock.timers.setTime(Date.parse(r.startsAt)+300e3);
+  const data=snapshot('three-member-history');data.roomId=r.id;data.startedAt=r.startsAt;
+  data.submissions[0].submittedAt=new Date(Date.parse(r.startsAt)+60e3).toISOString();
+  data.submissions[1].submittedAt=new Date(Date.parse(r.startsAt)+80e3).toISOString();
+  const hid=(await api('POST','client/sync',data,captain.token)).data.id;
+  const registeredLabel=(await api('GET',`history/${hid}`,undefined,captain.token)).data.participantLabel;
+  assert.ok(registeredLabel.startsWith('完整历史队-'));
+  assert.deepEqual(registeredLabel.slice('完整历史队-'.length).split('、').sort(),['张队长','李队员','王同学'].sort());
+  const assertShared=async(person:Data)=>{
+    const histories=(await api('GET','history?search=Training&type=vp',undefined,person.token)).data;
+    assert.equal(histories.length,1);assert.equal(histories[0].id,hid);
+    assert.equal(histories[0].participantType,'team');assert.equal(histories[0].roomId,r.id);
+    assert.equal(histories[0].participantLabel,registeredLabel);
+    const detail=(await api('GET',`history/${hid}`,undefined,person.token)).data;
+    assert.equal(detail.submissions.length,2);assert.equal(detail.submissions[0].verdict,'CORRECT');
+    const own=(await api('GET',`rooms/${r.id}/mysubmit`,undefined,person.token)).data;
+    assert.equal(own.history.id,hid);assert.equal(own.submissions.length,2);
+  };
+  for(const person of [captain,member,third])await assertShared(person);
+  assert.equal(service.store.one('SELECT COUNT(*) n FROM histories')!.n,1);
+  await api('POST','client/sync',{...data,revision:2},member.token,403);
+  for(const person of [owner,late]) {
+    assert.deepEqual((await api('GET','history',undefined,person.token)).data,[]);
+    await api('GET',`history/${hid}`,undefined,person.token,404);
+  }
+  await api('PATCH',`teams/${team.id}`,{nameZh:'后来的队名',removeUserId:third.user.id},captain.token);
+  const lateInvite=(await api('POST',`teams/${team.id}/invitations`,{userId:late.user.id},captain.token)).data.id;
+  await api('POST',`notifications/${lateInvite}/respond`,{accept:true},late.token);
+  assert.deepEqual((await api('GET','history',undefined,late.token)).data,[]);
+  await api('GET',`history/${hid}`,undefined,late.token,404);
+  await api('DELETE',`teams/${team.id}`,undefined,captain.token);
+  for(const person of [captain,member,third])await assertShared(person);
+  await api('GET',`history/${hid}`,undefined,late.token,404);
+  assert.equal(service.store.one('SELECT COUNT(*) n FROM histories')!.n,1);
+});
+
 test('a previously synced standalone VP upgrades to its matching room without duplicating or losing data',async(t)=>{
   const {api,login,room,invite,service}=fixture(t),owner=await login('owner'),captain=await login('captain'),member=await login('member');
   const team=(await api('POST','teams',{nameZh:'原记录关联',nameEn:'Upgrade'},captain.token)).data;

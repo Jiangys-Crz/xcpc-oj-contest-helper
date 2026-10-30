@@ -19,6 +19,33 @@ def run(args, **kwargs):
     subprocess.run([str(a) for a in args], check=True, **kwargs)
 
 
+def install_dependencies(pip, wheels, packages, *, offline=False):
+    """Prefer bundled wheels, then a scoped domestic index and official fallback."""
+    try:
+        run([*pip, '--no-index', *wheels, *packages])
+        return
+    except subprocess.CalledProcessError:
+        if offline:
+            raise SystemExit('The offline wheels do not cover this OS / Python. Retry online without --offline.')
+    mode = os.environ.get('XCPC_MIRROR') or 'china'
+    if mode not in ('china', 'official'):
+        raise SystemExit('XCPC_MIRROR must be china or official.')
+    official = 'https://pypi.org/simple'
+    indexes = [official] if mode == 'official' else ['https://pypi.tuna.tsinghua.edu.cn/simple', official]
+    for number, index in enumerate(indexes):
+        environment = dict(os.environ, PIP_INDEX_URL=index)
+        environment.setdefault('PIP_DEFAULT_TIMEOUT', '20')
+        environment.setdefault('PIP_RETRIES', '1')
+        print('Using the domestic Python package mirror...' if index != official else
+              'Retrying with official PyPI...' if number else 'Using official PyPI...', flush=True)
+        try:
+            run([*pip, '--prefer-binary', '--only-binary=cffi,curl-cffi,lxml,selectolax', *wheels, *packages], env=environment)
+            return
+        except subprocess.CalledProcessError:
+            if number == len(indexes) - 1:
+                raise
+
+
 def replace_file(path, data, *, mode=None):
     descriptor, name = tempfile.mkstemp(prefix=path.name+'.xcpc-repair-',dir=path.parent)
     temporary = Path(name)
@@ -234,12 +261,7 @@ def install(args):
         pip = [python, '-m', 'pip', 'install', '--disable-pip-version-check']
         packages = [app, 'selectolax', 'lxml', 'robobrowser', 'Werkzeug==0.16.1', 'prettytable<4']
         wheels = ['--find-links', source / 'wheels']
-        try:
-            run([*pip, '--no-index', *wheels, *packages])
-        except subprocess.CalledProcessError:
-            if args.offline:
-                raise SystemExit('The offline wheels do not cover this OS / Python. Retry online without --offline.')
-            run([*pip, '--prefer-binary', '--only-binary=cffi,curl-cffi,lxml,selectolax', *wheels, *packages])
+        install_dependencies(pip, wheels, packages, offline=args.offline)
         run([python, '-m', 'pip', 'check'])
         for module in ('commands','submit','live_submit','hydro_submit','nowcoder_submit'):
             run([python, '-m', 'vp_helper.'+module, '--help'])

@@ -392,6 +392,48 @@ class SubmitTests(IsolatedState):
         self.assertEqual(receipt["verdict"], "PENDING")
         self.assertEqual(receipt["time"], 200)
 
+    def test_live_and_practice_use_native_signed_problem_form_without_printing_tokens(self):
+        for mode in ('live','practice'):
+            with self.subTest(mode=mode):
+                self.config['mode']=self.state['mode']=mode
+                write_json(self.path,self.state)
+                self.api.api.return_value=standings(phase='FINISHED' if mode=='practice' else 'CODING')
+                page=self.form.replace('/contest/1234/submit','/contest/1234/submit/A?csrf_token=fixture-hidden-token')
+                page=page.replace('value="synthetic"','value="fixture-hidden-token"')
+                page='<script>window._ftaa="fixture-ftaa-token";window._bfaa="fixture-bfaa-token";</script>'+page
+                self.api.web.soup.side_effect=[html(),html(page)]
+                self.api.web.session.cookies={'39ce7':'abc'}
+                self.api.web.session.post.reset_mock()
+                with patch('vp_helper.live_submit.platform_now',return_value=9000 if mode=='practice' else 1200),patch('sys.stdout',io.StringIO()) as output:
+                    self.assertEqual(live_submit.submit(self.source),'77')
+                self.api.web.session.post.assert_called_once()
+                call=self.api.web.session.post.call_args
+                self.assertEqual(call.args[0],URL+'/submit/A?csrf_token=fixture-hidden-token')
+                for key,value in {'_tta':'870','ftaa':'fixture-ftaa-token','bfaa':'fixture-bfaa-token'}.items():
+                    self.assertEqual(call.kwargs['data'][key],value)
+                for secret in ('fixture-hidden-token','fixture-ftaa-token','fixture-bfaa-token'):
+                    self.assertNotIn(secret,output.getvalue())
+
+    def test_live_rejection_shows_native_reason_and_result_link_without_tokens(self):
+        self.api.web.session.post.return_value=Mock(status_code=400,url=URL+'/submit?csrf_token=synthetic',
+            text='<span class="error">Source rejected: csrf_token=synthetic</span>')
+        with patch('sys.stdout',io.StringIO()) as output,self.assertRaisesRegex(VPError,'Source rejected') as error:
+            live_submit.submit(self.source)
+        self.api.web.session.post.assert_called_once()
+        self.assertNotIn('synthetic',str(error.exception)+output.getvalue())
+        self.assertIn('Check judging results here: '+URL+'/my',output.getvalue())
+
+    def test_direct_submit_response_honors_rotated_cookie_before_result_handling(self):
+        from requests.cookies import RequestsCookieJar
+        cookies=RequestsCookieJar();cookies.set('JSESSIONID','fixture-old',domain='codeforces.com',path='/')
+        self.api.web.session.cookies=cookies
+        updated=RequestsCookieJar();updated.set('JSESSIONID','fixture-new',domain='.codeforces.com',path='/')
+        response=self.api.web.session.post.return_value
+        response.cookies=updated;response.history=[]
+        with patch('sys.stdout',io.StringIO()):self.assertEqual(live_submit.submit(self.source),'77')
+        self.api.web.session.post.assert_called_once()
+        self.assertEqual([c.value for c in cookies if c.name=='JSESSIONID'],['fixture-new'])
+
     def test_declined_preview_never_posts_or_creates_a_receipt(self):
         with patch('builtins.input',return_value='n'), patch('sys.stdout',io.StringIO()) as output:
             self.assertIsNone(live_submit.submit(self.source))

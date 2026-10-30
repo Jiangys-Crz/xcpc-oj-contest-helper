@@ -13,6 +13,7 @@ import cf_problems
 import cf_standings
 import cf_submit
 import colours
+from vp_helper.models import VPError
 
 """ print standings """
 def print_standings(contest, verbose, top, sort, showall):
@@ -258,6 +259,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except (VPError, OSError, UnicodeError) as exc:
+        print('submit: ' + str(exc), file=sys.stderr)
+        sys.exit(1)
     except KeyboardInterrupt:
         print("")
         sys.exit(0)

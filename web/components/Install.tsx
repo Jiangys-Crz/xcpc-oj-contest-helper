@@ -1,8 +1,99 @@
 'use client';
 import {useState} from 'react';
 import {CopyButton,PageHeader} from './shared';
+import {guideSections,platformGuides,type GuideSection,type Platform} from './guideContent';
 
-type Platform='ubuntu'|'macos'|'windows';
-const commands:Record<Platform,string>={ubuntu:'curl -fsSL https://vp.cwnupaa.com/install.sh | bash',macos:'curl -fsSL https://vp.cwnupaa.com/install.sh | bash',windows:'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://vp.cwnupaa.com/install.ps1 | iex"'};
-function Command({command}:{command:string}){return <div className="install-command"><pre><code>{command}</code></pre><CopyButton value={command} label="复制命令"/></div>}
-export default function Install(){const [platform,setPlatform]=useState<Platform>('ubuntu');const labels:Record<Platform,string>={ubuntu:'Ubuntu',macos:'macOS',windows:'Windows'};const extension=platform==='macos'?'~/Library/Application Support/XCPC/browser-extension':'%APPDATA%\\XCPC\\browser-extension';return <><PageHeader title="安装教程"/><div className="install-platforms" role="tablist" aria-label="选择操作系统">{(['ubuntu','macos','windows'] as Platform[]).map(item=><button key={item} role="tab" aria-selected={platform===item} aria-controls="install-instructions" id={'install-tab-'+item} className={platform===item?'active':''} onClick={()=>setPlatform(item)}>{labels[item]}</button>)}</div><div className="install-content" role="tabpanel" id="install-instructions" aria-labelledby={'install-tab-'+platform}><section className="card install-section"><div className="section-heading"><h2>1. 安装终端程序</h2></div><div className="install-body"><p>在{platform==='windows'?'普通用户 PowerShell':'终端'}中运行：</p><Command command={commands[platform]}/><p className="install-note">安装脚本会补齐缺少的运行环境。按提示完成后，重新打开终端，运行 <code>xcpc --version</code> 确认版本和安装路径。命令对所有电脑用户生效，账号与比赛文件按用户分别保存。</p>{platform==='windows'?<><p className="install-note">使用平时的 PowerShell 启动即可，Conda 的 (base) 环境也可使用。安装器会自动弹出 UAC 管理员授权，确认后为所有电脑用户安装，再回到原用户配置浏览器连接；不必另开管理员终端。已经打开管理员 PowerShell 时也可安装。</p><p className="install-note">程序和命令安装到 %ProgramFiles%\XCPC。脚本会从系统注册表识别新安装的 Python，不依赖当前窗口的 PATH，也不需要先退出 Conda 或重开窗口才能继续安装。Windows Terminal 分屏无需 WSL 或 tmux。</p><p className="install-note">安装失败时会显示具体错误，并将日志保存在 <code>%LOCALAPPDATA%\XCPC\Logs\install-…\setup.log</code>；管理员窗口关闭后日志仍会保留，可根据终端显示的路径查看。</p></>:platform==='macos'?<p className="install-note">安装到 /Library/Application Support/XCPC/app，命令位于 /usr/local/bin。按提示输入本机管理员密码完成系统级安装。</p>:<p className="install-note">请使用日常 Linux 用户安装和参赛。程序安装到 /opt/vp-helper，命令位于 /usr/local/bin；安装时会请求 sudo 权限。</p>}<p className="install-note">如果安装后仍提示 xcpc: command not found 或无法识别 xcpc，请重新执行上面的一键安装命令，完成管理员授权后新开终端再试。重装会保留账号、代码与比赛记录。</p></div></section><section className="card install-section"><div className="section-heading"><h2>2. 登录比赛网站</h2></div><div className="install-body">{platform==='ubuntu'?<><p>在普通 Firefox 窗口登录 Codeforces、QOJ、CWNUOJ 或牛客，程序会自动读取对应网站的登录状态。</p><p className="install-note">无需关闭 Firefox，无需安装扩展。隐私窗口或容器中的登录状态不会与普通窗口混用。</p></>:<><p>首次使用此电脑用户时，先运行 <code>xcpc doctor cf</code> 创建个人扩展文件夹。</p><ol className="install-steps"><li>在平时使用的 Chrome 或 Edge 中打开 <code>chrome://extensions</code> 或 <code>edge://extensions</code>。</li><li>开启“开发者模式”，选择“加载已解压的扩展程序”，选择下面的文件夹：</li></ol><div className="install-path"><code>{extension}</code><CopyButton value={extension} label="复制路径"/></div>{platform==='macos'&&<p className="install-note">在文件选择框按 Command + Shift + G，可以粘贴文件夹路径。</p>}<ol className="install-steps" start={3}><li>允许“XCPC 登录同步”扩展访问所需的比赛网站，在同一个浏览器用户配置中登录。</li><li>点击扩展“同步登录状态”，确认显示“已连接本机 XCPC”。</li></ol><p className="install-note">使用普通 Chrome / Edge 窗口，不需要专用窗口或填写浏览器可执行文件路径。更新扩展后请重新加载并同步。</p></>}<p className="install-caption">需要检查登录时，运行 <code>xcpc doctor cf</code>；其他站点可将 <code>cf</code> 换成 <code>qoj</code>、<code>paa</code> 或 <code>nk</code>。</p></div></section><section className="card install-section"><div className="section-heading"><h2>3. 配置 Codeforces 和云端账号</h2></div><div className="install-body"><div className="install-config"><h3>Codeforces / Gym API</h3><p>在 <a href="https://codeforces.com/settings/api" target="_blank" rel="noreferrer">Codeforces API 设置页 ↗</a> 创建 key / secret，然后运行：</p><Command command="xcpc api cf"/><p className="install-note">输入 Codeforces 用户名、同一组 API key 和 secret。CF / Gym 共用配置，网页报名和代码提交仍需浏览器登录。</p></div><div className="install-config"><h3>云端登录</h3><p>使用协会官网账号或邮箱登录 CWNU XCPC Vp System：</p><Command command="xcpc login"/><p className="install-note">登录后自动保存比赛和补题记录。需要更新密码或切换账号时，再次运行此命令。</p></div></div></section><section className="card install-section"><div className="section-heading"><h2>4. 进入 VP 房间</h2></div><div className="install-body"><p>在网站消息中接受邀请后，复制房间主页的参赛命令：</p><Command command="vp https://vp.cwnupaa.com/vp/ROOM_ID"/><p className="install-note">将 <code>ROOM_ID</code> 替换为实际房间 ID。终端会采用房间中的比赛链接、开始时间、赛制和封榜设置；队伍参赛由队长创建和提交。</p><div className="install-reference"><div><strong>恢复详情面板</strong><code>xcpc dashboard</code><span>在对应比赛目录运行</span></div><div><strong>虚拟打印</strong><code>printfile a.cpp</code><span>上传前需确认，仅本人或本队可见</span></div><div><strong>更新终端</strong><code>xcpc update</code><span>保留账号、代码和比赛历史</span></div><div><strong>修改保存位置</strong><code>xcpc path</code><span>默认保存到桌面</span></div></div></div></section></div></>}
+const systems:Platform[]=['ubuntu','macos','windows'];
+const imageDetails={
+  browser:{file:'browser-extension.svg',alt:'在 Chrome 或 Edge 加载 XCPC 扩展并同步原站登录的操作示意',height:600},
+  firefox:{file:'firefox-login.svg',alt:'使用普通 Firefox 登录并通过 xcpc doctor 检查登录的操作示意',height:515},
+  folders:{file:'workspace-folders.svg',alt:'XCPC 保存根目录、比赛名称文件夹和源码文件的结构示意',height:560},
+  terminal:{file:'terminal-dashboard.svg',alt:'比赛面板、下方终端及 submit 提交确认的示意',height:660},
+  rooms:{file:'team-room-flow.svg',alt:'组队、接受邀请、队长参赛与全队查看历史记录的流程示意',height:585},
+};
+
+function RichText({text}:{text:string}){
+  const parts=text.split(/(`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)]+\))/g);
+  return <>{parts.map((part,index)=>{
+    if(part.startsWith('`')&&part.endsWith('`'))return <code key={index}>{part.slice(1,-1)}</code>;
+    const link=part.match(/^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/);
+    return link?<a key={index} href={link[2]} target="_blank" rel="noreferrer">{link[1]} ↗</a>:part;
+  })}</>;
+}
+
+function Command({command,label,note}:{command:string;label?:string;note?:string}){
+  return <div className="guide-command-group">
+    {label&&<p className="guide-command-label">{label}</p>}
+    <div className="install-command"><pre><code>{command}</code></pre><CopyButton value={command} label="复制命令"/></div>
+    {note&&<p className="install-note"><RichText text={note}/></p>}
+  </div>;
+}
+
+function ExampleImage({kind,caption,platform}:{kind:NonNullable<GuideSection['image']>;caption?:string;platform:Platform}){
+  const key=kind==='browser'&&platform==='ubuntu'?'firefox':kind;
+  const image=imageDetails[key];
+  return <figure className="guide-figure">
+    <a href={'/guide/'+image.file} target="_blank" rel="noreferrer" aria-label={image.alt+'，查看大图'}>
+      <img src={'/guide/'+image.file} alt={image.alt} width={1000} height={image.height} loading="lazy"/>
+    </a>
+    <figcaption><span>{caption||image.alt} <small>操作示意，使用示例数据。</small></span><a href={'/guide/'+image.file} target="_blank" rel="noreferrer">查看大图 ↗</a></figcaption>
+  </figure>;
+}
+
+function Section({section,index,platform}:{section:GuideSection;index:number;platform:Platform}){
+  const guide=platformGuides[platform];
+  return <section className="card install-section guide-section" id={'guide-'+section.id}>
+    <div className="section-heading"><h2><span className="guide-step-number">{index+1}</span>{section.title}</h2><a className="guide-section-link" href={'#guide-'+section.id} aria-label={'定位到'+section.title}>#</a></div>
+    <div className="install-body">
+      {section.intro&&<p className="guide-intro"><RichText text={section.intro}/></p>}
+      {section.id==='install'&&<>
+        <p>{guide.terminal}</p>
+        <Command label={guide.label+' 一键安装命令'} command={guide.installCommand}/>
+        <ul className="guide-list">{guide.setupNotes.map(note=><li key={note}><RichText text={note}/></li>)}</ul>
+      </>}
+      {section.paragraphs?.map((paragraph,index)=><p key={index}><RichText text={paragraph}/></p>)}
+      {section.steps&&<ol className="install-steps">{section.steps.map((step,index)=><li key={index}><RichText text={step}/></li>)}</ol>}
+      {section.platformNotes?.[platform]&&<div className="guide-system-notes"><h3>{guide.label} 操作说明</h3><ul className="guide-list">{section.platformNotes[platform]!.map((note,index)=><li key={index}><RichText text={note}/></li>)}</ul></div>}
+      {section.id==='browser'&&guide.extensionPath&&<div className="guide-extension-path"><p className="guide-command-label">当前系统的扩展文件夹</p><div className="install-path"><code>{guide.extensionPath}</code><CopyButton value={guide.extensionPath} label="复制路径"/></div></div>}
+      {section.commands?.map((entry,index)=>{
+        const command=typeof entry.command==='string'?entry.command:entry.command[platform];
+        return command?<Command key={index} label={entry.label} command={command} note={entry.note}/>:null;
+      })}
+      {section.table&&<div className="guide-table-wrap"><table className="guide-table"><thead><tr>{section.table.headers.map(header=><th key={header}>{header}</th>)}</tr></thead><tbody>{section.table.rows.map((row,index)=><tr key={index}>{row.map((cell,column)=><td key={column}><RichText text={cell}/></td>)}</tr>)}</tbody></table></div>}
+      {section.image&&<ExampleImage kind={section.image} caption={section.imageCaption} platform={platform}/>}
+    </div>
+  </section>;
+}
+
+export default function Install(){
+  const [platform,setPlatform]=useState<Platform>('ubuntu');
+  const guide=platformGuides[platform];
+  return <div className="install-guide" id="guide-top">
+    <PageHeader title="安装与使用教程" description="选择你的系统，从安装、登录和建立比赛文件夹开始，完成第一次参赛与提交。"/>
+    <div className="install-platforms" role="tablist" aria-label="选择操作系统">
+      {systems.map(system=><button key={system} role="tab" aria-selected={platform===system} aria-controls="install-instructions" id={'install-tab-'+system} className={platform===system?'active':''} onClick={()=>setPlatform(system)}>{platformGuides[system].label}</button>)}
+    </div>
+    <section className="card guide-overview" aria-label={guide.label+' 安装信息'}>
+      <div className="section-heading"><h2>{guide.label} · 先了解文件存放位置</h2><span className="guide-overview-tag">程序共用 · 账号独立</span></div>
+      <div className="install-body">
+        <p>程序安装目录、个人配置目录与比赛保存目录是三种不同的位置。程序会建立所需的目录；你的源码应保存在比赛名称文件夹中。</p>
+        <dl className="guide-path-grid">
+          <div><dt>程序安装目录</dt><dd><code>{guide.programPath}</code></dd></div>
+          <div><dt>全局命令目录</dt><dd><code>{guide.commandPath}</code></dd></div>
+          <div><dt>个人账号与设置</dt><dd><code>{guide.configPath}</code></dd></div>
+          <div><dt>个人比赛记录</dt><dd><code>{guide.statePath}</code></dd></div>
+          <div><dt>比赛保存路径示例</dt><dd><code>{guide.workspaceExample}</code></dd></div>
+          <div><dt>比赛详情窗口</dt><dd>{platform==='windows'?'Windows Terminal 原生分屏':'tmux 上下分屏'}</dd></div>
+        </dl>
+        <p className="install-note">默认比赛保存到桌面，可用 <code>xcpc path</code> 更改。示例路径中的 <code>player</code> 请替换成自己的电脑用户名，Windows 盘符按需修改；实际路径以 <code>xcpc --version</code> 为准。</p>
+      </div>
+    </section>
+    <div className="guide-layout">
+      <nav className="guide-index" aria-label="教程目录"><details open><summary>本页目录</summary><ol>{guideSections.map((section,index)=><li key={section.id}><a href={'#guide-'+section.id}><span>{index+1}</span>{section.title}</a></li>)}</ol></details><p>首次使用先完成安装、登录和目录设置，再选择 VP、live 或补题。</p></nav>
+      <div className="install-content guide-content" role="tabpanel" id="install-instructions" aria-labelledby={'install-tab-'+platform}>
+        {guideSections.map((section,index)=><Section key={section.id} section={section} index={index} platform={platform}/>)}
+        <a className="guide-back-top" href="#guide-top">返回顶部 ↑</a>
+      </div>
+    </div>
+  </div>;
+}

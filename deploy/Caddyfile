@@ -26,6 +26,11 @@ vp.cwnupaa.com {
         header Cache-Control "public, max-age=31536000, immutable"
         file_server
     }
+    handle /downloads/prerequisites/* {
+        root * /home/paa/xcpc-vp-system/shared/public
+        header Cache-Control "public, max-age=31536000, immutable"
+        file_server
+    }
     handle {
         reverse_proxy 127.0.0.1:3100
     }

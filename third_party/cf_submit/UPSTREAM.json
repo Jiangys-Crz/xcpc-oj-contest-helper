@@ -30,9 +30,17 @@
     "Use the shared judge clock for submission receipt timestamps",
     "Print a shared English judging-result link after submission, including unconfirmed outcomes",
     "Use the Chromium transport and actual browser User-Agent for native Chrome/Edge extension sessions",
-    "Read contest JSON as UTF-8 on Windows as well as Unix"
+    "Read contest JSON as UTF-8 on Windows as well as Unix",
+    "Populate the native _tta signature from the existing browser cookie and ftaa/bfaa from the current Codeforces page, matching the public signForms protocol",
+    "Honor native Set-Cookie rotations across equivalent imported codeforces.com/.codeforces.com domains without retaining stale duplicate session cookies",
+    "Honor the actual same-contest native submission form action, including /submit/PROBLEM, and upload source files as binary on Windows and Unix",
+    "Redact CSRF and browser signature data from submission diagnostics; report native rejection reasons and never retry an uncertain submission POST",
+    "Scope native browser signatures to the actual Codeforces host and path, and honor cookie rotations with both curl_cffi and the requests fallback"
   ],
   "excluded_files": [
     "cf_test.py"
+  ],
+  "protocol_sources": [
+    "https://codeforces.com/codeforces.org/s/78055/js/codeforces.js?v=20160131"
   ]
 }

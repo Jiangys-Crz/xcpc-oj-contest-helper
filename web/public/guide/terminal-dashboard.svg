@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 660" width="1000" height="660" role="img" aria-labelledby="title desc">
+<title id="title">终端面板与提交确认 — 操作示意（示例数据）</title>
+<desc id="desc">示例赛后补题面板保留原赛绿色 AC，补题后通过显示蓝色；下方提交结果按正常判定颜色显示，输入 y 后才会提交。</desc>
+<style>
+text{font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif;fill:#24354d}
+.title{font-size:24px;font-weight:650}.h{font-size:20px;font-weight:600}.body{font-size:17px}.small{font-size:14px}.tiny{font-size:12px}.muted{fill:#64748b}.blue{fill:#2563eb}.white{fill:#f8fafc}.mono{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace}.bold{font-weight:600}
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#7da0d8" /></marker></defs>
+<rect x="1" y="1" width="998" height="658" rx="10" fill="#fff" stroke="#dce4ef" />
+<rect x="28" y="20" width="38" height="34" rx="5" fill="#eff6ff" stroke="#d9e6fb" />
+<text x="47" y="43" class="body bold" fill="#2563eb" style="fill:#2563eb" text-anchor="middle" font-size="17" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600">VP</text>
+<text x="80" y="45" class="title" font-size="24" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600" fill="#24354d">终端面板与提交确认</text>
+<rect x="746" y="23" width="225" height="27" rx="4" fill="#f8fafc" stroke="#e2e8f0" />
+<text x="858" y="41" class="small muted" text-anchor="middle" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#64748b">操作示意（示例数据）</text>
+<rect x="28" y="82" width="944" height="530" rx="8" fill="#111827" stroke="#334155" />
+<rect x="29" y="83" width="942" height="34" rx="7" fill="#1f2937" stroke="#1f2937" />
+<circle cx="48" cy="100" r="5" fill="#64748b" stroke="none" />
+<circle cx="65" cy="100" r="5" fill="#64748b" stroke="none" />
+<circle cx="82" cy="100" r="5" fill="#64748b" stroke="none" />
+<text x="114" y="105" class="small white" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#f8fafc">XCPC · 详情面板 / 命令输入区</text>
+<text x="51" y="147" class="body white" font-size="17" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#f8fafc">Practice · 示例区域赛</text>
+<text x="946" y="147" class="small" fill="#94a3b8" style="fill:#94a3b8" text-anchor="end" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif">No practice timer</text>
+<rect x="48" y="168" width="62" height="29" rx="0" fill="#e5e7eb" stroke="#111827" />
+<text x="79.0" y="188" class="small bold" fill="#111827" style="fill:#111827" text-anchor="middle" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600">Rank</text>
+<rect x="116" y="168" width="200" height="29" rx="0" fill="#e5e7eb" stroke="#111827" />
+<text x="216.0" y="188" class="small bold" fill="#111827" style="fill:#111827" text-anchor="middle" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600">Team</text>
+<rect x="322" y="168" width="142" height="29" rx="0" fill="#e5e7eb" stroke="#111827" />
+<text x="393.0" y="188" class="small bold" fill="#111827" style="fill:#111827" text-anchor="middle" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600">A</text>
+<rect x="470" y="168" width="142" height="29" rx="0" fill="#e5e7eb" stroke="#111827" />
+<text x="541.0" y="188" class="small bold" fill="#111827" style="fill:#111827" text-anchor="middle" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600">B</text>
+<rect x="618" y="168" width="142" height="29" rx="0" fill="#e5e7eb" stroke="#111827" />
+<text x="689.0" y="188" class="small bold" fill="#111827" style="fill:#111827" text-anchor="middle" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600">C</text>
+<rect x="766" y="168" width="142" height="29" rx="0" fill="#e5e7eb" stroke="#111827" />
+<text x="837.0" y="188" class="small bold" fill="#111827" style="fill:#111827" text-anchor="middle" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600">D</text>
+<text x="79" y="230" class="body white" text-anchor="middle" font-size="17" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#f8fafc">27</text>
+<text x="215" y="230" class="body mono white" text-anchor="middle" font-size="17" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#f8fafc">player</text>
+<rect x="322" y="201" width="142" height="49" rx="0" fill="#4caf50" stroke="#4caf50" />
+<text x="393" y="224" class="small mono white" text-anchor="middle" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#f8fafc">1 try</text>
+<text x="393" y="241" class="tiny white" text-anchor="middle" font-size="12" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#f8fafc">Original AC</text>
+<rect x="470" y="201" width="142" height="49" rx="0" fill="#d32f2f" stroke="#d32f2f" />
+<text x="541" y="224" class="small mono white" text-anchor="middle" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#f8fafc">2 tries</text>
+<rect x="618" y="201" width="142" height="49" rx="0" fill="#60a5fa" stroke="#60a5fa" />
+<text x="689" y="224" class="small mono white" text-anchor="middle" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#f8fafc">3 tries</text>
+<text x="689" y="241" class="tiny white" text-anchor="middle" font-size="12" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#f8fafc">Practice AC</text>
+<rect x="766" y="201" width="142" height="49" rx="0" fill="#111827" stroke="#111827" />
+<text x="837" y="224" class="small mono white" text-anchor="middle" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#f8fafc">—</text>
+<text x="51" y="277" class="small mono" fill="#cbd5e1" style="fill:#cbd5e1" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace">problem</text>
+<text x="159" y="277" class="small mono" fill="#cbd5e1" style="fill:#cbd5e1" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace">submission</text>
+<text x="337" y="277" class="small mono" fill="#cbd5e1" style="fill:#cbd5e1" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace">time</text>
+<text x="665" y="277" class="small mono" fill="#cbd5e1" style="fill:#cbd5e1" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace">result</text>
+<line x1="48" y1="288" x2="945" y2="288" stroke="#475569" stroke-width="1" />
+<text x="51" y="310" class="small mono white" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#f8fafc">C</text>
+<text x="159" y="310" class="small mono white" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#f8fafc">#123456</text>
+<text x="337" y="310" class="small mono white" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#f8fafc">2026-01-01 15:12:08</text>
+<text x="665" y="310" class="small mono" fill="#4ade80" style="fill:#4ade80" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace">CORRECT</text>
+<text x="51" y="334" class="small mono white" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#f8fafc">B</text>
+<text x="159" y="334" class="small mono white" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#f8fafc">#123455</text>
+<text x="337" y="334" class="small mono white" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#f8fafc">2026-01-01 15:08:27</text>
+<text x="665" y="334" class="small mono" fill="#f87171" style="fill:#f87171" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace">WRONG-ANSWER</text>
+<line x1="29" y1="353" x2="971" y2="353" stroke="#6b8daf" stroke-width="2" />
+<text x="51" y="387" class="body mono white" font-size="17" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#f8fafc">~/XCPC/示例区域赛$ submit C.cpp</text>
+<text x="51" y="420" class="small mono" fill="#cbd5e1" style="fill:#cbd5e1" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace">Submission information:</text>
+<text x="69" y="446" class="small mono white" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#f8fafc">file: C.cpp    problem: C    language: C++20</text>
+<text x="69" y="471" class="small mono white" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#f8fafc">contest: 示例区域赛</text>
+<text x="51" y="505" class="body mono" fill="#fbbf24" style="fill:#fbbf24" font-size="17" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace">Do you want to continue? (y/n) y</text>
+<text x="51" y="542" class="small mono white" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#f8fafc">Submission #123456: PENDING</text>
+<text x="51" y="568" class="small mono" fill="#93c5fd" style="fill:#93c5fd" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace">Check https://qoj.ac/submission/123456 for the result.</text>
+<text x="51" y="593" class="small" fill="#94a3b8" style="fill:#94a3b8" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif">随后面板会同步原站判题结果；提交编号与链接以实际返回为准。</text>
+<text x="29" y="640" class="body muted" font-size="17" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#64748b">先将代码保存到比赛文件夹，再在下方输入命令。蓝色只表示补题通过方格。</text>
+</svg>

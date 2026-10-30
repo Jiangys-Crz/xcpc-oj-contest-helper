@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 import sys
 import time
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup
 
@@ -20,6 +20,7 @@ from .storage import read_json, state_directory
 from .submit_context import submission_configuration
 from .submission_confirmation import confirm_submission
 from .submission_results import print_judging_link
+from .cf_forms import form_secrets, honor_response_cookies, safe_url, sign_form, submission_error, submission_target
 
 
 def compiler_id(form, source: Path, requested: str | None) -> str:
@@ -94,33 +95,31 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     form = page.select_one("form.submit-form")
     if form is None:
         raise VPError("Codeforces did not offer a submission form for this participation.")
+    sign_form(page, form, api.web.session, api.url + '/submit')
     payload = form_values(form)
     if not payload.get("csrf_token"):
         raise VPError("The Codeforces submission form has no CSRF token.")
     payload.update(submittedProblemIndex=label, programTypeId=compiler_id(form, source, language),
                    source=source.read_text(encoding="utf8"))
-    target = urljoin(api.url + "/submit", form.get("action") or api.url + "/submit")
+    target = submission_target(api.url + "/submit", form.get("action") or '', api.url, label)
     base_path = urlsplit(api.url).path.rstrip("/")
-    if (urlsplit(target).scheme != "https" or urlsplit(target).netloc != "codeforces.com"
-            or urlsplit(target).path.rstrip("/") != base_path + "/submit"):
-        raise VPError("The platform returned an unexpected submission destination.")
+    secrets = form_secrets(payload, api.web.session, target)
     language_name = form.select_one(f'select[name="programTypeId"] option[value="{payload["programTypeId"]}"]').get_text(' ', strip=True)
-    if not confirm_submission(source, config, label, language_name, target, config_path):
+    if not confirm_submission(source, config, label, language_name, safe_url(target), config_path):
         return None
     submitted_at = platform_now(api.url)
     try:
         # A POST is sent once. A timeout can mean the server accepted it.
-        response = api.web.session.post(target, data=payload, timeout=(10, 40))
+        response = api.web.session.post(target, data=payload, headers={'Origin': 'https://codeforces.com', 'Referer': safe_url(api.url + '/submit')}, timeout=(10, 40))
     except _RequestException:
         print_judging_link(api.url)
         raise VPError("Submission outcome unknown. Check Codeforces My submissions before retrying; the request was not repeated.") from None
-    if (response.status_code != 200 or urlsplit(response.url).netloc != "codeforces.com"
+    honor_response_cookies(api.web.session, response)
+    if (response.status_code != 200 or urlsplit(response.url).hostname not in ('codeforces.com','www.codeforces.com')
             or urlsplit(response.url).path.rstrip("/") != base_path + "/my"):
         print_judging_link(api.url)
         soup = BeautifulSoup(response.text, "html.parser")
-        error = soup.select_one(".error, .error-message")
-        detail = error.get_text(" ", strip=True) if error else f"HTTP {response.status_code}; check My submissions before retrying"
-        raise VPError("Codeforces did not confirm this submission: " + detail)
+        raise VPError(submission_error(soup, response.status_code, response.url, secrets))
     sid = cf_submission_id(BeautifulSoup(response.text, "html.parser"), previous, api.id, label, api.handle)
     if sid is None:
         print("Codeforces returned My submissions; the new ID is not yet identifiable. Check the live panel before retrying.")

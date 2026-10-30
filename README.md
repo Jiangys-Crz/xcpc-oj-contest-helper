@@ -2,7 +2,7 @@
 
 线上组队、多队虚拟赛、训练历史与队内虚拟打印，配合原有终端完成原站参赛和提交。网站使用 Next.js 全栈，终端继续支持 Ubuntu、macOS 和 Windows。
 
-当前版本：**0.9.3**。线上地址：[CWNU XCPC Vp System](https://vp.cwnupaa.com)。
+当前版本：**0.9.4**。线上地址：[CWNU XCPC Vp System](https://vp.cwnupaa.com)。
 
 一键安装教程：[网站安装教程](https://vp.cwnupaa.com/install)。Ubuntu / macOS 在终端运行：
 
@@ -82,9 +82,23 @@ CCPC 新赛制中，公共统计的题号需有至少 50 支原赛队伍（包�
 | --- | --- | --- | --- |
 | Ubuntu | Python 3.12+、Git；旧版 Ubuntu x86_64 可使用随附 Python | tmux | Firefox，自动读取登录状态 |
 | macOS | Python 3.12+、Git、tmux，缺少时通过 Homebrew 安装 | tmux | 已有 Chrome / Edge 加载扩展 |
-| Windows | Python 3.12+、Git、Windows Terminal，缺少时通过 WinGet 安装 | Windows Terminal 原生分屏 | 已有 Chrome / Edge 加载扩展 |
+| Windows | Python 3.12+（国内下载）、Git、Windows Terminal；后两者通过 WinGet 安装 | Windows Terminal 原生分屏 | 已有 Chrome / Edge 加载扩展 |
 
 Windows 不需要安装 tmux 或 WSL。macOS / Windows 安装器不会替你安装或更换浏览器。
+
+### 国内下载与回退
+
+默认优先使用国内来源：Python 依赖使用清华 PyPI 镜像，Ubuntu 使用临时清华软件源（ARM64 使用 `ubuntu-ports`），macOS 使用临时 Homebrew API 和 bottle 镜像。已有离线依赖仍优先使用。镜像失败会回退，Ubuntu 回到系统原有软件源，其余依赖回到官方来源；不会改写个人 pip 配置、系统 APT 配置或已有 Homebrew Git 仓库地址。
+
+Windows 缺少公共 Python 时，优先从本站国内服务器下载官方 Python 安装包，核对 SHA256 和 Python Software Foundation 数字签名后安装；不可用时回退 WinGet。WinGet 使用临时中科大索引，安装后移除临时索引；Git、Windows Terminal 的安装包仍可能从官方地址下载。国内索引不等于所有厂商安装包都已镜像。
+
+如需使用官方来源，Ubuntu / macOS 运行：
+
+```bash
+curl -fsSL https://vp.cwnupaa.com/install.sh | XCPC_MIRROR=official bash
+```
+
+Windows 在执行安装命令前运行 `$env:XCPC_MIRROR = 'official'`。该设置仅影响本次安装进程及其子进程，不修改软件源配置；如需恢复默认，在 PowerShell 运行 `Remove-Item Env:XCPC_MIRROR`。
 
 ### Ubuntu
 
@@ -145,7 +159,7 @@ xcpc --help
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-无需先手动安装 Python、Git 或 Windows Terminal。脚本会复用公共目录内可用的 Python 3.12+，并通过 WinGet 补齐系统级 Python 3.13、Git，以及当前用户缺少的 Windows Terminal；WinGet 不可用时，会先尝试为当前用户注册或修复 App Installer。Windows 安装器出现确认提示时按提示完成即可。如果自动修复失败，脚本会显示原因和 [App Installer 官方安装入口](https://apps.microsoft.com/detail/9nblggh4nns1)。已有 Git 时，也可以用 `git clone` 获取源码后运行同一条安装命令。
+无需先手动安装 Python、Git 或 Windows Terminal。脚本会复用公共目录内可用的 Python 3.12+，缺少时优先通过国内服务器下载并校验官方 Python 3.13 安装包，再通过 WinGet 补齐 Git 和当前用户缺少的 Windows Terminal。国内 Python 下载不可用时也会回退 WinGet；WinGet 不可用时，会先尝试为当前用户注册或修复 App Installer。Windows 安装器出现确认提示时按提示完成即可。如果自动修复失败，脚本会显示原因和 [App Installer 官方安装入口](https://apps.microsoft.com/detail/9nblggh4nns1)。已有 Git 时，也可以用 `git clone` 获取源码后运行同一条安装命令。
 
 使用平时的 PowerShell（包括 Conda 的 `(base)` 环境）启动即可；安装器会弹出一次 UAC 请求安装公共程序，随后回到原用户配置浏览器连接。已经打开管理员 PowerShell 时也可安装。新安装的系统 Python 会直接从注册表识别，无需先退出 Conda 或重开窗口才能继续安装。
 

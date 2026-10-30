@@ -54,6 +54,7 @@ exec "$@"
         self.env = {
             'PATH': str(self.bin), 'HOME': str(self.home),
             'TMPDIR': str(self.downloads), 'SHELL': '/bin/sh', 'LC_ALL': 'C',
+            'XCPC_MIRROR': 'official',
             'FIXTURE_SUDO_LOG': str(self.root/'sudo-calls'),
         }
         self.python_fixture = self.python(self.assets / 'python3.13')
@@ -393,6 +394,104 @@ exit 93
         self.assertIn('Ubuntu uses bash install.sh', result.stderr)
         self.assertEqual(self.calls('curl-calls'), [])
         self.assertEqual(self.calls('brew-calls'), [])
+
+    def mirror_brew(self, *, fail_mirror=False):
+        original=self.brew(self.assets/'brew-original')
+        return self.command(self.bin/'brew',f'''
+if [ "$1" = install ]; then
+    printf '%s|%s|%s|%s|%s\\n' "${{HOMEBREW_API_DOMAIN-unset}}" "${{HOMEBREW_BOTTLE_DOMAIN-unset}}" "${{HOMEBREW_PIP_INDEX_URL-unset}}" "${{HOMEBREW_BREW_GIT_REMOTE-unset}}" "${{HOMEBREW_CORE_GIT_REMOTE-unset}}" >> {shlex.quote(str(self.root/'brew-environment'))}
+    if {str(fail_mirror).lower()} && [ "${{HOMEBREW_API_DOMAIN-unset}}" = https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api ]; then exit 23; fi
+fi
+exec {shlex.quote(str(original))} "$@"
+''')
+
+    def test_china_defaults_scope_homebrew_downloads_without_rewriting_existing_git_remotes(self):
+        self.env.pop('XCPC_MIRROR')
+        self.mirror_brew()
+        result=self.run_installer()
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(self.calls('brew-environment'),[
+            'https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api|'
+            'https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles|'
+            'https://pypi.tuna.tsinghua.edu.cn/simple|unset|unset'])
+        elevated=(self.root/'sudo-calls').read_bytes().split(b'\0')
+        self.assertIn(b'XCPC_MIRROR=china',elevated)
+        self.assertNotIn(b'HOMEBREW_API_DOMAIN',elevated)
+
+    def test_china_mirror_failure_retries_original_sources_and_keeps_custom_settings(self):
+        self.env['XCPC_MIRROR']='china'
+        self.env['HOMEBREW_BOTTLE_DOMAIN']='https://custom.example/bottles'
+        self.env['HOMEBREW_BREW_GIT_REMOTE']='https://custom.example/brew.git'
+        self.mirror_brew(fail_mirror=True)
+        result=self.run_installer()
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn('retrying with the original sources',result.stderr)
+        self.assertEqual(self.calls('brew-environment'),[
+            'https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api|https://custom.example/bottles|'
+            'https://pypi.tuna.tsinghua.edu.cn/simple|https://custom.example/brew.git|unset',
+            'unset|https://custom.example/bottles|unset|https://custom.example/brew.git|unset'])
+
+    def test_official_mode_does_not_inject_any_mirror_settings(self):
+        self.mirror_brew()
+        result=self.run_installer()
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(self.calls('brew-environment'),['unset|unset|unset|unset|unset'])
+        elevated=(self.root/'sudo-calls').read_bytes().split(b'\0')
+        self.assertIn(b'XCPC_MIRROR=official',elevated)
+
+    def test_all_explicit_homebrew_download_settings_are_preserved(self):
+        self.env['XCPC_MIRROR']='china'
+        self.env.update(HOMEBREW_API_DOMAIN='https://custom.example/api',
+            HOMEBREW_BOTTLE_DOMAIN='',HOMEBREW_PIP_INDEX_URL='https://custom.example/python')
+        self.mirror_brew()
+        result=self.run_installer()
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(self.calls('brew-environment'),['https://custom.example/api||https://custom.example/python|unset|unset'])
+
+    def mirror_bootstrap(self, *, fail_clone=False):
+        self.env['XCPC_MIRROR']='china'
+        self.download()
+        installer=self.assets/'homebrew-install.sh'
+        installer.write_text(installer.read_text().replace('umask >',
+            f'''printf '%s|%s|%s|%s\\n' "${{HOMEBREW_API_DOMAIN-unset}}" "${{HOMEBREW_BOTTLE_DOMAIN-unset}}" "${{HOMEBREW_BREW_GIT_REMOTE-unset}}" "${{HOMEBREW_CORE_GIT_REMOTE-unset}}" >> {shlex.quote(str(self.root/'bootstrap-environment'))}
+umask >'''))
+        self.command(self.bin/'git',f'''
+if [ "$1" = --version ]; then exit 0; fi
+printf '%s\\n' "$*" >> {shlex.quote(str(self.root/'git-clone-calls'))}
+if {str(fail_clone).lower()}; then exit 18; fi
+while [ "$#" -gt 1 ]; do shift; done
+mkdir -p "$1"
+cp {shlex.quote(str(installer))} "$1/install.sh"
+''')
+        (self.bin/'mkdir').symlink_to(shutil.which('mkdir'))
+
+    def test_fresh_homebrew_uses_documented_tuna_clone_and_scoped_bootstrap_remotes(self):
+        self.mirror_bootstrap()
+        result=self.run_installer()
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(self.calls('curl-calls'),[])
+        self.assertIn('clone --depth=1 https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/install.git',
+            self.calls('git-clone-calls')[0])
+        self.assertEqual(self.calls('bootstrap-environment'),[
+            'https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api|'
+            'https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles|'
+            'https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/brew.git|'
+            'https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/homebrew-core.git'])
+
+    def test_failed_homebrew_mirror_bootstrap_falls_back_to_official_installer(self):
+        self.mirror_bootstrap(fail_clone=True)
+        result=self.run_installer()
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn('bootstrap mirror failed',result.stderr)
+        self.assertEqual(len(self.calls('curl-calls')),1)
+        self.assertEqual(self.calls('bootstrap-environment'),['unset|unset|unset|unset'])
+
+    def test_invalid_mirror_mode_stops_before_network_or_elevation(self):
+        self.env['XCPC_MIRROR']='https://not-an-enum.example'
+        result=self.run_installer()
+        self.assertEqual(result.returncode,2)
+        self.assertIn('XCPC_MIRROR must be china or official',result.stderr)
+        self.assertFalse((self.root/'sudo-calls').exists())
 
 
 if __name__ == '__main__':

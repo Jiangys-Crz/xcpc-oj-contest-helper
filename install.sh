@@ -48,10 +48,15 @@ case "$(uname -m)" in
     *) printf '%s\n' 'Supported architectures: x86_64 and ARM64 (aarch64).' >&2; exit 1 ;;
 esac
 if ! $vp_local && [[ $EUID -ne 0 ]]; then
+    vp_elevation_env=()
     if [[ "${XCPC_SOURCE_REVISION:-}" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
-        exec sudo -- env XCPC_SOURCE_REVISION="$XCPC_SOURCE_REVISION" bash "$vp_source/install.sh" "${vp_args[@]}"
+        vp_elevation_env+=("XCPC_SOURCE_REVISION=$XCPC_SOURCE_REVISION")
     fi
-    exec sudo -- bash "$vp_source/install.sh" "${vp_args[@]}"
+    case "${XCPC_MIRROR:-china}" in
+        china|official) vp_elevation_env+=("XCPC_MIRROR=${XCPC_MIRROR:-china}") ;;
+        *) printf '%s\n' 'XCPC_MIRROR must be china or official.' >&2; exit 2 ;;
+    esac
+    exec sudo -- env "${vp_elevation_env[@]}" bash "$vp_source/install.sh" "${vp_args[@]}"
 fi
 # The public bootstrap deliberately downloads with umask 077. Global program
 # files must be usable by the invoking user after sudo finishes.
@@ -114,12 +119,67 @@ if [[ -n "$vp_submit_path" && ( -e "$vp_bin/submit" || -L "$vp_bin/submit" ) ]] 
     printf '%s\n' 'A different submit already exists. It was left in place.' >&2
     exit 1
 fi
-vp_apt() {
+vp_apt_temp=
+vp_apt_options=()
+vp_apt_initialized=false
+vp_apt_cleanup() {
+    if [[ -n "$vp_apt_temp" ]]; then
+        local vp_apt_remove="$vp_apt_temp"
+        vp_apt_temp=
+        # apt may leave _apt-owned, mode-0700 partial directories even during
+        # a local installation. Remove only this invocation's mktemp directory.
+        if rm -rf -- "$vp_apt_remove" 2>/dev/null; then return 0; fi
+        if [[ $EUID -ne 0 ]] && sudo -- rm -rf -- "$vp_apt_remove"; then return 0; fi
+        printf 'Could not remove temporary Ubuntu indexes: %s\n' "$vp_apt_remove" >&2
+    fi
+    return 0
+}
+trap 'vp_apt_cleanup' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+vp_apt_exec() {
     if [[ $EUID -eq 0 ]]; then
         apt-get "$@"
     else
         sudo -- apt-get "$@"
     fi
+}
+vp_apt() {
+    if ! $vp_apt_initialized; then
+        vp_apt_initialized=true
+        case "${XCPC_MIRROR:-china}" in china|official) ;; *) printf '%s\n' 'XCPC_MIRROR must be china or official.' >&2; return 2 ;; esac
+        # Use isolated, signed Ubuntu indexes. Do not rewrite /etc/apt or
+        # clear another repository's indexes in /var/lib/apt/lists.
+        if [[ "${XCPC_MIRROR:-china}" != official && "${VERSION_CODENAME:-}" =~ ^[a-z][a-z0-9-]*$ && -r /usr/share/keyrings/ubuntu-archive-keyring.gpg ]] && command -v dpkg >/dev/null; then
+            vp_apt_arch="$(dpkg --print-architecture)"
+            case "$vp_apt_arch" in
+                amd64|i386) vp_apt_base=https://mirrors.tuna.tsinghua.edu.cn/ubuntu ;;
+                arm64|armhf|ppc64el|riscv64|s390x) vp_apt_base=https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports ;;
+                *) vp_apt_base= ;;
+            esac
+            if [[ -n "$vp_apt_base" ]]; then
+                vp_apt_temp="$(mktemp -d "${TMPDIR:-/tmp}/xcpc-apt.XXXXXX")"
+                chmod 755 "$vp_apt_temp"
+                mkdir -p "$vp_apt_temp/lists/partial" "$vp_apt_temp/archives/partial"
+                chmod 755 "$vp_apt_temp/lists" "$vp_apt_temp/lists/partial" "$vp_apt_temp/archives" "$vp_apt_temp/archives/partial"
+                for vp_suite in "$VERSION_CODENAME" "$VERSION_CODENAME-updates" "$VERSION_CODENAME-backports" "$VERSION_CODENAME-security"; do
+                    printf 'deb [arch=%s signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] %s/ %s main restricted universe multiverse\n' "$vp_apt_arch" "$vp_apt_base" "$vp_suite"
+                done > "$vp_apt_temp/sources.list"
+                chmod 644 "$vp_apt_temp/sources.list"
+                vp_apt_options=(-o "Dir::Etc::sourcelist=$vp_apt_temp/sources.list" -o Dir::Etc::sourceparts=- -o "Dir::State::lists=$vp_apt_temp/lists" -o "Dir::Cache::archives=$vp_apt_temp/archives" -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o APT::Update::Error-Mode=any)
+                printf '%s\n' 'Using a temporary domestic Ubuntu mirror (system software sources are unchanged).'
+            fi
+        fi
+    fi
+    if (( ${#vp_apt_options[@]} )); then
+        if vp_apt_exec "$@" "${vp_apt_options[@]}"; then return 0; fi
+        printf '%s\n' 'The domestic Ubuntu mirror failed; retrying the system software sources...'
+        vp_apt_options=()
+        vp_apt_cleanup
+        vp_apt_exec update -qq
+        if [[ "$1" == update ]]; then return 0; fi
+    fi
+    vp_apt_exec "$@"
 }
 if ! command -v "$vp_python" >/dev/null; then
     if $vp_python_supplied; then
@@ -180,7 +240,7 @@ fi
 install -d -m 755 "$vp_prefix/releases" "$vp_bin"
 vp_release="$(mktemp -d "$vp_prefix/releases/$(date -u +%Y%m%dT%H%M%SZ).XXXXXX")"
 vp_installed=false
-trap 'if ! $vp_installed; then rm -rf -- "$vp_release"; fi' EXIT
+trap 'vp_apt_cleanup; if ! $vp_installed; then rm -rf -- "$vp_release"; fi' EXIT
 chmod 755 "$vp_release"
 install -d -m 755 "$vp_release/app"
 cp -a "$vp_source/vp_helper" "$vp_source/pyproject.toml" "$vp_release/app/"
@@ -200,9 +260,21 @@ if ! "${vp_pip[@]}" install --disable-pip-version-check --no-index "${vp_wheel_a
         printf '%s\n' 'The wheel bundle is incomplete for this Python/CPU. Retry without --offline while online.' >&2
         exit 1
     fi
-    printf '%s\n' 'Resolving compatible native dependencies from PyPI for this Python/CPU...'
-    "${vp_pip[@]}" install --disable-pip-version-check --prefer-binary \
-        --only-binary=cffi,curl-cffi,lxml,selectolax "${vp_wheel_args[@]}" "${vp_requirements[@]}"
+    case "${XCPC_MIRROR:-china}" in
+        official) vp_pip_index=https://pypi.org/simple ;;
+        china) vp_pip_index=https://pypi.tuna.tsinghua.edu.cn/simple ;;
+        *) printf '%s\n' 'XCPC_MIRROR must be china or official.' >&2; exit 1 ;;
+    esac
+    printf '%s\n' 'Resolving native dependencies using the installation package mirror...'
+    if ! PIP_INDEX_URL="$vp_pip_index" PIP_DEFAULT_TIMEOUT="${PIP_DEFAULT_TIMEOUT:-20}" PIP_RETRIES="${PIP_RETRIES:-1}" \
+        "${vp_pip[@]}" install --disable-pip-version-check --prefer-binary \
+        --only-binary=cffi,curl-cffi,lxml,selectolax "${vp_wheel_args[@]}" "${vp_requirements[@]}"; then
+        if [[ "$vp_pip_index" == https://pypi.org/simple ]]; then exit 1; fi
+        printf '%s\n' 'The domestic mirror failed; retrying official PyPI...'
+        PIP_INDEX_URL=https://pypi.org/simple PIP_DEFAULT_TIMEOUT="${PIP_DEFAULT_TIMEOUT:-20}" PIP_RETRIES="${PIP_RETRIES:-1}" \
+            "${vp_pip[@]}" install --disable-pip-version-check --prefer-binary \
+            --only-binary=cffi,curl-cffi,lxml,selectolax "${vp_wheel_args[@]}" "${vp_requirements[@]}"
+    fi
 fi
 if [[ -d "$vp_release/third_party" ]]; then
     # A shell/Python polyglot resolves its own release, including paths with

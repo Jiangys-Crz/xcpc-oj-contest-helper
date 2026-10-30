@@ -5,6 +5,10 @@ import time
 import json
 import re
 import requests
+from urllib.parse import urlsplit
+
+from vp_helper.cf_forms import form_secrets, safe_url, sign_form, submission_error, submission_target
+from vp_helper.models import VPError
 
 # cf_login.make_session may hand RoboBrowser a curl_cffi session instead of a
 # requests one, so the session's own exception type must be caught too.
@@ -67,15 +71,27 @@ def watch(handle):
 
 
 """ submit problem """
-def submit_problem(browser, contest, lang, source, guru):
+def submit_problem(browser, contest, lang, source, guru, expected_problem=None):
+    prefix = 'gym' if len(contest) >= 6 else 'contest'
+    base_url = 'https://codeforces.com/' + prefix + '/' + contest
+    native_base = 'https://codeforces.com/problemsets/acmsguru' if guru != -1 else base_url
+    page_url = browser.url
+    native_form = browser.parsed.select_one('form.submit-form')
+    if native_form is not None:
+        if native_form.get('method', 'get').lower() != 'post':
+            raise VPError('Codeforces did not offer a POST submission form. No code was submitted.')
+        sign_form(browser.parsed, native_form, browser.session, page_url)
+        csrf = native_form.select_one('[name="csrf_token"]')
+        if csrf is None or not csrf.get('value'):
+            raise VPError('Codeforces did not provide its submission CSRF token. No code was submitted.')
     """ get form """
     submission = browser.get_form(class_="submit-form")
     if submission is None:
-        print("Cannot find problem")
-        return False
+        if guru == -1:
+            print_judging_link(base_url)
+        raise VPError(submission_error(browser.parsed, getattr(browser.response, 'status_code', None), browser.url))
 
     """ submit form """
-    submission["sourceFile"] = source
     langcode = None
     if lang == "cpp":
         # GNU G++20 11.2.0 (64 bit)
@@ -141,30 +157,52 @@ def submit_problem(browser, contest, lang, source, guru):
     # check acmsguru
     if guru != -1:
         submission["submittedProblemCode"] = guru
+    elif expected_problem is not None:
+        field = submission['submittedProblemIndex']
+        options = getattr(field, 'options', None)
+        if isinstance(options, (list, tuple, dict)) and expected_problem.upper() not in options:
+            raise VPError('This problem is not offered by the native Codeforces form. No code was submitted.')
+        submission['submittedProblemIndex'] = expected_problem.upper()
 
     from pathlib import Path
     from vp_helper.submission_confirmation import confirm_submission
     config_path = Path('contest.json')
     config = json.loads(config_path.read_text(encoding='utf8')) if config_path.is_file() else {'name': contest}
     problem = str(guru) if guru != -1 else str(submission['submittedProblemIndex'].value)
-    if not confirm_submission(Path(source), config, problem, available[langcode], browser.url,
+    action = native_form.get('action', '') if native_form is not None else ''
+    target = submission_target(page_url, action, native_base, problem if guru == -1 else None)
+    submission.action = target
+    secrets = form_secrets(submission, browser.session, target)
+    if not confirm_submission(Path(source), config, problem, available[langcode], safe_url(target),
                               config_path if config_path.is_file() else None):
         return False
-    browser.vp_submitted_at = platform_now(browser.url)
-    prefix = 'gym' if len(contest) >= 6 else 'contest'
-    base_url = 'https://codeforces.com/' + prefix + '/' + contest
+    browser.vp_submitted_at = platform_now(base_url)
     try:
-        browser.submit_form(submission)
+        # FileInput otherwise opens text with the system locale (e.g. GBK on
+        # Windows). Upload the original UTF-8 bytes and close them on all paths.
+        if native_form is None or native_form.select_one('[name="sourceFile"]') is not None:
+            with Path(source).open('rb') as source_file:
+                submission['sourceFile'] = source_file
+                browser.submit_form(submission, timeout=(10, 40), headers={'Origin': 'https://codeforces.com', 'Referer': safe_url(page_url)})
+        elif native_form.select_one('[name="source"]') is not None:
+            submission['source'] = Path(source).read_text(encoding='utf8')
+            browser.submit_form(submission, timeout=(10, 40), headers={'Origin': 'https://codeforces.com', 'Referer': safe_url(page_url)})
+        else:
+            raise VPError('Codeforces did not offer a source field. No code was submitted.')
     except _SESSION_ERRORS:
-        print_judging_link(base_url)
-        raise
+        if guru == -1:
+            print_judging_link(base_url)
+        raise VPError('Submission outcome unknown. Check My submissions before retrying; the request was not repeated.') from None
 
     """ check if good """
-    if (guru != -1 and browser.url[-7:] != "/status") or (guru == -1 and browser.url[-3:] != "/my"):
-        print("Failed to submit code")
-        print(" @ " + str(browser.url))
-        print_judging_link(base_url)
-        return False
+    result = urlsplit(browser.url)
+    status = getattr(browser.response, 'status_code', None)
+    accepted_path = urlsplit(native_base).path.rstrip('/') + ('/status' if guru != -1 else '/my')
+    if (result.scheme != 'https' or result.hostname not in ('codeforces.com', 'www.codeforces.com')
+            or result.path.rstrip('/') != accepted_path or isinstance(status, int) and status != 200):
+        if guru == -1:
+            print_judging_link(base_url)
+        raise VPError(submission_error(browser.parsed, status, browser.url, secrets))
     print("Code submitted properly")
 
     """ now get time """
@@ -206,7 +244,7 @@ def submit(browser, handle, contest, problem, lang, source, show, guru):
 
     """ show submission """
     submitted_at = platform_now(browser.url)
-    if submit_problem(browser, contest, lang, source, pid):
+    if submit_problem(browser, contest, lang, source, pid, expected_problem=problem):
         submitted_at = browser.vp_submitted_at
         sid = None
         if previous is not None:

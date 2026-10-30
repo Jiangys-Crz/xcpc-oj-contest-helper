@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 560" width="1000" height="560" role="img" aria-labelledby="title desc">
+<title id="title">设置保存目录与比赛文件夹 — 操作示意（示例数据）</title>
+<desc id="desc">xcpc path 设置比赛保存目录，程序按原站比赛名称自动建立或复用文件夹，代码文件由用户自行保存。</desc>
+<style>
+text{font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif;fill:#24354d}
+.title{font-size:24px;font-weight:650}.h{font-size:20px;font-weight:600}.body{font-size:17px}.small{font-size:14px}.tiny{font-size:12px}.muted{fill:#64748b}.blue{fill:#2563eb}.white{fill:#f8fafc}.mono{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace}.bold{font-weight:600}
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#7da0d8" /></marker></defs>
+<rect x="1" y="1" width="998" height="558" rx="10" fill="#fff" stroke="#dce4ef" />
+<rect x="28" y="20" width="38" height="34" rx="5" fill="#eff6ff" stroke="#d9e6fb" />
+<text x="47" y="43" class="body bold" fill="#2563eb" style="fill:#2563eb" text-anchor="middle" font-size="17" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600">VP</text>
+<text x="80" y="45" class="title" font-size="24" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600" fill="#24354d">设置保存目录与比赛文件夹</text>
+<rect x="746" y="23" width="225" height="27" rx="4" fill="#f8fafc" stroke="#e2e8f0" />
+<text x="858" y="41" class="small muted" text-anchor="middle" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#64748b">操作示意（示例数据）</text>
+<rect x="28" y="88" width="425" height="365" rx="8" fill="#f8fbff" stroke="#dce4ef" />
+<circle cx="55" cy="119" r="13" fill="#2563eb" stroke="none" /><text x="55" y="124" class="small bold" fill="#fff" style="fill:#fff" text-anchor="middle" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600">1</text>
+<text x="78" y="125" class="h" font-size="20" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600" fill="#24354d">先设置比赛保存位置</text>
+<text x="51" y="161" class="small muted" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#64748b">可输入尚不存在的文件夹，程序会自动创建。</text>
+<text x="51" y="200" class="small bold" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600" fill="#24354d">Ubuntu</text>
+<rect x="49" y="212" width="382" height="37" rx="5" fill="#fff" stroke="#dce4ef" />
+<text x="61" y="236" class="small mono" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#24354d">xcpc path "/home/player/XCPC"</text>
+<text x="51" y="274" class="small bold" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600" fill="#24354d">macOS</text>
+<rect x="49" y="286" width="382" height="37" rx="5" fill="#fff" stroke="#dce4ef" />
+<text x="61" y="310" class="small mono" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#24354d">xcpc path "/Users/player/XCPC"</text>
+<text x="51" y="348" class="small bold" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600" fill="#24354d">Windows</text>
+<rect x="49" y="360" width="382" height="37" rx="5" fill="#fff" stroke="#dce4ef" />
+<text x="61" y="384" class="small mono" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#24354d">xcpc path "D:\XCPC"</text>
+<text x="51" y="428" class="small muted" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#64748b">也可只输入 xcpc path，再按提示填写。</text>
+<path d="M463 273 L485 273" fill="none" stroke="#7da0d8" stroke-width="2" marker-end="url(#arrow)" />
+<rect x="497" y="88" width="475" height="365" rx="8" fill="#fff" stroke="#dce4ef" />
+<circle cx="525" cy="119" r="13" fill="#2563eb" stroke="none" /><text x="525" y="124" class="small bold" fill="#fff" style="fill:#fff" text-anchor="middle" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600">2</text>
+<text x="548" y="125" class="h" font-size="20" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600" fill="#24354d">启动比赛后自动建立</text>
+<path d="M526 157 v-6 h15 l5 6 h21 v25 h-41 z" fill="#eaf2ff" stroke="#7296ca" stroke-width="1.5" />
+<text x="583" y="175" class="h mono" font-size="20" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" font-weight="600" fill="#24354d">XCPC/</text>
+<line x1="546" y1="188" x2="546" y2="408" stroke="#c4d2e6" stroke-width="1.5" />
+<line x1="546" y1="213" x2="565" y2="213" stroke="#c4d2e6" stroke-width="1.5" />
+<path d="M568 203 v-6 h15 l5 6 h21 v25 h-41 z" fill="#eaf2ff" stroke="#7296ca" stroke-width="1.5" />
+<text x="622" y="221" class="body bold" font-size="17" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600" fill="#24354d">示例区域赛/</text>
+<line x1="587" y1="232" x2="587" y2="365" stroke="#c4d2e6" stroke-width="1.5" />
+<line x1="587" y1="258" x2="606" y2="258" stroke="#c4d2e6" stroke-width="1.5" />
+<path d="M610 244 h17 l7 7 v24 h-24 z M627 244 v8 h7" fill="#f8fbff" stroke="#7197ce" stroke-width="1.5" />
+<text x="649" y="268" class="body mono" font-size="17" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#24354d">A.cpp</text>
+<text x="746" y="268" class="small muted" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#64748b">你保存的代码</text>
+<line x1="587" y1="307" x2="606" y2="307" stroke="#c4d2e6" stroke-width="1.5" />
+<path d="M610 293 h17 l7 7 v24 h-24 z M627 293 v8 h7" fill="#f8fbff" stroke="#7197ce" stroke-width="1.5" />
+<text x="649" y="317" class="body mono" font-size="17" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#24354d">B.py</text>
+<text x="746" y="317" class="small muted" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#64748b">你保存的代码</text>
+<line x1="587" y1="356" x2="606" y2="356" stroke="#c4d2e6" stroke-width="1.5" />
+<path d="M610 342 h17 l7 7 v24 h-24 z M627 342 v8 h7" fill="#f8fbff" stroke="#96a3b6" stroke-width="1.5" />
+<text x="649" y="366" class="body mono" font-size="17" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#24354d">contest.json</text>
+<text x="649" y="390" class="tiny muted" font-size="12" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#64748b">程序管理的提交配置，请勿手动修改</text>
+<line x1="546" y1="416" x2="565" y2="416" stroke="#c4d2e6" stroke-width="1.5" />
+<path d="M568 406 v-6 h15 l5 6 h21 v25 h-41 z" fill="#eaf2ff" stroke="#7296ca" stroke-width="1.5" />
+<text x="622" y="424" class="body muted" font-size="17" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#64748b">另一场比赛/</text>
+<rect x="28" y="475" width="944" height="54" rx="7" fill="#eff6ff" stroke="#dce7fa" />
+<text x="50" y="507" class="body blue" font-size="17" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#2563eb">同场 vp / live / bt 会复用原目录并保留文件；bt / live 不下载题面。</text>
+</svg>

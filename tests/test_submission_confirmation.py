@@ -41,7 +41,7 @@ class ConfirmationTests(unittest.TestCase):
                     browser.parsed=BeautifulSoup('','html.parser')
                     browser.session.get.return_value=SimpleNamespace(status_code=200,
                         url=f'https://codeforces.com/{kind}/{ident}/my',text='')
-                    browser.submit_form.side_effect=lambda f: setattr(browser,'url',f'https://codeforces.com/{kind}/{ident}/my')
+                    browser.submit_form.side_effect=lambda f, **kwargs: setattr(browser,'url',f'https://codeforces.com/{kind}/{ident}/my')
                     with patch('builtins.input',return_value=answer),patch('sys.stdout',io.StringIO()) as out:
                         module.submit(browser,'tester',ident,'A','cpp',str(source),False,False)
                     self.assertEqual(browser.submit_form.call_count,int(answer=='y'))

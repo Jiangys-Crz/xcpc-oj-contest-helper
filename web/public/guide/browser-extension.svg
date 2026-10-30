@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600" width="1000" height="600" role="img" aria-labelledby="title desc">
+<title id="title">macOS / Windows：加载登录扩展 — 操作示意（示例数据）</title>
+<desc id="desc">浏览器扩展页开启开发者模式并加载已解压的扩展文件夹，随后点击工具栏扩展并同步登录状态。</desc>
+<style>
+text{font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif;fill:#24354d}
+.title{font-size:24px;font-weight:650}.h{font-size:20px;font-weight:600}.body{font-size:17px}.small{font-size:14px}.tiny{font-size:12px}.muted{fill:#64748b}.blue{fill:#2563eb}.white{fill:#f8fafc}.mono{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace}.bold{font-weight:600}
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#7da0d8" /></marker></defs>
+<rect x="1" y="1" width="998" height="598" rx="10" fill="#fff" stroke="#dce4ef" />
+<rect x="28" y="20" width="38" height="34" rx="5" fill="#eff6ff" stroke="#d9e6fb" />
+<text x="47" y="43" class="body bold" fill="#2563eb" style="fill:#2563eb" text-anchor="middle" font-size="17" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600">VP</text>
+<text x="80" y="45" class="title" font-size="24" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600" fill="#24354d">macOS / Windows：加载登录扩展</text>
+<rect x="746" y="23" width="225" height="27" rx="4" fill="#f8fafc" stroke="#e2e8f0" />
+<text x="858" y="41" class="small muted" text-anchor="middle" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#64748b">操作示意（示例数据）</text>
+<rect x="28" y="82" width="944" height="344" rx="8" fill="#fff" stroke="#d8e1ed" />
+<rect x="29" y="83" width="942" height="43" rx="7" fill="#f5f7fb" stroke="#f5f7fb" />
+<circle cx="48" cy="104" r="5" fill="#b8c5d9" stroke="none" />
+<circle cx="65" cy="104" r="5" fill="#b8c5d9" stroke="none" />
+<circle cx="82" cy="104" r="5" fill="#b8c5d9" stroke="none" />
+<rect x="106" y="92" width="516" height="25" rx="5" fill="#fff" stroke="#e2e8f0" />
+<text x="120" y="110" class="small mono" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#24354d">chrome://extensions  或  edge://extensions</text>
+<text x="58" y="167" class="h" font-size="20" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600" fill="#24354d">扩展程序</text>
+<text x="748" y="165" class="body" font-size="17" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#24354d">开发者模式</text>
+<rect x="888" y="145" width="55" height="29" rx="15" fill="#2563eb" stroke="#2563eb" />
+<circle cx="928" cy="159.5" r="11" fill="#fff" stroke="none" />
+<circle cx="721" cy="159" r="13" fill="#2563eb" stroke="none" /><text x="721" y="164" class="small bold" fill="#fff" style="fill:#fff" text-anchor="middle" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600">1</text>
+<rect x="58" y="191" width="220" height="42" rx="5" fill="#eff6ff" stroke="#b8cff1" />
+<text x="168" y="218" class="body blue" text-anchor="middle" font-size="17" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#2563eb">加载已解压的扩展程序</text>
+<circle cx="307" cy="212" r="13" fill="#2563eb" stroke="none" /><text x="307" y="217" class="small bold" fill="#fff" style="fill:#fff" text-anchor="middle" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600">2</text>
+<text x="333" y="217" class="body muted" font-size="17" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#64748b">选择本机 XCPC 扩展文件夹</text>
+<rect x="58" y="254" width="477" height="140" rx="8" fill="#fff" stroke="#dce4ef" />
+<rect x="79" y="277" width="48" height="46" rx="7" fill="#eff6ff" stroke="#d6e4fa" />
+<text x="103" y="308" class="h blue" text-anchor="middle" font-size="20" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600" fill="#2563eb">VP</text>
+<text x="145" y="291" class="h" font-size="20" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600" fill="#24354d">XCPC 登录同步</text>
+<text x="145" y="319" class="small muted" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#64748b">已加载到当前浏览器用户配置</text>
+<rect x="145" y="344" width="62" height="28" rx="4" fill="#fff" stroke="#dce4ef" />
+<text x="176" y="363" class="small" text-anchor="middle" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#24354d">详情</text>
+<rect x="217" y="344" width="62" height="28" rx="4" fill="#fff" stroke="#dce4ef" />
+<text x="248" y="363" class="small muted" text-anchor="middle" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#64748b">移除</text>
+<rect x="461" y="346" width="46" height="25" rx="13" fill="#2563eb" stroke="#2563eb" />
+<circle cx="494" cy="358.5" r="9" fill="#fff" stroke="none" />
+<text x="627" y="241" class="small muted" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#64748b">工具栏中的扩展弹窗</text>
+<rect x="611" y="253" width="332" height="141" rx="7" fill="#f8fbff" stroke="#b8cff1" />
+<text x="630" y="282" class="body bold" font-size="17" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600" fill="#24354d">XCPC 登录同步</text>
+<text x="630" y="311" class="body" fill="#348541" style="fill:#348541" font-size="17" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif">已连接本机 XCPC</text>
+<rect x="630" y="329" width="216" height="41" rx="5" fill="#2563eb" stroke="#2563eb" />
+<text x="738" y="356" class="body white" text-anchor="middle" font-size="17" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#f8fafc">同步登录状态</text>
+<circle cx="881" cy="350" r="13" fill="#2563eb" stroke="none" /><text x="881" y="355" class="small bold" fill="#fff" style="fill:#fff" text-anchor="middle" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600">3</text>
+<rect x="28" y="449" width="944" height="112" rx="7" fill="#f8fafc" stroke="#e2e8f0" />
+<text x="48" y="477" class="body" font-size="17" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#24354d">首次先运行 xcpc doctor cf，创建当前用户的扩展文件夹。</text>
+<text x="48" y="507" class="small bold" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600" fill="#24354d">macOS</text>
+<text x="150" y="507" class="small mono" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#24354d">~/Library/Application Support/XCPC/browser-extension</text>
+<text x="48" y="536" class="small bold" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" font-weight="600" fill="#24354d">Windows</text>
+<text x="150" y="536" class="small mono" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#24354d">%APPDATA%\XCPC\browser-extension</text>
+<text x="30" y="584" class="small muted" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#64748b">界面为操作示意；在平时登录比赛网站的同一浏览器用户配置中加载扩展。</text>
+</svg>

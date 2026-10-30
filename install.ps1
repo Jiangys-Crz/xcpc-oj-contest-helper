@@ -4,10 +4,22 @@ $ErrorActionPreference = 'Stop'
 
 function Invoke-XcpcNative {
     param([string]$FilePath, [string[]]$ArgumentList, [switch]$Quiet)
-    $global:LASTEXITCODE = 0
-    if ($Quiet) { & $FilePath @ArgumentList *> $null }
-    else { & $FilePath @ArgumentList | Out-Host }
-    return [int]$LASTEXITCODE
+    $previousConsoleEncoding = [Console]::OutputEncoding
+    $previousOutputEncoding = $OutputEncoding
+    try {
+        # WinGet emits UTF-8. Legacy PowerShell otherwise decodes its Chinese
+        # progress/error messages using the previous console code page.
+        [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+        $OutputEncoding = [Text.UTF8Encoding]::new($false)
+        $global:LASTEXITCODE = 0
+        if ($Quiet) { & $FilePath @ArgumentList *> $null }
+        else { & $FilePath @ArgumentList | Out-Host }
+        $status = [int]$LASTEXITCODE
+    } finally {
+        [Console]::OutputEncoding = $previousConsoleEncoding
+        $OutputEncoding = $previousOutputEncoding
+    }
+    return $status
 }
 
 function Get-XcpcApplicationPaths {
@@ -181,6 +193,87 @@ function Write-XcpcSetupDiagnostics {
     }
 }
 
+function Get-XcpcMirrorMode {
+    if (-not $env:XCPC_MIRROR -or $env:XCPC_MIRROR -eq 'china') { return 'china' }
+    if ($env:XCPC_MIRROR -eq 'official') { return 'official' }
+    throw 'XCPC_MIRROR must be china or official.'
+}
+
+function Get-XcpcWindowsArchitecture {
+    $architecture = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+    try { $architecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() } catch { }
+    switch -Regex ($architecture) { '^ARM64$' { return 'arm64' } '^(AMD64|X64)$' { return 'amd64' } '^(X86|I386)$' { return 'win32' } default { return '' } }
+}
+
+function Install-XcpcMirroredPython {
+    param([switch]$SystemWide, [string]$ManifestPath = (Join-Path $PSScriptRoot 'runtimes\windows-python.json'))
+    if ((Get-XcpcMirrorMode) -eq 'official' -or -not $SystemWide -or -not (Test-XcpcAdministrator)) { return $false }
+    if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) { return $false }
+    $directory = $null
+    try {
+        $manifest = Get-Content -LiteralPath $ManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([string]$manifest.version -notmatch '^3\.13\.\d+$') { throw 'Invalid bundled Python version.' }
+        $key = Get-XcpcWindowsArchitecture
+        if (-not $key) { return $false }
+        $artifact = $manifest.artifacts.$key
+        if (-not $artifact) { return $false }
+        $filename = 'python-' + $manifest.version + $(if ($key -eq 'win32') { '.exe' } else { '-' + $key + '.exe' })
+        if ([string]$artifact.url -cne ('https://vp.cwnupaa.com/downloads/prerequisites/' + $filename) -or
+            [string]$artifact.officialUrl -cne ('https://www.python.org/ftp/python/' + $manifest.version + '/' + $filename) -or
+            [string]$artifact.sha256 -notmatch '^[0-9a-fA-F]{64}$') { throw 'Invalid bundled Python artifact metadata.' }
+        $directory = Join-Path ([IO.Path]::GetTempPath()) ('xcpc-python-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $directory | Out-Null
+        $installer = Join-Path $directory $filename
+        Write-Host ('Downloading verified Python ' + $manifest.version + ' from the XCPC China download server...')
+        Invoke-WebRequest -Uri $artifact.url -OutFile $installer -UseBasicParsing -TimeoutSec 180 -ErrorAction Stop | Out-Null
+        $digest = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash
+        if ($digest -ine $artifact.sha256) { throw 'Python installer SHA256 mismatch; the file was not executed.' }
+        $signature = Get-AuthenticodeSignature -LiteralPath $installer
+        if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate -or
+            $signature.SignerCertificate.Subject -notmatch '(?i)(?:^|,\s*)(?:CN|O)=Python Software Foundation(?:,|$)') {
+            throw 'Python installer publisher verification failed; the file was not executed.'
+        }
+        $process = Start-Process -FilePath $installer -ArgumentList @('/quiet','InstallAllUsers=1','PrependPath=1',
+            'Include_launcher=1','InstallLauncherAllUsers=1','Include_pip=1','Include_test=0') -Wait -PassThru
+        if ($process.ExitCode -notin @(0,3010)) { throw ('Python setup returned exit ' + $process.ExitCode) }
+        Update-XcpcProcessPath
+        if (-not (Find-XcpcPython -SystemWide)) { throw 'The installed machine Python could not be verified.' }
+        return $true
+    } catch {
+        Write-Warning ('Python mirror setup unavailable: ' + $_.Exception.Message + ' Falling back to WinGet and the vendor installer.')
+        return $false
+    } finally {
+        if ($directory -and (Test-Path -LiteralPath $directory)) { Remove-Item -LiteralPath $directory -Recurse -Force }
+    }
+}
+
+function New-XcpcWinGetMirror {
+    param([string]$Winget)
+    if ((Get-XcpcMirrorMode) -eq 'official' -or -not (Test-XcpcAdministrator)) { return $null }
+    # A private alias leaves the user's existing repositories untouched. Older
+    # WinGet versions or policy restrictions simply keep the original source.
+    $name = 'xcpc-mirror-' + [guid]::NewGuid().ToString('N')
+    $source = [pscustomobject]@{ Executable=$Winget; Name=$name }
+    $status = Invoke-XcpcNative $Winget @('source','add','--name',$name,'--arg','https://mirrors.ustc.edu.cn/winget-source',
+        '--type','Microsoft.PreIndexed.Package','--accept-source-agreements','--disable-interactivity')
+    if ($status -eq 0) {
+        Write-Host 'Using the USTC WinGet index for this installation; package signatures and hashes remain checked.'
+        return $source
+    }
+    # A failed add can leave an incomplete registration. The UUID alias belongs
+    # only to this invocation, so removing it cannot remove a user's source.
+    Remove-XcpcWinGetMirror $source
+    Write-Host 'The temporary mirror index is unavailable; using the existing winget source.'
+    return $null
+}
+
+function Remove-XcpcWinGetMirror {
+    param($Source)
+    if (-not $Source) { return }
+    $status = Invoke-XcpcNative $Source.Executable @('source','remove','--name',$Source.Name,'--disable-interactivity')
+    if ($status -ne 0) { Write-Warning "Could not remove the temporary WinGet source $($Source.Name)." }
+}
+
 function Invoke-XcpcElevatedSetup {
     param([string[]]$InstallerArgs)
     $scriptPath = Join-Path $PSScriptRoot 'install.ps1'
@@ -194,6 +287,7 @@ function Invoke-XcpcElevatedSetup {
         # output path, with the same literal quoting as installer arguments.
         $command = '$env:XCPC_SETUP_LOG=' + "'" + $env:XCPC_SETUP_LOG.Replace("'", "''") + "'; " + $command
     }
+    $command = '$env:XCPC_MIRROR=' + "'" + (Get-XcpcMirrorMode) + "'; " + $command
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     Write-Host 'Continue in this PowerShell. Accept the Windows administrator prompt to install XCPC for all users; browser setup returns here afterwards.'
@@ -351,7 +445,9 @@ function Invoke-XcpcWindowsSetup {
     $xcpcPreviousLog = $env:XCPC_SETUP_LOG
     $xcpcTranscript = $false
     $xcpcSetupStatus = 1
+    $xcpcWinGetMirror = $null
     try {
+        $null = Get-XcpcMirrorMode
         if (-not $env:XCPC_SETUP_LOG) {
             try { $env:XCPC_SETUP_LOG = New-XcpcSetupLog }
             catch { Write-Warning "Could not create an installation log: $($_.Exception.Message)" }
@@ -393,14 +489,28 @@ function Invoke-XcpcWindowsSetup {
             throw "Offline setup is missing: $names. Install these prerequisites first, or rerun .\install.ps1 without --offline while online. No prerequisites were downloaded."
         }
         if ($missing.Count) {
+            if ($missing.Key -contains 'Python' -and (Install-XcpcMirroredPython -SystemWide:$layout.Global)) {
+                $prerequisites = Get-XcpcPrerequisites -SystemWide:$layout.Global
+                $missing = @($packages | Where-Object { -not $prerequisites.($_.Key) })
+            }
+        }
+        if ($missing.Count) {
             $winget = Ensure-XcpcWinGet
+            $xcpcWinGetMirror = New-XcpcWinGetMirror $winget
             foreach ($package in $missing) {
                 Write-Host "Installing $($package.Name)..."
-                $wingetArgs = @('install', '--exact', '--id', $package.Id, '--source', 'winget',
+                $sourceName = if ($xcpcWinGetMirror) { $xcpcWinGetMirror.Name } else { 'winget' }
+                $wingetArgs = @('install', '--exact', '--id', $package.Id, '--source', $sourceName,
                     '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
                 if ($layout.Global -and $package.Key -eq 'Python') { $wingetArgs += '--force' }
                 if ($layout.Global -and $package.Key -in @('Python','Git')) { $wingetArgs += @('--scope', 'machine') }
                 $status = Invoke-XcpcNative $winget $wingetArgs
+                if ($status -ne 0 -and $xcpcWinGetMirror) {
+                    Write-Host "Mirror installation of $($package.Name) failed; retrying with the existing winget source."
+                    $sourceIndex = [Array]::IndexOf($wingetArgs, '--source') + 1
+                    $wingetArgs[$sourceIndex] = 'winget'
+                    $status = Invoke-XcpcNative $winget $wingetArgs
+                }
                 if ($status -ne 0) {
                     throw "WinGet could not install $($package.Name) (exit $status). Resolve the installer message above, then rerun .\install.ps1."
                 }
@@ -429,6 +539,7 @@ function Invoke-XcpcWindowsSetup {
         Write-Error "Setup failed: $($_.Exception.Message)" -ErrorAction Continue
         return 1
     } finally {
+        if ($xcpcWinGetMirror) { try { Remove-XcpcWinGetMirror $xcpcWinGetMirror } catch { Write-Warning 'Could not remove the temporary WinGet mirror source.' } }
         if ($xcpcTranscript) { try { Stop-Transcript | Out-Null } catch { } }
         if ($xcpcSetupStatus -ne 0) { Write-XcpcSetupDiagnostics $env:XCPC_SETUP_LOG }
         $env:XCPC_SETUP_LOG = $xcpcPreviousLog

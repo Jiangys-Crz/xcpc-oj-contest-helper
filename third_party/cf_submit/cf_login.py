@@ -7,6 +7,7 @@ from pathlib import Path
 from http.cookies import SimpleCookie
 import requests
 from vp_helper.browser_login import refresh_submission_login
+from vp_helper.cf_forms import honor_response_cookies
 
 # codeforces.com sits behind Cloudflare, which fingerprints the TLS handshake:
 # a plain requests session is answered with "HTTP 403 / Just a moment...".
@@ -71,20 +72,21 @@ def _mime_from(data, files):
     return mime
 
 
-if _IMPERSONATE:
-    class _FormSession(_requests.Session):
-        """A curl_cffi session that also understands requests' files= spelling.
+class _FormSession(_requests.Session):
+    """Honor native cookies with either transport and bridge curl file uploads.
 
-        RoboBrowser builds file inputs as files=, which curl_cffi rejects with
-        "files is not supported, use `multipart`".  Without this translation the
-        Codeforces source upload never leaves the client.
-        """
+    RoboBrowser builds file inputs as files=, which curl_cffi rejects with
+    "files is not supported, use `multipart`". Requests accepts files= directly.
+    """
 
-        def request(self, method, url, *args, **kwargs):
+    def request(self, method, url, *args, **kwargs):
+        if _IMPERSONATE:
             files = kwargs.pop('files', None)
             if files:
                 kwargs['multipart'] = _mime_from(kwargs.pop('data', None), files)
-            return super().request(method, url, *args, **kwargs)
+        response = super().request(method, url, *args, **kwargs)
+        honor_response_cookies(self, response)
+        return response
 
 
 def make_session(user_agent=None, cookie_source=None):
@@ -95,7 +97,7 @@ def make_session(user_agent=None, cookie_source=None):
         if chromium and user_agent:
             session.headers['User-Agent'] = user_agent
         return session
-    session = _requests.Session()
+    session = _FormSession()
     if user_agent:
         session.headers['User-Agent'] = user_agent
     return session

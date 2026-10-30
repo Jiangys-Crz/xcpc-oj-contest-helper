@@ -26,6 +26,7 @@ class WindowsSetupTests(unittest.TestCase):
             script = Path(temporary) / 'scenario.ps1'
             script.write_text(". $env:XCPC_SETUP_SCRIPT\n" + body, encoding='utf-8')
             env = os.environ | {'XCPC_SETUP_SCRIPT': str(SETUP), 'LOCALAPPDATA': temporary,
+                                'XCPC_MIRROR':'official',
                                 'OS': 'Windows_NT', 'ProgramFiles': str(Path(temporary)/'Program Files'), 'ProgramW6432': str(Path(temporary)/'Program Files')}
             result = subprocess.run(
                 [POWERSHELL, '-NoLogo', '-NoProfile', '-NonInteractive', '-File', str(script)],
@@ -577,3 +578,151 @@ Write-Output ('__RESULT__'+(@{Executable=$python.Executable;Prefix=@($python.Pre
                     body=body.replace(key,"'"+value.replace("'","''")+"'")
                 data=self.run_powershell(body)
                 self.assertEqual(data,{'Executable':sys.executable,'Prefix':[]})
+
+    def test_default_mirror_uses_owned_temporary_winget_source_and_preserves_user_sources(self):
+        data=self.run_powershell(r'''
+$env:XCPC_MIRROR=$null
+$script:calls=@()
+function Test-XcpcAdministrator { return $true }
+function Invoke-XcpcNative {param($FilePath,$ArgumentList,[switch]$Quiet);$script:calls+=,@($ArgumentList);return 0}
+$one=New-XcpcWinGetMirror 'winget-fixture'
+Remove-XcpcWinGetMirror $one
+$two=New-XcpcWinGetMirror 'winget-fixture'
+Remove-XcpcWinGetMirror $two
+Write-Output ('__RESULT__'+(@{Mode=(Get-XcpcMirrorMode);Names=@($one.Name,$two.Name);Calls=$script:calls}|ConvertTo-Json -Compress -Depth 10))
+''')
+        self.assertEqual(data['Mode'],'china')
+        self.assertNotEqual(*data['Names'])
+        for name in data['Names']:
+            self.assertRegex(name,r'^xcpc-mirror-[0-9a-f]{32}$')
+        for index,name in ((0,data['Names'][0]),(2,data['Names'][1])):
+            self.assertEqual(data['Calls'][index],['source','add','--name',name,'--arg',
+                'https://mirrors.ustc.edu.cn/winget-source','--type','Microsoft.PreIndexed.Package',
+                '--accept-source-agreements','--disable-interactivity'])
+            self.assertEqual(data['Calls'][index+1],['source','remove','--name',name,'--disable-interactivity'])
+
+    def test_winget_mirror_unavailable_is_cleaned_and_official_or_nonadmin_never_adds_sources(self):
+        data=self.run_powershell(r'''
+$script:calls=@();$script:admin=$true
+function Test-XcpcAdministrator { return $script:admin }
+function Invoke-XcpcNative {param($FilePath,$ArgumentList,[switch]$Quiet);$script:calls+=,@($ArgumentList);if($ArgumentList[1] -eq 'add'){return 5};return 0}
+$env:XCPC_MIRROR='china';$failed=New-XcpcWinGetMirror 'winget-fixture'
+$env:XCPC_MIRROR='official';$official=New-XcpcWinGetMirror 'winget-fixture'
+$env:XCPC_MIRROR='china';$script:admin=$false;$private=New-XcpcWinGetMirror 'winget-fixture'
+Write-Output ('__RESULT__'+(@{Failed=($null -eq $failed);Official=($null -eq $official);Private=($null -eq $private);Calls=$script:calls}|ConvertTo-Json -Compress -Depth 10))
+''')
+        self.assertTrue(data['Failed'] and data['Official'] and data['Private'])
+        self.assertEqual([call[:2] for call in data['Calls']],[['source','add'],['source','remove']])
+        self.assertEqual(data['Calls'][0][3],data['Calls'][1][3])
+
+    def test_winget_package_fallback_cleans_its_source_even_when_both_downloads_fail(self):
+        for fallback_status in (0,9):
+            with self.subTest(fallback_status=fallback_status):
+                data=self.run_powershell(r'''
+$env:XCPC_MIRROR='china';$script:installed=$false;$script:calls=@()
+function Test-XcpcAdministrator {return $true}
+function Set-XcpcGlobalPermissions {param($Root,$Bin)}
+function Initialize-XcpcUserBridge {param($Root)}
+function Add-XcpcCommandPath {param($Bin,[switch]$SystemWide)}
+function Update-XcpcProcessPath {}
+function Ensure-XcpcWinGet {return 'winget-fixture'}
+function Get-XcpcPrerequisites {
+ return [pscustomobject]@{Python=[pscustomobject]@{Executable='python-fixture';Prefix=@()};Git=$script:installed;Terminal=$true}
+}
+function Invoke-XcpcNative {
+ param($FilePath,$ArgumentList,[switch]$Quiet)
+ if($FilePath -eq 'python-fixture'){return 0}
+ $script:calls+=,@($ArgumentList)
+ if($ArgumentList[0] -eq 'source'){return 0}
+ if($ArgumentList[5] -ne 'winget'){return 7}
+ $script:installed=$true;return FALLBACK_STATUS
+}
+$status=Invoke-XcpcWindowsSetup -InstallerArgs @('--skip-browser-registration') 2>$null
+Write-Output ('__RESULT__'+(@{Status=$status;Calls=$script:calls}|ConvertTo-Json -Compress -Depth 10))
+'''.replace('FALLBACK_STATUS',str(fallback_status)))
+                self.assertEqual(data['Status'],0 if fallback_status == 0 else 1)
+                calls=data['Calls']
+                self.assertEqual([c[0] for c in calls],['source','install','install','source'])
+                self.assertEqual(calls[1][5],calls[0][3])
+                self.assertEqual(calls[2][5],'winget')
+                self.assertEqual(calls[-1],['source','remove','--name',calls[0][3],'--disable-interactivity'])
+
+    def mirrored_python_scenario(self, condition='success', architecture='amd64'):
+        config=json.dumps({'Condition':condition,'Architecture':architecture}).replace("'","''")
+        return self.run_powershell("$config='"+config+"'|ConvertFrom-Json\n"+r'''
+$env:XCPC_MIRROR='china';$script:downloads=@();$script:executed=@();$script:refreshes=0
+function Test-XcpcAdministrator {return $true}
+function Get-XcpcWindowsArchitecture {return $config.Architecture}
+function Update-XcpcProcessPath {$script:refreshes++}
+function Find-XcpcPython {param([switch]$SystemWide);if($config.Condition -eq 'probe'){return $null};return [pscustomobject]@{Executable='verified-machine-python'}}
+function Invoke-WebRequest {param($Uri,$OutFile,[switch]$UseBasicParsing,$TimeoutSec,$ErrorAction);$script:downloads+=@{Uri=$Uri;File=$OutFile};[IO.File]::WriteAllText($OutFile,'inert fixture')}
+function Get-FileHash {param($LiteralPath,$Algorithm);return [pscustomobject]@{Hash=$(if($config.Condition -eq 'hash'){'b'*64}else{'a'*64})}}
+function Get-AuthenticodeSignature {
+ param($LiteralPath)
+ $subject=if($config.Condition -eq 'publisher'){'CN=Unrelated Software, O=Unrelated Software'}else{'CN=Python Software Foundation, O=Python Software Foundation, C=US'}
+ return [pscustomobject]@{Status=$(if($config.Condition -eq 'signature'){'NotSigned'}else{'Valid'});SignerCertificate=[pscustomobject]@{Subject=$subject}}
+}
+function Start-Process {param($FilePath,$ArgumentList,[switch]$Wait,[switch]$PassThru);$script:executed+=@{File=$FilePath;Args=$ArgumentList};return [pscustomobject]@{ExitCode=$(if($config.Condition -eq 'installer'){11}else{0})}}
+$key=$config.Architecture
+$filename='python-3.13.16'+$(if($key -eq 'win32'){'.exe'}else{'-'+$key+'.exe'})
+$artifact=@{url='https://vp.cwnupaa.com/downloads/prerequisites/'+$filename;officialUrl='https://www.python.org/ftp/python/3.13.16/'+$filename;sha256='a'*64}
+if($config.Condition -eq 'url'){$artifact.url='https://untrusted.example/'+$filename}
+if($config.Condition -eq 'officialUrl'){$artifact.officialUrl='https://untrusted.example/'+$filename}
+$manifest=@{version='3.13.16';artifacts=@{$key=$artifact}}
+if($config.Condition -eq 'version'){$manifest.version='3.13.16/../../bad'}
+if($config.Condition -eq 'architecture'){$manifest.artifacts=@{}}
+$manifestFile=Join-Path $env:LOCALAPPDATA 'windows-python.json'
+$manifest|ConvertTo-Json -Depth 10|Set-Content -LiteralPath $manifestFile -Encoding UTF8
+$success=Install-XcpcMirroredPython -SystemWide -ManifestPath $manifestFile
+$downloadRemains=@($script:downloads|Where-Object {Test-Path -LiteralPath $_.File}).Count
+Write-Output ('__RESULT__'+(@{Success=$success;Downloads=$script:downloads;Executed=$script:executed;Refreshes=$script:refreshes;DownloadRemains=$downloadRemains}|ConvertTo-Json -Compress -Depth 10))
+''')
+
+    def test_verified_domestic_python_matches_architecture_installs_machine_wide_and_cleans_download(self):
+        for architecture,filename in (('amd64','python-3.13.16-amd64.exe'),('arm64','python-3.13.16-arm64.exe'),('win32','python-3.13.16.exe')):
+            with self.subTest(architecture=architecture):
+                data=self.mirrored_python_scenario(architecture=architecture)
+                self.assertTrue(data['Success'])
+                self.assertEqual(data['Downloads'][0]['Uri'],'https://vp.cwnupaa.com/downloads/prerequisites/'+filename)
+                self.assertEqual(data['Executed'][0]['Args'],['/quiet','InstallAllUsers=1','PrependPath=1',
+                    'Include_launcher=1','InstallLauncherAllUsers=1','Include_pip=1','Include_test=0'])
+                self.assertEqual(data['Refreshes'],1)
+                self.assertEqual(data['DownloadRemains'],0)
+
+    def test_untrusted_python_metadata_hash_or_publisher_never_executes_download(self):
+        for condition in ('hash','signature','publisher','url','officialUrl','version','architecture'):
+            with self.subTest(condition=condition):
+                data=self.mirrored_python_scenario(condition)
+                self.assertFalse(data['Success'])
+                self.assertEqual(data['Executed'],[])
+                self.assertEqual(data['DownloadRemains'],0)
+                if condition in ('url','officialUrl','version','architecture'):
+                    self.assertEqual(data['Downloads'],[])
+
+    def test_failed_python_installer_or_probe_falls_back_and_cleans_download(self):
+        for condition in ('installer','probe'):
+            with self.subTest(condition=condition):
+                data=self.mirrored_python_scenario(condition)
+                self.assertFalse(data['Success'])
+                self.assertEqual(len(data['Executed']),1)
+                self.assertEqual(data['DownloadRemains'],0)
+
+    def test_native_utf8_decoding_restores_original_encoding_in_legacy_and_standard_modes(self):
+        for mode in ('Legacy','Standard'):
+            with self.subTest(mode=mode):
+                body=r'''
+$PSNativeCommandArgumentPassing=ARGUMENT_MODE
+$original=[Console]::OutputEncoding
+[Console]::OutputEncoding=[Text.Encoding]::ASCII
+$OutputEncoding=[Text.Encoding]::ASCII
+$script:captured=@()
+function Out-Host {process {$script:captured += [string]$_}}
+$status=Invoke-XcpcNative FIXTURE_PYTHON @('-I','-c','import sys; sys.stdout.buffer.write(bytes([228,184,173,230,150,135,10]))')
+$result=@{Status=$status;Characters=@($script:captured[0].ToCharArray()|ForEach-Object {[int]$_});Console=[Console]::OutputEncoding.CodePage;Output=$OutputEncoding.CodePage}
+[Console]::OutputEncoding=$original
+Write-Output ('__RESULT__'+($result|ConvertTo-Json -Compress))
+'''
+                for key,value in (('ARGUMENT_MODE',mode),('FIXTURE_PYTHON',sys.executable)):
+                    body=body.replace(key,"'"+value.replace("'","''")+"'")
+                data=self.run_powershell(body)
+                self.assertEqual(data,{'Status':0,'Characters':[20013,25991],'Console':20127,'Output':20127})

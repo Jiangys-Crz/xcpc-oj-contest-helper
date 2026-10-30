@@ -67,11 +67,38 @@ for xcpc_argument in "$@"; do
     esac
 done
 
+xcpc_mirror_mode=${XCPC_MIRROR:-china}
+case "$xcpc_mirror_mode" in china|official) ;; *) echo 'XCPC_MIRROR must be china or official.' >&2; exit 2 ;; esac
+
+# Defaults exist only inside these child processes. Existing Homebrew settings
+# and repository remotes are never rewritten by this wrapper.
+xcpc_with_homebrew_mirrors() (
+    xcpc_mirror_stage=$1
+    shift
+    if [ "${HOMEBREW_API_DOMAIN+x}" != x ]; then HOMEBREW_API_DOMAIN=https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api; export HOMEBREW_API_DOMAIN; fi
+    if [ "${HOMEBREW_BOTTLE_DOMAIN+x}" != x ]; then HOMEBREW_BOTTLE_DOMAIN=https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles; export HOMEBREW_BOTTLE_DOMAIN; fi
+    if [ "${HOMEBREW_PIP_INDEX_URL+x}" != x ]; then HOMEBREW_PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple; export HOMEBREW_PIP_INDEX_URL; fi
+    if [ "$xcpc_mirror_stage" = bootstrap ]; then
+        if [ "${HOMEBREW_BREW_GIT_REMOTE+x}" != x ]; then HOMEBREW_BREW_GIT_REMOTE=https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/brew.git; export HOMEBREW_BREW_GIT_REMOTE; fi
+        if [ "${HOMEBREW_CORE_GIT_REMOTE+x}" != x ]; then HOMEBREW_CORE_GIT_REMOTE=https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/homebrew-core.git; export HOMEBREW_CORE_GIT_REMOTE; fi
+    fi
+    "$@"
+)
+
+xcpc_run_brew() {
+    if [ "$xcpc_mirror_mode" = china ] && { [ "${HOMEBREW_API_DOMAIN+x}" != x ] || [ "${HOMEBREW_BOTTLE_DOMAIN+x}" != x ] || [ "${HOMEBREW_PIP_INDEX_URL+x}" != x ]; }; then
+        if (umask 022; xcpc_with_homebrew_mirrors install "$xcpc_brew" "$@"); then return 0; fi
+        echo 'Homebrew mirror failed; retrying with the original sources.' >&2
+    fi
+    (umask 022; "$xcpc_brew" "$@")
+}
+
 # Homebrew refuses root installations. Even when this wrapper was launched
 # with sudo, prepare dependencies as the invoking administrator first.
 if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
     exec sudo -u "$SUDO_USER" -H -- /usr/bin/env \
         "XCPC_SOURCE_REVISION=${XCPC_SOURCE_REVISION:-}" \
+        "XCPC_MIRROR=$xcpc_mirror_mode" \
         /bin/sh "$xcpc_source/install-macos.sh" "$@"
 fi
 
@@ -187,20 +214,35 @@ if [ -n "$xcpc_missing" ]; then
         echo 'Installing Homebrew to set up the missing prerequisites.'
         echo 'Follow the Homebrew prompts; macOS may ask for your password.'
         xcpc_bootstrap=$(mktemp "${TMPDIR:-/tmp}/xcpc-homebrew.XXXXXX")
-        trap 'rm -f "$xcpc_bootstrap"' 0
+        xcpc_mirror_bootstrap=
+        trap 'rm -f "$xcpc_bootstrap"; if [ -n "$xcpc_mirror_bootstrap" ]; then rm -rf "$xcpc_mirror_bootstrap"; fi' 0
         trap 'exit 130' INT
         trap 'exit 143' TERM
-        if ! curl --fail --silent --show-error --location \
-            https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh \
-            --output "$xcpc_bootstrap"; then
-            echo 'Could not download the official Homebrew installer. Check your connection and retry.' >&2
-            exit 1
+        xcpc_bootstrapped=false
+        if [ "$xcpc_mirror_mode" = china ] && command -v git >/dev/null 2>&1 && git --version >/dev/null 2>&1; then
+            xcpc_mirror_bootstrap=$(mktemp -d "${TMPDIR:-/tmp}/xcpc-homebrew-repo.XXXXXX")
+            if git clone --depth=1 https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/install.git "$xcpc_mirror_bootstrap/install" &&
+                [ -f "$xcpc_mirror_bootstrap/install/install.sh" ] &&
+                (umask 022; xcpc_with_homebrew_mirrors bootstrap /bin/bash "$xcpc_mirror_bootstrap/install/install.sh"); then
+                xcpc_bootstrapped=true
+            else
+                echo 'Homebrew bootstrap mirror failed; retrying the official installer.' >&2
+            fi
         fi
-        if ! (umask 022; /bin/bash "$xcpc_bootstrap"); then
-            echo 'Homebrew setup did not finish. Re-run this command to retry.' >&2
-            exit 1
+        if ! "$xcpc_bootstrapped"; then
+            if ! curl --fail --silent --show-error --location \
+                https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh \
+                --output "$xcpc_bootstrap"; then
+                echo 'Could not download the official Homebrew installer. Check your connection and retry.' >&2
+                exit 1
+            fi
+            if ! (umask 022; /bin/bash "$xcpc_bootstrap"); then
+                echo 'Homebrew setup did not finish. Re-run this command to retry.' >&2
+                exit 1
+            fi
         fi
         rm -f "$xcpc_bootstrap"
+        if [ -n "$xcpc_mirror_bootstrap" ]; then rm -rf "$xcpc_mirror_bootstrap"; fi
         trap - 0 INT TERM
         xcpc_find_brew
         if [ -z "$xcpc_brew" ]; then
@@ -218,7 +260,7 @@ if [ -n "$xcpc_missing" ]; then
         if ! "$xcpc_have_git"; then set -- "$@" git; fi
         if ! "$xcpc_have_tmux"; then set -- "$@" tmux; fi
         if [ "$#" -gt 0 ]; then
-            (umask 022; "$xcpc_brew" install "$@")
+            xcpc_run_brew install "$@"
         fi
     }
     xcpc_install_prerequisites
@@ -237,6 +279,7 @@ if "$xcpc_global" && [ "$(id -u)" -ne 0 ]; then
     # sudo resets the environment. Preserve only installer metadata and the
     # discovered public Homebrew runtime; user passwords and cookies are absent.
     sudo -- /usr/bin/env "XCPC_SOURCE_REVISION=${XCPC_SOURCE_REVISION:-}" \
+        "XCPC_MIRROR=$xcpc_mirror_mode" \
         "HOMEBREW_PREFIX=${HOMEBREW_PREFIX:-}" "PATH=$PATH" \
         "$xcpc_python" "$xcpc_source/install.py" "$@"
     if ! "$xcpc_skip_path"; then
