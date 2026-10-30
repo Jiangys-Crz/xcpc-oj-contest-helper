@@ -28,9 +28,12 @@ CREATE TABLE IF NOT EXISTS audit(id TEXT PRIMARY KEY, actor_id TEXT REFERENCES u
 `);
     if (!(this.db.prepare('PRAGMA table_info(histories)').all() as Row[]).some(c => c.name === 'status')) this.db.exec("ALTER TABLE histories ADD COLUMN status TEXT NOT NULL DEFAULT 'running'");
     const historyColumns = new Set((this.db.prepare('PRAGMA table_info(histories)').all() as Row[]).map(c => c.name));
-    for (const [column, definition] of Object.entries({rules_json:"TEXT NOT NULL DEFAULT '{}'",freeze_rank:'TEXT',freeze_rank_at:'TEXT'})) {
+    for (const [column, definition] of Object.entries({rules_json:"TEXT NOT NULL DEFAULT '{}'",freeze_rank:'TEXT',freeze_rank_at:'TEXT',points:'REAL',freeze_points:'REAL',freeze_event_points:'REAL',freeze_cells_json:'TEXT',statistics_json:'TEXT',revealed_problems_json:'TEXT',statistics_at:'TEXT'})) {
       if (!historyColumns.has(column)) this.db.exec(`ALTER TABLE histories ADD COLUMN ${column} ${definition}`);
     }
+    const ruleColumns = new Set((this.db.prepare('PRAGMA table_info(room_rules)').all() as Row[]).map(c => c.name));
+    if (!ruleColumns.has('freeze_minutes')) this.db.exec('ALTER TABLE room_rules ADD COLUMN freeze_minutes INTEGER NOT NULL DEFAULT 0');
+    if (!ruleColumns.has('scoring_system')) this.db.exec("ALTER TABLE room_rules ADD COLUMN scoring_system TEXT NOT NULL DEFAULT 'ICPC'");
     if (path !== ':memory:') chmodSync(path, 0o600);
   }
   one(sql: string, ...params: any[]): Row | undefined { return this.db.prepare(sql).get(...params) as Row | undefined; }

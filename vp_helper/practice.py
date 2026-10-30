@@ -15,7 +15,7 @@ from .codeforces_live import CodeforcesLive, apply_metadata, submission_records,
 from .platform_clock import platform_now
 from .models import Contest, Rules, Submission, VPError
 from .parsing import contest_url
-from .scoring import score_submissions
+from .scoring import score_practice_submissions
 from .sessions import attempts, boundary, merge_records, save_state, latest_session, apply_submission_sync, reserve_submission_sync
 from .storage import file_lock, read_json, write_json
 from .tui import Dashboard, TerminalDashboard
@@ -70,9 +70,21 @@ class Practice:
                     c.problems[label] = urlsplit(link["href"]).path.rsplit("/", 1)[-1]
             if not c.problems:
                 raise VPError("QOJ did not expose this contest's problems.")
+            from .parsing import js_value
+            ruleset = re.search(r'Ruleset:\s*(ICPC|IOI|OI)\b', page.get_text(' ', strip=True), re.I)
+            scoring = (ruleset[1] if ruleset else js_value(str(page), 'contest_type', 'ICPC')).upper()
+            if scoring not in ('ICPC', 'OI', 'IOI'):
+                raise VPError('QOJ returned an unsupported contest ruleset.')
+            c.extra.update(scoring=scoring, native_scoring=scoring)
+            if scoring != 'ICPC':
+                self.api.graded_maxima(str(page), c)
             c.extra["local_attempt"] = True
         c.extra.update(practice=True, mode="practice", scoring=c.extra.get("scoring", "ICPC"))
-        c.original_start = float(int(platform_now(self.url)))
+        # BT includes the contest's existing native submissions. Keep their
+        # original epoch instead of treating this command invocation as a new
+        # participation. QOJ may not expose a contest epoch; its adapter also
+        # retains older absolute timestamps in a practice workspace.
+        c.original_start = float(c.original_start if c.original_start is not None else int(platform_now(self.url)))
         self.handle = self.api.handle
         return c
 
@@ -155,7 +167,11 @@ def prepare(url: str) -> tuple[Path, dict]:
             rename_existing(path, state, contest)
             directory = Path(state["directory"])
             target = directory
-            contest.original_start = state["start_time"]
+            if platform == 'qoj':
+                contest.original_start = state['start_time']
+            elif state['start_time'] != contest.original_start:
+                from .sessions import _rebase_start
+                _rebase_start(state, contest.original_start)
         else:
             attempt_id = uuid4().hex[:10]
             path = root / f"bt-{platform}-{contest.contest_id}-{attempt_id}.json"
@@ -185,10 +201,8 @@ class PracticeDashboard(Dashboard):
     def __init__(self, contest, elapsed, records, message="", handle="", *, start_time=None):
         # This summary is only a view of the practice workspace. Original
         # records remain practice and never enter a VP's saved score.
-        rules = Rules(max(1, int(elapsed) + 1), penalty_minutes=contest.rules.penalty_minutes,
-                      compile_penalty=contest.rules.compile_penalty)
         events = [Submission(str(s["id"]), "me", s["problem"], s["time"], s["verdict"]) for s in records]
-        me = score_submissions(events, list(contest.problems), rules, elapsed, name=handle or "me")
+        me = score_practice_submissions(events, list(contest.problems), elapsed, name=handle or "me")
         super().__init__(contest, elapsed, me, "—", "", None,
                          [{**s, "practice": True} for s in records], message, practice=True, start_time=start_time)
 

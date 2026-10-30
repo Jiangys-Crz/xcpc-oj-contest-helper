@@ -29,7 +29,7 @@ function fixture(t:any) {
   };
   const login=async(account:string)=> (await api('POST','auth/login',{account,password:PASSWORD})).data;
   const admin=async()=> (await api('POST','auth/admin-login',{account:'admin',password:'Admin-Only-Test-123!'})).data;
-  const room=async(token:string)=> (await api('POST','rooms',{name:'多人训练赛',contestUrl:'https://qoj.ac/contest/3617',startsAt:new Date(Date.now()+3600e3).toISOString()},token)).data;
+  const room=async(token:string,freezeMinutes=0)=> (await api('POST','rooms',{scoringSystem:'ICPC',freezeMinutes,name:'多人训练赛',contestUrl:'https://qoj.ac/contest/3617',startsAt:new Date(Date.now()+3600e3).toISOString()},token)).data;
   const invite=async(roomId:string,creator:string,target:Data)=> (await api('POST',`rooms/${roomId}/invitations`,target,creator)).data.id;
   return {service,root,api,login,admin,room,invite};
 }
@@ -261,7 +261,7 @@ test('last-hour freezing sanitizes opponent results and rank while own team subm
   const team=(await api('POST','teams',{nameZh:'封榜测试队',nameEn:'Freeze Test'},captain.token)).data;
   const teamInvite=(await api('POST',`teams/${team.id}/invitations`,{userId:member.user.id},captain.token)).data.id;
   await api('POST',`notifications/${teamInvite}/respond`,{accept:true},member.token);
-  const r=await room(owner.token),rn=await invite(r.id,owner.token,{teamId:team.id}),on=await invite(r.id,owner.token,{userId:opponent.user.id});
+  const r=await room(owner.token,60),rn=await invite(r.id,owner.token,{teamId:team.id}),on=await invite(r.id,owner.token,{userId:opponent.user.id});
   await api('POST',`notifications/${rn}/respond`,{accept:true},captain.token);await api('POST',`notifications/${on}/respond`,{accept:true},opponent.token);
   const start=Date.parse(r.startsAt), stamp=(seconds:number)=>new Date(start+seconds*1000).toISOString();
   const data=snapshot('freeze-team');
@@ -322,7 +322,7 @@ test('last-hour freezing sanitizes opponent results and rank while own team subm
 test('late first sync has no invented frozen rank, legacy duration defaults safely, and real platform duration overrides the default',async(t)=>{
   t.mock.timers.enable({apis:['Date'],now:Date.parse('2030-02-01T00:00:00Z')});
   const {api,login,room,invite}=fixture(t),owner=await login('owner'),user=await login('captain');
-  const r=await room(owner.token),n=await invite(r.id,owner.token,{userId:user.user.id});await api('POST',`notifications/${n}/respond`,{accept:true},user.token);
+  const r=await room(owner.token,60),n=await invite(r.id,owner.token,{userId:user.user.id});await api('POST',`notifications/${n}/respond`,{accept:true},user.token);
   assert.equal(r.durationSeconds,18000);assert.equal(r.durationSource,'default');
   const start=Date.parse(r.startsAt),data=snapshot('late-first');data.roomId=r.id;data.startedAt=r.startsAt;data.submissions=[];data.cells={};data.contest.rules={duration:7200,penalty_minutes:10};
   t.mock.timers.setTime(start+3600e3);
@@ -341,5 +341,108 @@ test('additive freeze metadata preserves the previous release room insert for sa
   const {service,api,login}=fixture(t),owner=await login('owner');
   service.store.run('INSERT INTO rooms VALUES(?,?,?,?,?,?)','legacy-compatible-room','Legacy room','https://qoj.ac/contest/3617',new Date(Date.now()+3600e3).toISOString(),owner.user.id,new Date().toISOString());
   const room=(await api('GET','rooms/legacy-compatible-room',undefined,owner.token)).data;
-  assert.equal(room.durationSource,'default');assert.equal(room.durationSeconds,18000);
+  assert.equal(room.durationSource,'default');assert.equal(room.durationSeconds,18000);assert.equal(room.freezeMinutes,0);assert.equal(room.scoringSystem,'ICPC');
+});
+
+test('room freeze minutes are explicit, validated, propagated to clients, and locked after a reservation',async(t)=>{
+  const {api,login,room,invite}=fixture(t),owner=await login('owner'),user=await login('captain');
+  const body={scoringSystem:'ICPC',name:'Freeze settings',contestUrl:'https://qoj.ac/contest/3617',startsAt:new Date(Date.now()+3600e3).toISOString()};
+  for(const freezeMinutes of [undefined,null,-1,0.5,'30',10081])await api('POST','rooms',{...body,...(freezeMinutes===undefined?{}:{freezeMinutes})},owner.token,400);
+  const r=await room(owner.token);assert.equal(r.freezeMinutes,0);assert.equal(r.freezeAt,null);assert.equal(r.frozen,false);
+  let updated=(await api('PATCH',`rooms/${r.id}`,{freezeMinutes:15},owner.token)).data;assert.equal(updated.freezeMinutes,15);
+  const invitation=await invite(r.id,owner.token,{userId:user.user.id});await api('POST',`notifications/${invitation}/respond`,{accept:true},user.token);
+  const authorized=(await api('POST',`client/rooms/${r.id}/authorize`,{},user.token)).data;assert.equal(authorized.room.freezeMinutes,15);
+  const data=snapshot('freeze-settings');data.roomId=r.id;data.startedAt=r.startsAt;data.contest.rules={duration:7200,freeze_minutes:60};data.submissions=[];
+  const hid=(await api('POST','client/sync',data,user.token)).data.id;
+  assert.equal((await api('GET',`history/${hid}`,undefined,user.token)).data.rules.freeze_minutes,15);
+  await api('PATCH',`rooms/${r.id}`,{freezeMinutes:0},owner.token,409);
+  updated=(await api('PATCH',`rooms/${r.id}`,{name:'Name only',freezeMinutes:15},owner.token)).data;assert.equal(updated.name,'Name only');
+  assert.equal(updated.freezeMinutes,15);assert.equal(updated.durationSeconds,7200);
+});
+
+test('native graded scores survive sync, freeze safely including native CF adjustments, and never leak opponents details',async(t)=>{
+  t.mock.timers.enable({apis:['Date'],now:Date.parse('2030-03-01T00:00:00Z')});
+  const {api,login,room,invite}=fixture(t),owner=await login('owner'),user=await login('captain');
+  const r=await room(owner.token,30),n=await invite(r.id,owner.token,{userId:user.user.id});await api('POST',`notifications/${n}/respond`,{accept:true},user.token);
+  const start=Date.parse(r.startsAt),stamp=(seconds:number)=>new Date(start+seconds*1000).toISOString();
+  t.mock.timers.setTime(start+5000e3);
+  const data=snapshot('native-points');data.roomId=r.id;data.startedAt=r.startsAt;data.contest.rules={duration:7200,scoring:'CF',score_policy:'best',problem_max_scores:{A:100,B:100}};
+  data.points=-60;data.solved=0;data.penalty=0;data.cells={A:{tries:1,points:40,maxPoints:100},B:{tries:0,points:0,maxPoints:100}};
+  data.submissions=[{id:'1',problem:'A',submittedAt:stamp(100),verdict:'PARTIAL',points:40,practice:false}];
+  const hid=(await api('POST','client/sync',data,user.token)).data.id;
+  t.mock.timers.setTime(start+6000e3);data.revision=2;data.points=200;data.solved=2;data.rank='2';data.cells={A:{tries:1,solved:true,points:100,maxPoints:100},B:{tries:1,solved:true,points:100,maxPoints:100}};
+  data.submissions=[{...data.submissions[0],verdict:'CORRECT',points:100},{id:'2',problem:'B',submittedAt:stamp(5500),verdict:'CORRECT',points:100,practice:false,url:'https://qoj.ac/submission/2'}];
+  await api('POST','client/sync',data,user.token);
+  const board=(await api('GET',`rooms/${r.id}/leaderboard`,undefined,owner.token)).data,row=board.rows[0];
+  assert.equal(row.points,0);assert.equal(row.rank,'87');assert.equal(row.cells.A.points,100);assert.equal(row.cells.B.points,0);assert.equal(row.cells.B.pending,1);assert.equal(row.cells.B.solved,false);
+  await api('GET',`history/${hid}`,undefined,owner.token,404);
+  const own=(await api('GET',`rooms/${r.id}/mysubmit`,undefined,user.token)).data;assert.equal(own.history.points,200);assert.equal(own.submissions[1].points,100);
+  t.mock.timers.setTime(start+7200e3);const ended=(await api('GET',`rooms/${r.id}/leaderboard`,undefined,owner.token)).data.rows[0];assert.equal(ended.points,200);assert.equal(ended.rank,'2');
+  for(const scoring of ['unsupported',null])await api('POST','client/sync',{...data,revision:3,contest:{...data.contest,rules:{scoring}}},user.token,400);
+});
+
+test('standalone practice never acquires scores and practice continuation preserves the original VP score',async(t)=>{
+  const {api,login}=fixture(t),user=await login('captain');
+  const data=snapshot('points-history');data.contest.rules={duration:7200,scoring:'IOI',score_policy:'best',problem_max_scores:{A:100}};data.points=100;data.penalty=0;data.endedAt=new Date().toISOString();data.cells.A.points=100;data.cells.A.maxPoints=100;
+  const hid=(await api('POST','client/sync',data,user.token)).data.id;
+  const bt={...data,mode:'bt',revision:2,rank:'1',points:999,penalty:999,solved:99,cells:{A:{tries:2,practiceSolved:true},B:{tries:3,practiceSolved:true}}};
+  await api('POST','client/sync',bt,user.token);const resumed=(await api('GET',`history/${hid}`,undefined,user.token)).data;
+  assert.equal(resumed.mode,'vp');assert.equal(resumed.points,100);assert.equal(resumed.solved,1);assert.equal(resumed.penalty,0);assert.equal(resumed.rank,'87');assert.equal(resumed.cells.A.points,100);assert.equal(resumed.cells.A.solved,true);assert.equal(resumed.submissions.find((s:Data)=>s.id==='123').practice,false);
+  const standalone={...bt,localId:'standalone-bt',revision:1};const bhid=(await api('POST','client/sync',standalone,user.token)).data.id;
+  const history=(await api('GET',`history/${bhid}`,undefined,user.token)).data;assert.equal(history.mode,'bt');assert.equal(history.points,null);assert.equal(history.penalty,0);assert.equal(history.rank,'—');assert.equal(history.cells.A.points,undefined);assert.equal(history.cells.A.solved,false);assert.equal(history.submissions.every((s:Data)=>s.practice),true);
+});
+
+test('room ICPC or CCPC format is mandatory, authorized consistently and cannot change after reservation',async(t)=>{
+  const {api,login,room,invite}=fixture(t),owner=await login('owner'),user=await login('captain');
+  const body={name:'Contest format',contestUrl:'https://qoj.ac/contest/3617',startsAt:new Date(Date.now()+3600e3).toISOString(),freezeMinutes:0};
+  for(const scoringSystem of [undefined,null,'CF','ccpc'])await api('POST','rooms',{...body,...(scoringSystem===undefined?{}:{scoringSystem})},owner.token,400);
+  const r=await room(owner.token),updated=(await api('PATCH',`rooms/${r.id}`,{scoringSystem:'CCPC'},owner.token)).data;assert.equal(updated.scoringSystem,'CCPC');
+  const n=await invite(r.id,owner.token,{userId:user.user.id});await api('POST',`notifications/${n}/respond`,{accept:true},user.token);
+  assert.equal((await api('POST',`client/rooms/${r.id}/authorize`,{},user.token)).data.room.scoringSystem,'CCPC');
+  const data=snapshot('ccpc-format');data.roomId=r.id;data.startedAt=r.startsAt;data.contest.rules={duration:18000,contest_format:'ICPC',problem_reveal_count:null};
+  const hid=(await api('POST','client/sync',data,user.token)).data.id,view=(await api('GET',`history/${hid}`,undefined,user.token)).data;
+  assert.equal(view.rules.contest_format,'CCPC');assert.equal(view.rules.problem_reveal_count,50);
+  await api('PATCH',`rooms/${r.id}`,{scoringSystem:'ICPC'},owner.token,409);
+});
+
+test('CCPC public statistics preserve native reveal decisions, anonymize labels in API and reveal all at the configured freeze',async(t)=>{
+  t.mock.timers.enable({apis:['Date'],now:Date.parse('2030-04-01T00:00:00Z')});
+  const {api,login,room,invite}=fixture(t),owner=await login('owner'),user=await login('captain');
+  const r=await room(owner.token,30);await api('PATCH',`rooms/${r.id}`,{scoringSystem:'CCPC'},owner.token);
+  const n=await invite(r.id,owner.token,{userId:user.user.id});await api('POST',`notifications/${n}/respond`,{accept:true},user.token);
+  const start=Date.parse(r.startsAt),stamp=(seconds:number)=>new Date(start+seconds*1000).toISOString();t.mock.timers.setTime(start+5000e3);
+  const data=snapshot('ccpc-statistics');data.roomId=r.id;data.startedAt=r.startsAt;data.contest.problems=['A','B','C'];data.contest.rules={duration:7200};data.submissions=[];data.cells={};
+  data.publicStatistics={submitted:{A:80,B:2,C:20},attempted:{A:60,B:2,C:15},accepted:{A:49,B:0,C:10}};
+  // The native timeline counts starred teams toward the 50-team reveal threshold,
+  // while the published accepted count here contains only official teams.
+  data.revealedProblems=['A'];data.statisticsAt=stamp(4999);
+  await api('POST','client/sync',data,user.token);
+  let board=(await api('GET',`rooms/${r.id}/leaderboard`,undefined,owner.token)).data;
+  assert.deepEqual(board.publicProblemStatistics,[{label:'A',submitted:80,attempted:60,accepted:49},{label:null,submitted:20,attempted:15,accepted:10},{label:null,submitted:2,attempted:2,accepted:0}]);
+  assert.equal(board.publicStatistics,undefined);assert.equal(board.revealedProblems,undefined);
+  t.mock.timers.setTime(start+6000e3);data.revision=2;data.statisticsAt=stamp(5900);data.publicStatistics.accepted.C=90;data.revealedProblems=['A','B','C'];
+  await api('POST','client/sync',data,user.token);
+  board=(await api('GET',`rooms/${r.id}/leaderboard`,undefined,owner.token)).data;
+  assert.equal(board.frozen,true);assert.deepEqual(board.publicProblemStatistics.map((s:Data)=>s.label),['A','B','C']);assert.equal(board.publicProblemStatistics[2].accepted,10);assert.equal(board.statisticsAt,stamp(4999));
+  t.mock.timers.setTime(start+7200e3);data.revision=3;await api('POST','client/sync',data,user.token);
+  board=(await api('GET',`rooms/${r.id}/leaderboard`,undefined,owner.token)).data;assert.equal(board.publicProblemStatistics[2].accepted,90);
+});
+
+test('room formats follow native platform VP support and graded QOJ snapshots match the selected format',async(t)=>{
+  const {api,login,invite}=fixture(t),owner=await login('owner'),user=await login('captain');
+  const body={name:'Native formats',contestUrl:'https://codeforces.com/contest/2272',startsAt:new Date(Date.now()+3600e3).toISOString(),freezeMinutes:0};
+  for(const scoringSystem of ['OI','IOI'])await api('POST','rooms',{...body,scoringSystem},owner.token,400);
+  for(const scoringSystem of ['OI','IOI']) {
+    const room=(await api('POST','rooms',{...body,contestUrl:'https://qoj.ac/contest/3617',scoringSystem},owner.token)).data;
+    assert.equal(room.scoringSystem,scoringSystem);
+    await api('PATCH',`rooms/${room.id}`,{contestUrl:'https://codeforces.com/gym/123456'},owner.token,400);
+    const n=await invite(room.id,owner.token,{userId:user.user.id});await api('POST',`notifications/${n}/respond`,{accept:true},user.token);
+    const auth=(await api('POST',`client/rooms/${room.id}/authorize`,{},user.token)).data;assert.equal(auth.room.scoringSystem,scoringSystem);
+    const pendingBoard=(await api('GET',`rooms/${room.id}/leaderboard`,undefined,user.token)).data;assert.equal(pendingBoard.rows[0].scoring,scoringSystem);assert.equal(pendingBoard.rows[0].points,null);
+    const data=snapshot('graded-room-'+scoringSystem);data.roomId=room.id;data.startedAt=room.startsAt;data.contest.rules={duration:7200,scoring:scoringSystem,score_policy:scoringSystem==='OI'?'latest':'best'};data.points=75;data.cells.A={tries:1,points:75,maxPoints:100,solved:false};data.submissions=[];
+    const hid=(await api('POST','client/sync',data,user.token)).data.id;const result=(await api('GET',`history/${hid}`,undefined,user.token)).data;assert.equal(result.points,75);assert.equal(result.rules.contest_format,scoringSystem);
+    await api('POST','client/sync',{...data,revision:2,contest:{...data.contest,rules:{scoring:'ICPC'}}},user.token,409);
+  }
+  const fractional=snapshot('native-fractional-freeze');fractional.contest.rules={duration:7200,freeze_minutes:15.5};
+  const hid=(await api('POST','client/sync',fractional,user.token)).data.id;assert.equal((await api('GET',`history/${hid}`,undefined,user.token)).data.rules.freeze_minutes,15.5);
 });

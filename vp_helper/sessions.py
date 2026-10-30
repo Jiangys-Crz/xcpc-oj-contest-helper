@@ -167,7 +167,10 @@ def save_state(path: Path, state: dict) -> None:
             state['contest'].update(name=state['workspace_name'], directory_name=state['workspace_name'])
             if state.get('mode', 'vp') == 'vp':
                 from .parsing import ccpc_reveal_count
-                state['contest']['rules']['problem_reveal_count'] = ccpc_reveal_count(state['workspace_name'])
+                selected = previous.get('contest', {}).get('extra', {}).get('contest_format') or state['contest'].get('extra', {}).get('contest_format')
+                if selected:
+                    state['contest'].setdefault('extra', {})['contest_format'] = selected
+                state['contest']['rules']['problem_reveal_count'] = (50 if selected == 'CCPC' else None) if selected else ccpc_reveal_count(state['workspace_name'])
         if previous.get("cloud"):
             state["cloud"] = previous["cloud"]
         if previous.get("practice_view"):
@@ -240,7 +243,9 @@ def end_attempt(attempt_id: str | None = None) -> tuple[Path, dict]:
             contest = Contest.from_dict(state["contest"])
             state["submissions"] = merge_records(path, state, [])
             score = score_submissions([Submission(**e) for e in state["submissions"]], list(contest.problems),
-                                      contest.rules, max(0, now-state["start_time"]))
+                                      contest.rules, max(0, now-state["start_time"]), scoring=contest.extra.get('scoring', 'ICPC'),
+                                      problem_max_scores=contest.extra.get('problem_max_scores', {}),
+                                      oi_time_tiebreak=bool(contest.extra.get('oi_time_tiebreak')))
             state["summary"] = {"solved": score.solved, "penalty": score.penalty if score.results_complete else "",
                                 "rank": "", "prize": ""}
             save_state(path, state)

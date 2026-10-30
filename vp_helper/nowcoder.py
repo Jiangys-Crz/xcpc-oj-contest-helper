@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 from html import escape
+import math
 import re
 import time
 from urllib.parse import urlsplit
@@ -34,6 +35,32 @@ VERDICTS = {"答案正确": "CORRECT", "已通过": "CORRECT", "通过": "CORREC
             "评测中": "PENDING", "正在编译": "PENDING", "编译中": "PENDING", "运行中": "PENDING",
             "正在运行": "PENDING", "排队中": "PENDING", "提交中": "PENDING", "已提交": "PENDING",
             "未判定": "PENDING", "结果隐藏": "HIDDEN", "系统错误": "SYSTEM-ERROR", "内部错误": "SYSTEM-ERROR"}
+
+
+def freeze_metadata(setting: dict, duration: int) -> tuple[bool, int | None, int | None]:
+    """The contest-info API publishes durations before and after official end."""
+    enabled = setting.get("needRankFrozen")
+    if enabled is False:
+        return True, None, None
+    if enabled is not True:
+        return False, None, None
+    def interval(milliseconds: str, minutes: str):
+        if milliseconds in setting:
+            value, scale = setting[milliseconds], 1000
+        elif minutes in setting:
+            value, scale = setting[minutes], 1 / 60
+        else:
+            return None
+        if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+            raise VPError("Nowcoder returned an invalid scoreboard freeze duration.")
+        return int(value / scale)
+    before = interval("rankFrozenMillisecond", "rankFrozenMinute")
+    after = interval("rankEndFrozenMillisecond", "rankEndFrozenMinute")
+    if before is None:
+        return False, None, None
+    if before > duration:
+        raise VPError("Nowcoder's scoreboard freeze duration exceeds the contest duration.")
+    return True, duration - before if before else None, duration + after if after is not None and before else None
 
 
 def judging_verdict(value) -> str:
@@ -183,14 +210,23 @@ class NowcoderLive:
             raise VPError("Nowcoder returned an invalid official schedule.")
         server_ms = start - data["countDownTime"] if type(data.get("countDownTime")) in (int, float) else platform_now(self.url) * 1000
         phase = "BEFORE" if server_ms < start else "CODING" if server_ms < end else "FINISHED"
-        frozen_ms, after_ms = float(setting.get("rankFrozenMillisecond") or 0), float(setting.get("rankEndFrozenMillisecond") or 0)
-        frozen = bool(setting.get("needRankFrozen") and frozen_ms > 0 and end - frozen_ms <= server_ms <= end + after_ms)
+        duration = int((end - start) / 1000)
+        known, freeze, unfreeze = freeze_metadata(setting, duration)
+        relative = (server_ms - start) / 1000
+        frozen = bool(freeze is not None and relative >= freeze and (unfreeze is None or relative < unfreeze))
         contest.name = data["name"]
         contest.original_start = start / 1000
-        contest.rules = Rules(int((end - start) / 1000))
+        contest.rules = Rules(duration, freeze_at=freeze, unfreeze_at=unfreeze)
         contest.extra.update(mode="live", scoring=SCORING[data["type"]], phase=phase, frozen=frozen, uid=self.uid,
                              end_time=end / 1000, ranking_visible=data.get("rankingVisible", True),
                              participation_type=data.get("participationType", ""))
+        contest.extra["score_policy"] = "latest" if SCORING[data["type"]] == "OI" else "best"
+        if contest.extra.get("freeze_source") not in ("manual", "room"):
+            contest.extra["freeze_known"] = known
+            if known:
+                contest.extra["freeze_source"] = "platform"
+            else:
+                contest.extra.pop("freeze_source", None)
 
     def problem_list(self, contest: Contest) -> list[dict]:
         result, page, seen, labels = [], 1, set(), set()
@@ -214,6 +250,15 @@ class NowcoderLive:
         if len(result) != basic.get("problemCount"):
             raise VPError("Nowcoder did not return the complete contest problem list.")
         contest.problems = {p["index"]: str(p["problemId"]) for p in result}
+        if contest.extra.get("scoring") != "ICPC":
+            maxima = dict(contest.extra.get("problem_max_scores", {}))
+            for problem in result:
+                # totalScore is the problem's configured value, whereas score
+                # is the current user's own result (and can be zero).
+                maximum = problem.get("fullScore", problem.get("totalScore"))
+                if type(maximum) in (int, float) and math.isfinite(maximum) and maximum > 0:
+                    maxima[problem["index"]] = maximum
+            contest.extra["problem_max_scores"] = maxima
         return result
 
     def prepare(self) -> tuple[Contest, dict]:
@@ -264,7 +309,9 @@ class NowcoderLive:
                 if cell.get("waitingJudgeCount"):
                     text += " +?"
                 own["problemResults"].append({"points": int(bool(cell.get("accepted"))) if contest.extra["scoring"] == "ICPC" else points,
-                                              "display": text, "type": "PRELIMINARY" if cell.get("waitingJudgeCount") else "FINAL"})
+                                              "display": text, "type": "PRELIMINARY" if cell.get("waitingJudgeCount") else "FINAL",
+                                              "accepted": bool(cell.get("accepted")), "attempted": bool(cell.get("submit")),
+                                              "rejectedAttemptCount": cell.get("failedCount", 0)})
             snapshot["own"] = own
         stats_source = {str(p["problemId"]): p for p in data.get("problemData", [])}
         for p in problems:
@@ -346,9 +393,12 @@ class NowcoderLive:
                 if label is None:
                     continue
                 submitted_at = raw["submitTime"] / 1000
-                if submitted_at < contest.original_start:
+                if submitted_at < contest.original_start and not contest.extra.get("practice"):
                     continue
                 verdict = judging_verdict(raw.get('statusMessage'))
+                maximum = raw.get("fullScore")
+                if type(maximum) in (int, float) and math.isfinite(maximum) and maximum > 0:
+                    contest.extra.setdefault("problem_max_scores", {})[label] = maximum
                 if (contest.extra["scoring"] != "ICPC" and verdict == "WRONG-ANSWER"
                         and type(raw.get("score")) in (int, float) and type(raw.get("fullScore")) in (int, float)
                         and 0 < raw["score"] < raw["fullScore"]):

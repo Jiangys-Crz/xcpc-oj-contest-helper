@@ -20,7 +20,7 @@ from .receipts import valid_submission_id
 from .pending_results import PendingResults
 
 ORIGIN = "https://" + CWNUOJ_HOST
-SCORING = {"acm": "ICPC", "oi": "OI", "ioi": "IOI", "codeforces": "CF"}
+SCORING = {"acm": "ICPC", "xcpc": "ICPC", "oi": "OI", "ioi": "IOI", "strictioi": "IOI", "cf": "CF", "codeforces": "CF"}
 VERDICTS = {0: "PENDING", 1: "CORRECT", 2: "WRONG-ANSWER", 3: "TIMELIMIT", 4: "MEMORY-LIMIT",
             5: "OUTPUT-LIMIT", 6: "RUN-ERROR", 7: "COMPILER-ERROR", 8: "SYSTEM-ERROR", 9: "CANCELLED",
             10: "UNAVAILABLE", 11: "HACKED", 20: "PENDING", 21: "PENDING", 22: "PENDING",
@@ -57,6 +57,17 @@ def numeric(value) -> float:
     if not math.isfinite(result):
         raise VPError("CWNUOJ returned a non-finite score.")
     return result
+
+
+def awarded_score(contest: Contest, label: str, value) -> float | None:
+    if value is None:
+        return None
+    score = numeric(value)
+    if contest.extra.get("scoring") == "ICPC":
+        return score
+    # Hydro stores judge percentages in records, and applies contest weights
+    # only when building the scoreboard.
+    return score * contest.extra.get("problem_max_scores", {}).get(label, 100) / 100
 
 
 class HydroLive:
@@ -167,13 +178,38 @@ class HydroLive:
             return result
         contest.name = tdoc["title"]
         contest.original_start = start
-        contest.rules = Rules(int(end - start))
+        duration = int(end - start)
+        freeze = None
+        if tdoc.get("lockAt"):
+            lock = timestamp(tdoc["lockAt"])
+            # A lock before this user's timed window means the entire window
+            # is frozen. A lock at/after end does not hide contest submissions.
+            freeze = max(0, int(lock - start)) if lock < end else None
+        contest.rules = Rules(duration, freeze_at=freeze)
         contest.problems = {label(i): str(pid) for i, pid in enumerate(pids)}
+        weights = tdoc.get("score") or {}
+        if not isinstance(weights, dict):
+            raise VPError("CWNUOJ returned invalid contest problem scores.")
+        contest.extra["problem_max_scores"] = {
+            key: numeric(weights.get(pid) or weights.get(int(pid)) or 100)
+            for key, pid in contest.problems.items()
+        }
+        if any(value <= 0 for value in contest.extra["problem_max_scores"].values()):
+            raise VPError("CWNUOJ returned invalid contest problem scores.")
         now = platform_now(self.url)
         phase = "BEFORE" if now < start else "CODING" if now < end else "FINISHED"
         frozen = bool(tdoc.get("lockAt") and timestamp(tdoc["lockAt"]) <= now and not tdoc.get("unlocked"))
         contest.extra.update(mode="live", scoring=SCORING[tdoc["rule"]], phase=phase, frozen=frozen,
                              hydro_rule=tdoc["rule"], domain=self.domain, uid=self.uid, end_time=end)
+        contest.extra["score_policy"] = "latest" if tdoc["rule"] == "oi" else "best"
+        if tdoc["rule"] == "strictioi":
+            contest.extra["score_policy"] = "subtasks"
+        if contest.extra.get("freeze_source") not in ("manual", "room"):
+            contest.extra["freeze_known"] = "lockAt" in tdoc
+            if "lockAt" in tdoc:
+                contest.extra["freeze_source"] = "platform"
+            else:
+                contest.extra.pop("freeze_source", None)
 
     def prepare(self) -> tuple[Contest, dict]:
         self.identity()
@@ -217,14 +253,17 @@ class HydroLive:
                    "penalty": total[1] if contest.extra["scoring"] == "ICPC" and len(total) > 1 else "",
                    "party": {"members": [{"handle": self.handle}], "teamName": plain(row[uid_index].get("value"))},
                    "problemResults": []}
-            for pid in contest.problems.values():
+            for label, pid in contest.problems.items():
                 cell = row[positions[pid]]
                 # IOI's "records" cells can include practice results. Only the
                 # first cell is the official contest result.
                 if cell.get("type") == "records" and isinstance(cell.get("raw"), list):
                     cell = cell["raw"][0] if cell["raw"] else {}
-                own["problemResults"].append({"points": numeric(cell.get("score") or 0),
-                                               "display": plain(cell.get("value")) or "—", "type": "FINAL"})
+                points = awarded_score(contest, label, cell.get("score"))
+                own["problemResults"].append({"points": points or 0,
+                                               "display": plain(cell.get("value")) or "—", "type": "FINAL",
+                                               "accepted": numeric(cell.get("score") or 0) >= 100,
+                                               "attempted": bool(cell.get("raw")) or cell.get("score") is not None})
             snapshot["own"] = own
             break
         pdict = board.get("pdict", {})
@@ -244,7 +283,21 @@ class HydroLive:
         self.submissions_complete = True
         self.submission_message = ''
         if contest.extra.get("practice"):
-            records = self._submissions(contest, correction=True)
+            # A standalone BT workspace includes the original contest history
+            # as well as problemset/practice submissions for the same problems.
+            values, errors, available = {}, [], False
+            for correction in (False, True):
+                try:
+                    values.update({record["id"]: record for record in self._submissions(contest, correction=correction)})
+                    available = True
+                except VPError as exc:
+                    errors.append(str(exc))
+            if not available:
+                raise VPError("CWNUOJ submission history unavailable: " + " · ".join(errors))
+            if errors:
+                self.submissions_complete = False
+                self.submission_message += (' · ' if self.submission_message else '') + 'Some submission history is unavailable; available results synced: ' + ' · '.join(errors)
+            records = list(values.values())
         else:
             values = {record["id"]: record for record in self._submissions(contest)}
             if contest.extra.get("phase") == "FINISHED":
@@ -274,7 +327,7 @@ class HydroLive:
                 or record.get('contest') not in (None, '', self.id)):
             raise VPError('CWNUOJ pending record does not match this account, contest and problem.')
         value = VERDICTS.get(record.get('status'))
-        return {'verdict': value, 'points': record.get('score')} if value is not None else None
+        return {'verdict': value, 'points': awarded_score(contest, event['problem'], record.get('score'))} if value is not None else None
 
     def _submissions(self, contest: Contest, *, correction: bool = False) -> list[dict]:
         if not self._identified:
@@ -328,12 +381,13 @@ class HydroLive:
                     continue
                 created = int(sid[:8], 16)
                 relative = created - contest.original_start
-                if relative < 0:
+                if relative < 0 and not contest.extra.get("practice"):
                     continue
                 verdict = VERDICTS.get(raw.get("status"), "HIDDEN" if raw.get("status") is None else "UNAVAILABLE")
                 result[sid] = {"id": sid, "team": "me", "problem": label, "time": relative,
-                               "verdict": verdict, "points": raw.get("score"), "practice": correction or created >= contest.extra["end_time"]}
-            if correction and records and all(valid_submission_id(str(r.get("_id", "")), "cwnuoj")
+                               "verdict": verdict, "points": awarded_score(contest, label, raw.get("score")),
+                               "practice": correction or created >= contest.extra["end_time"]}
+            if correction and not contest.extra.get("practice") and records and all(valid_submission_id(str(r.get("_id", "")), "cwnuoj")
                                                and int(str(r["_id"])[:8], 16) < contest.original_start for r in records):
                 break
             if dynamic:

@@ -65,8 +65,43 @@ class PracticeDisplayTests(unittest.TestCase):
             self.contest.extra.update(scoring='ICPC',phase='FINISHED')
             view=LiveDashboard(self.contest,19000,{'own':own},self.records,practice=True)
             self.assertIn((0,0,255),self.colors(view.fixed(180),background=True))
-            self.assertIn((0,128,0),self.colors(view.fixed(180)))
+            self.assertIn((96,231,96),self.colors(view.fixed(180),background=True))
             self.assertEqual(own['problemResults'][1]['points'],0)
+
+    def test_practice_counts_ce_resubmissions_and_post_ac_attempts_without_score_or_time(self):
+        self.contest.extra['practice'] = True
+        self.contest.extra['scoring'] = 'OI'
+        records = [{'id': str(i), 'problem': 'A', 'time': i * 60, 'verdict': v}
+                   for i, v in enumerate(('COMPILER-ERROR', 'CORRECT', 'WRONG-ANSWER'), 1)]
+        view = PracticeDashboard(self.contest, 1000, records, handle='tester')
+        table = next(item for item in view.fixed(180).renderables if isinstance(item, Table) and item.columns[0].header == 'rank')
+        self.assertEqual([c.header for c in table.columns], ['rank', 'team', 'A', 'B'])
+        self.assertEqual(table.columns[2]._cells[0].plain, '3 tries')
+        self.assertIsNone(view.me.points)
+        self.assertEqual(view.me.penalty, 0)
+
+    def test_resumed_vp_combines_original_and_practice_attempts_but_keeps_original_ac_green(self):
+        self.records += [{'id':'4','problem':'A','time':18300,'verdict':'WRONG-ANSWER','practice':True},
+                         {'id':'5','problem':'A','time':18400,'verdict':'CORRECT','practice':True}]
+        me = score_submissions([Submission('1','me','A',60,'CORRECT')],
+                               list(self.contest.problems), self.contest.rules, 18000)
+        view = Dashboard(self.contest,19000,me,'5','',None,self.records,practice=True)
+        table = next(item for item in view.fixed(180).renderables if isinstance(item, Table) and item.columns[0].header == 'rank')
+        self.assertEqual(table.columns[2]._cells[0].plain, '3 tries')
+        self.assertEqual(table.columns[3]._cells[0].plain, '2 tries')
+        self.assertEqual(me.cells['A'].tries, 1)
+
+    def test_scored_live_bt_does_not_turn_partial_points_into_an_original_ac(self):
+        self.contest.extra.update(scoring='IOI', phase='FINISHED', problem_max_scores={'A':100,'B':100})
+        own = {'party':{'members':[{'handle':'tester'}]}, 'rank':5, 'points':30,
+               'problemResults':[{'points':30, 'accepted':False}, {'points':0}]}
+        records = [{'id':'1','problem':'A','time':60,'verdict':'PARTIAL','practice':False},
+                   {'id':'2','problem':'A','time':18100,'verdict':'CORRECT','practice':True}]
+        view = LiveDashboard(self.contest,19000,{'own':own},records,practice=True,practice_rank='5')
+        table = next(item for item in view.fixed(180).renderables if isinstance(item, Table))
+        self.assertEqual([c.header for c in table.columns], ['rank','team','A','B'])
+        self.assertEqual(table.columns[2]._cells[0].plain, '2 tries')
+        self.assertIn((0,0,255), self.colors(view.fixed(180),background=True))
 
     def test_saved_live_ac_remains_visible_when_official_row_is_unavailable(self):
         self.contest.extra.update(scoring='ICPC',phase='FINISHED')
@@ -74,3 +109,16 @@ class PracticeDisplayTests(unittest.TestCase):
         backgrounds=self.colors(view.fixed(180),background=True)
         self.assertIn((96,231,96),backgrounds)
         self.assertIn((0,0,255),backgrounds)
+
+    def test_manual_live_freeze_hides_native_counts_that_may_include_later_attempts(self):
+        self.contest.extra.update(scoring='ICPC', phase='CODING', freeze_source='manual')
+        self.contest.rules.freeze_at = 14400
+        self.contest.rules.unfreeze_at = 18000
+        snapshot = {'phase':'CODING', 'frozen':True, 'own':None,
+                    'stats':{'submitted':{'A':9999, 'B':8888}}}
+        view = LiveDashboard(self.contest,15000,snapshot,[])
+        output = io.StringIO()
+        Console(file=output,width=180,color_system=None).print(view.fixed(180))
+        self.assertIn('Scoreboard frozen', output.getvalue())
+        self.assertNotIn('9999', output.getvalue())
+        self.assertNotIn('8888', output.getvalue())

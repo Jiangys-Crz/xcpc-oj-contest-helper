@@ -401,7 +401,7 @@ class PracticeTests(Isolated):
                 adapter = practice.Practice(url,{})
                 contest = adapter.prepare()
             self.assertTrue(contest.extra["practice"])
-            self.assertEqual(contest.original_start, 9000)
+            self.assertEqual(contest.original_start, 1000)
 
     def test_qoj_practice_needs_no_native_vp_and_reopens_its_own_folder(self):
         html = '<ul class="nav-pills"><a href="/user/profile/tester">me</a></ul><h1>Open practice</h1><table><tr><td>A</td><td><a href="/contest/123/problem/10">problem</a></td></tr></table>'

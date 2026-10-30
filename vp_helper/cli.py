@@ -543,6 +543,9 @@ def monitor(path: Path) -> None:
             state['practice_rank'] = saved_rank(state)
             save_state(path, state)
         contest = Contest.from_dict(state["contest"])
+        score_options = {'scoring': contest.extra.get('scoring', 'ICPC'),
+                         'problem_max_scores': contest.extra.get('problem_max_scores', {}),
+                         'oi_time_tiebreak': bool(contest.extra.get('oi_time_tiebreak'))}
         config = read_json(config_directory() / "config.json")
         api = adapter(contest.url, config)
         if state.get("handle") and api.handle.casefold() != state["handle"].casefold():
@@ -555,7 +558,7 @@ def monitor(path: Path) -> None:
         from .sessions import boundary, apply_submission_sync, reserve_submission_sync, save_state
         submissions = {x["id"]: Submission(**x) for x in state.get("submissions", [])}
         final_score_key = (score_submissions(list(submissions.values()), list(contest.problems),
-                                           contest.rules, contest.rules.duration).rank_key
+                                           contest.rules, contest.rules.duration, **score_options).rank_key
                            if state.get("status") == "complete" else None)
         if hasattr(api, "seed_submissions"):
             api.seed_submissions(list(submissions.values()))
@@ -632,11 +635,11 @@ def monitor(path: Path) -> None:
                 recent = recent_submissions(list(submissions.values()), list(contest.problems), contest.rules, elapsed)
                 records = submission_history(list(submissions.values()), list(contest.problems), contest.rules, elapsed)
                 private = score_submissions(list(submissions.values()), list(contest.problems), contest.rules,
-                                            scoring_elapsed, name=api.handle)
+                                            scoring_elapsed, name=api.handle, **score_options)
                 public_elapsed = (math.nextafter(float(contest.rules.freeze_at), -math.inf)
                                   if contest.rules.problem_reveal_count and frozen else scoring_elapsed)
                 public = score_submissions(list(submissions.values()), list(contest.problems), contest.rules,
-                                           public_elapsed, public=True, released=current_reference.released, name=api.handle)
+                                           public_elapsed, public=True, released=current_reference.released, name=api.handle, **score_options)
                 all_final = all(s.verdict not in ("PENDING", "UNAVAILABLE") for s in submissions.values() if not s.practice and 0 <= s.time < contest.rules.duration)
                 finalized = (not interrupted and elapsed >= contest.rules.duration and not frozen and current_reference.complete
                              and api.submissions_complete and have_polled and all_final)
@@ -644,6 +647,11 @@ def monitor(path: Path) -> None:
                 shown_rank = rank_label(private, current_reference.rows) if current_reference.complete and private.results_complete and not frozen else rank
                 prize = prize_of(private, current_reference.rows, contest.medals) if finalized else ""
                 stats = statistics(current_reference.rows + [public], list(contest.problems)) if current_reference.statistics_complete and public.results_complete else None
+                revealed = revealed_problems(contest, scoring_elapsed, current_reference)
+                if stats is not None and (state.get('public_statistics') != stats or state.get('revealed_problems') != sorted(revealed)):
+                    state.update(public_statistics=stats, revealed_problems=sorted(revealed),
+                                 statistics_at=state['start_time'] + max(0, min(scoring_elapsed, contest.rules.freeze_at if frozen else contest.rules.duration)))
+                    save_state(path, state)
                 shown_message = submission_error or reference_error or current_reference.message
                 if finalized and current_reference.replay is not None and not submission_error and not reference_error:
                     shown_message = "Finished"
@@ -671,7 +679,7 @@ def monitor(path: Path) -> None:
                                         private, shown_rank, prize, stats, records, shown_message)
                     dashboard.practice = state["practice_view"]
                     dashboard.start_time = state['start_time']
-                    dashboard.revealed = revealed_problems(contest, scoring_elapsed, current_reference)
+                    dashboard.revealed = revealed
                     view.update(dashboard)
                     next_render = now + 0.25
                 if fresh_submissions:
@@ -684,6 +692,7 @@ def monitor(path: Path) -> None:
                                  recent=recent, submission_history=records, last_sync_time=platform_now(state),
                                  status="archived" if interrupted and elapsed >= cutoff-state["start_time"] else "complete" if finalized or preserve_final else "running")
                     state["summary"] = {"solved": private.solved,
+                                        "points": private.points if private.scoring != 'ICPC' else None,
                                         "penalty": private.penalty if private.results_complete else "",
                                         "rank": state.get('practice_rank', '—') if state['practice_view'] else rank if finalized else "", "prize": prize}
                     save_state(path, state)

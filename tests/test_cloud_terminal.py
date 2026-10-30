@@ -100,9 +100,45 @@ class CloudTerminalTests(unittest.TestCase):
                 self.state['contest']['rules']['compile_penalty']=compile_penalty
                 payload=cloud.sync_payload(self.path,self.state)
                 self.assertEqual(payload['contest']['rules'],{
-                    'duration':3600,'penalty_minutes':20,'compile_penalty':compile_penalty})
+                    'duration':3600,'penalty_minutes':20,'compile_penalty':compile_penalty,
+                    'freeze_minutes':0,'scoring':'ICPC','score_policy':'best','problem_max_scores':{},
+                    'contest_format':'ICPC','problem_reveal_count':None})
                 self.assertEqual(payload['cells']['A']['tries'],2 if compile_penalty else 1)
                 self.assertEqual(payload['penalty'],21 if compile_penalty else 1)
+
+    def test_native_partial_points_are_not_accepted_and_cf_total_can_include_hacks(self):
+        self.state['contest']['extra'].update(scoring='IOI', problem_max_scores={'A':100,'B':100})
+        self.state['submissions']=[{'id':'1','team':'me','problem':'A','time':10,'verdict':'PARTIAL','score':None,'points':75}]
+        self.state['snapshot']={'own':{'rank':2,'points':75,'penalty':'','problemResults':[{'points':75,'accepted':False}]}}
+        payload=cloud.sync_payload(self.path,self.state)
+        self.assertEqual(payload['points'],75)
+        self.assertFalse(payload['cells']['A']['solved'])
+        self.assertEqual(payload['submissions'][0]['points'],75)
+        self.assertEqual(payload['penalty'],0)
+        self.state['contest']['extra']['scoring']='CF'
+        self.state['snapshot']['own']['points']=-50
+        self.assertEqual(cloud.sync_payload(self.path,self.state)['points'],-50)
+
+    def test_native_clock_penalty_and_negative_historic_bt_records(self):
+        self.state['snapshot']={'own':{'rank':7,'points':1,'penalty':'0:25','problemResults':[]}}
+        self.assertEqual(cloud.sync_payload(self.path,self.state)['penalty'],25)
+        self.state['mode']='practice'
+        self.state['submissions']=[{'id':'99','team':'me','problem':'A','time':-100,'verdict':'CORRECT'}]
+        payload=cloud.sync_payload(self.path,self.state)
+        self.assertTrue(payload['cells']['A']['practiceSolved'])
+        self.assertEqual(payload['cells']['A']['tries'],1)
+        self.assertEqual(payload['penalty'],0)
+        self.assertEqual(payload['submissions'][0]['submittedAt'],cloud._iso(self.state['start_time']-100))
+
+    def test_resumed_bt_counts_all_attempts_without_altering_original_score(self):
+        self.state['practice_view']=True
+        self.state['submissions']=[{'id':str(i),'team':'me','problem':'A','time':10+i,'verdict':v}
+                                  for i,v in enumerate(['COMPILER-ERROR','CORRECT','WRONG-ANSWER','CORRECT'])]
+        payload=cloud.sync_payload(self.path,self.state)
+        self.assertEqual(payload['cells']['A']['tries'],4)
+        self.assertEqual(payload['solved'],1)
+        self.assertEqual(payload['penalty'],0)
+        self.assertTrue(payload['cells']['A']['solved'])
 
     def test_unconfigured_local_sessions_do_not_start_network_or_write_outbox(self):
         cloud.configuration_path().unlink()

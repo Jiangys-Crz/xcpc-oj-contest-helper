@@ -125,6 +125,8 @@ def _activate(path: Path) -> dict:
             state.update(activation_error=str(exc), activation_uncertain=bool(uncertain))
             write_json(path, state)
             raise
+        from .freeze import retain
+        retain(contest, Contest.from_dict(state["contest"]))
         state.update(start_time=started, contest=contest.to_dict(), status="running", activation_uncertain=False)
         write_json(path, state)
         _publish_started(path, state, api)
@@ -154,6 +156,9 @@ def prepare(url: str, scheduled_start: float | None = None, *, cloud: dict | Non
             raise VPError('这场比赛已有 VP；每场比赛只支持一次。请重复运行原 vp 命令恢复会话，或使用 bt 链接补题。')
         cli.console.print("Reading contest information…", markup=False)
         contest = api.prepare()
+        from .freeze import configure, configure_format
+        configure_format(contest, room_format=cloud.get("scoringSystem", "ICPC") if cloud else None)
+        configure(contest, room_minutes=cloud.get("freezeMinutes") if cloud else None)
         contest.directory_name = " ".join(contest.directory_name.split())
         number = len(previous) + 1
         attempt_id = uuid4().hex[:10]

@@ -176,7 +176,7 @@ class ResumeTests(unittest.TestCase):
         self.api.start.side_effect = None
         self.api.start.return_value = 2000
         self.api.web.pdf.side_effect = VPError("download failed")
-        with patch.object(cli, "desktop", return_value=self.root):
+        with patch.object(cli, "desktop", return_value=self.root), patch('builtins.input', return_value=''):
             path, state = cli.prepare_start(self.state["url"])
         self.api.start.assert_called_once()
         self.assertEqual(state["start_time"], 2000)

@@ -1,7 +1,6 @@
 """Private cloud identity, room authorization and a durable redacted sync outbox."""
 from __future__ import annotations
 
-import copy
 from datetime import datetime, timezone
 import getpass
 import hashlib
@@ -212,6 +211,7 @@ def start_room(value):
     context = {'serverUrl':base, 'roomId':room_id, 'roomName':room['name'],
                'userId':str(saved['user']['id']), 'participantId':str(participant['id']),
                'label':participant['label'], 'startsAt':room['startsAt'],
+               'freezeMinutes':room.get('freezeMinutes', 0), 'scoringSystem':room.get('scoringSystem', 'ICPC'),
                'captainId':str(participant['captainId']), 'type':participant['type']}
     if previous:
         path, state = previous
@@ -223,6 +223,11 @@ def start_room(value):
         if old and abs(datetime.fromisoformat(old['startsAt'].replace('Z','+00:00')).timestamp()-scheduled) > 1:
             raise VPError('房间时间已修改，现有原站 VP 预约不能自动重置，请联系房间管理员。')
         state['cloud'] = context
+        contest = Contest.from_dict(state['contest'])
+        from .freeze import configure, configure_format
+        configure_format(contest, room_format=context['scoringSystem'])
+        configure(contest, room_minutes=context['freezeMinutes'])
+        state['contest'] = contest.to_dict()
         write_json(path, state)
         cli.bind_submit_context(Path(state['directory']), path, state)
         queue_state(path, state)
@@ -252,9 +257,23 @@ def _iso(value):
     return datetime.fromtimestamp(float(value), timezone.utc).isoformat()
 
 
+def _penalty(value, fallback=0):
+    if isinstance(value, str) and re.fullmatch(r'\d+:\d{2}(?::\d{2})?', value):
+        from .parsing import seconds
+        return int(seconds(value) // 60)
+    try:
+        return int(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return fallback
+
+
+def _event_points(event):
+    return event.get('score') if event.get('score') is not None else event.get('points')
+
+
 def sync_payload(path, state):
     """Strict allowlist: judge credentials, local paths and source never leave the PC."""
-    from .scoring import score_submissions
+    from .scoring import score_submissions, score_practice_submissions
     from .submission_results import judging_url
     contest = Contest.from_dict(state['contest'])
     duration = contest.rules.duration
@@ -262,17 +281,22 @@ def sync_payload(path, state):
     for event in records:
         event['practice'] = bool(state.get('mode') == 'practice' or event.get('practice') or event['time'] >= duration)
     def scoring_events(practice):
-        return [Submission(str(e['id']), 'me', e['problem'], e['time'], e['verdict'])
+        return [Submission(str(e['id']), 'me', e['problem'], e['time'], e['verdict'], score=_event_points(e))
                 for e in records if e['practice'] == practice]
-    score = score_submissions(scoring_events(False), list(contest.problems), contest.rules, duration)
-    correction_rules = copy.copy(contest.rules)
+    scoring = contest.extra.get('scoring', 'ICPC')
+    maxima = contest.extra.get('problem_max_scores', {})
+    score = score_submissions(scoring_events(False), list(contest.problems), contest.rules, duration,
+                              scoring=scoring, problem_max_scores=maxima,
+                              oi_time_tiebreak=bool(contest.extra.get('oi_time_tiebreak')))
     corrections = scoring_events(True)
-    correction_rules.duration = max([1] + [int(e.time)+1 for e in corrections])
-    practice_score = score_submissions(corrections, list(contest.problems), correction_rules, correction_rules.duration)
-    cells = {label:{'tries':score.cells[label].tries+practice_score.cells[label].tries,
+    practice_score = score_practice_submissions(corrections, list(contest.problems), max([1] + [e.time for e in corrections]))
+    original_attempts = score_practice_submissions(scoring_events(False), list(contest.problems), duration) if state.get('practice_view') else score
+    cells = {label:{'tries':original_attempts.cells[label].tries+practice_score.cells[label].tries,
                     'pending':score.cells[label].pending+practice_score.cells[label].pending,
                     'solved':score.cells[label].solved, 'practiceSolved':practice_score.cells[label].solved,
-                    'solveTime':score.cells[label].solve_time} for label in contest.problems}
+                    'solveTime':score.cells[label].solve_time,
+                    **({'points':score.cells[label].score} if score.cells[label].score is not None else {}),
+                    **({'maxPoints':maxima[label]} if label in maxima else {})} for label in contest.problems}
     for cell in cells.values():
         if cell.get('solveTime') is None:
             cell.pop('solveTime', None)
@@ -282,20 +306,36 @@ def sync_payload(path, state):
         native = own.get('problemResults', [])
         if index < len(native):
             cell = native[index]
-            if cell.get('points', 0) > 0:
+            accepted = cell.get('accepted', cell.get('points', 0) > 0 if scoring in ('ICPC', 'CF') else False)
+            if accepted:
                 cells[label]['solved'] = True
-            cells[label]['tries'] = max(cells[label]['tries'], int(cell.get('rejectedAttemptCount', 0)) + int(bool(cell.get('points', 0))))
+            native_tries = int(cell.get('rejectedAttemptCount', 0)) + int(bool(accepted))
+            cells[label]['tries'] = max(original_attempts.cells[label].tries, native_tries) + practice_score.cells[label].tries
+            if scoring != 'ICPC' and type(cell.get('points')) in (int, float):
+                cells[label]['points'] = cell['points']
     mode = {'practice':'bt','live':'live'}.get(state.get('mode'), 'vp')
     solved = practice_score.solved if mode == 'bt' else sum(c['solved'] for c in cells.values())
     payload = {'localId':path.stem,'contest':{'platform':contest.platform,'contestId':contest.contest_id,
                'url':contest.url,'name':contest.name,'problems':list(contest.problems),
                'rules':{'duration':duration,'penalty_minutes':contest.rules.penalty_minutes,
-                        'compile_penalty':contest.rules.compile_penalty}},
+                        'compile_penalty':contest.rules.compile_penalty,
+                        'freeze_minutes':(duration-contest.rules.freeze_at)/60 if contest.rules.freeze_at is not None else 0,
+                        'scoring':scoring,'score_policy':'subtasks' if contest.extra.get('score_policy') == 'subtasks' else 'latest' if scoring == 'OI' else 'best',
+                        'problem_max_scores':maxima,'contest_format':contest.extra.get('contest_format', 'ICPC'),
+                        'problem_reveal_count':contest.rules.problem_reveal_count}},
                'mode':mode,'status':state.get('status','running'),'rank':str(rank),'solved':solved,
-               'penalty':0 if mode == 'bt' else int(own.get('penalty', score.penalty) or 0),'cells':cells,
+               'penalty':0 if mode == 'bt' or scoring != 'ICPC' else _penalty(own.get('penalty'), score.penalty),'cells':cells,
                'submissions':[{'id':str(e['id']),'problem':e['problem'],'submittedAt':_iso(state['start_time']+e['time']),
                               'verdict':e['verdict'],'practice':e['practice'],
-                              'url':judging_url(contest.url, str(e['id']))} for e in records]}
+                              'url':judging_url(contest.url, str(e['id'])),
+                              **({'points':_event_points(e)} if _event_points(e) is not None else {})} for e in records]}
+    if mode != 'bt' and scoring != 'ICPC':
+        points = own.get('points', score.points)
+        if points is not None:
+            payload['points'] = points
+    if state.get('public_statistics') is not None and state.get('statistics_at') is not None:
+        payload.update(publicStatistics=state['public_statistics'], revealedProblems=state.get('revealed_problems', []),
+                       statisticsAt=_iso(state['statistics_at']))
     if mode != 'bt':
         payload['startedAt'] = _iso(state['start_time'])
         natural_end = state['start_time'] + duration

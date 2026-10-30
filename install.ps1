@@ -20,11 +20,65 @@ function Get-XcpcApplicationPaths {
     }
 }
 
+function Get-XcpcMachinePythonPaths {
+    # PEP 514 registrations are visible immediately after setup, before PATH
+    # reaches this process. Inspect both views even from a 32-bit PowerShell.
+    # HKCU is deliberately excluded: the shared app cannot depend on Conda or
+    # a Python installation that belongs to one Windows user.
+    $found = @()
+    foreach ($view in @([Microsoft.Win32.RegistryView]::Registry64, [Microsoft.Win32.RegistryView]::Registry32)) {
+        $registry = $null; $pythonKey = $null
+        try {
+            $registry = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, $view)
+            $pythonKey = $registry.OpenSubKey('SOFTWARE\Python')
+            if (-not $pythonKey) { continue }
+            foreach ($company in $pythonKey.GetSubKeyNames()) {
+                $companyKey = $null
+                try {
+                    $companyKey = $pythonKey.OpenSubKey($company)
+                    foreach ($tag in $companyKey.GetSubKeyNames()) {
+                        $install = $null
+                        try {
+                            $install = $companyKey.OpenSubKey($tag + '\InstallPath')
+                            if (-not $install) { continue }
+                            $directory = [Environment]::ExpandEnvironmentVariables([string]$install.GetValue('')).Trim().Trim('"')
+                            $executable = [Environment]::ExpandEnvironmentVariables([string]$install.GetValue('ExecutablePath')).Trim().Trim('"')
+                            if (-not $executable -and $directory) { $executable = Join-Path $directory 'python.exe' }
+                            if (-not $directory -and $executable) { $directory = Split-Path -Parent $executable }
+                            if ($directory -and $executable) {
+                                $priority = if ($company -eq 'PythonCore' -and $tag -match '^3\.13(?:$|-)') { 0 } elseif ($company -eq 'PythonCore') { 1 } else { 2 }
+                                $architecturePriority = if ($view -eq [Microsoft.Win32.RegistryView]::Registry64) { 0 } else { 1 }
+                                $found += [pscustomobject]@{ Executable=$executable; Directory=$directory; Priority=$priority; ArchitecturePriority=$architecturePriority; Tag=$tag }
+                            }
+                        } catch { }
+                        finally { if ($install) { $install.Dispose() } }
+                    }
+                } catch { }
+                finally { if ($companyKey) { $companyKey.Dispose() } }
+            }
+        } catch { }
+        finally { if ($pythonKey) { $pythonKey.Dispose() }; if ($registry) { $registry.Dispose() } }
+    }
+    $seen = @{}
+    foreach ($candidate in @($found | Sort-Object Priority, ArchitecturePriority, @{Expression='Tag';Descending=$true})) {
+        if (-not $seen.ContainsKey($candidate.Executable)) { $seen[$candidate.Executable]=$true; $candidate }
+    }
+}
+
 function Find-XcpcPython {
     param([switch]$SystemWide)
     $probeCode = 'import sys; sys.exit(1) if sys.version_info < (3, 12) else None; import venv, ensurepip; ensurepip.version()'
     if ($SystemWide) {
-        $probeCode += '; import os; from pathlib import Path; prefixes=[os.environ.get(k) for k in ("ProgramW6432","ProgramFiles","ProgramFiles(x86)")]; sys.exit(0 if any(p and Path(sys.base_prefix).resolve().is_relative_to(Path(p).resolve()) for p in prefixes) else 1)'
+        $probeCode += '; import os; from pathlib import Path; base=Path(sys.base_prefix).resolve(); prefixes=[os.environ.get(k) for k in ("ProgramW6432","ProgramFiles","ProgramFiles(x86)")]+sys.argv[1:]; profiles=[Path(p).resolve().parent for p in (os.environ.get("USERPROFILE"),os.environ.get("PUBLIC")) if p]; sys.exit(0 if not any(base.is_relative_to(p) for p in profiles) and any(p and base.is_relative_to(Path(p).resolve()) for p in prefixes) else 1)'
+        foreach ($registered in @(Get-XcpcMachinePythonPaths)) {
+            if (Test-Path -LiteralPath $registered.Executable -PathType Leaf) {
+                try {
+                    if ((Invoke-XcpcNative $registered.Executable @('-I','-c',$probeCode,$registered.Directory) -Quiet) -eq 0) {
+                        return [pscustomobject]@{ Executable=$registered.Executable; Prefix=@() }
+                    }
+                } catch { }
+            }
+        }
         $prefixes = @($env:ProgramW6432, $env:ProgramFiles) | Where-Object { $_ } | Select-Object -Unique
         foreach ($prefix in $prefixes) {
             foreach ($directory in @(Get-ChildItem -LiteralPath $prefix -Directory -Filter 'Python3*' -ErrorAction SilentlyContinue | Sort-Object Name -Descending)) {
@@ -114,8 +168,12 @@ function Invoke-XcpcElevatedSetup {
     }
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    Write-Host 'XCPC needs administrator permission to install commands for all Windows users.'
-    $process = Start-Process -FilePath $powershell -Verb RunAs -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded) -Wait -PassThru
+    Write-Host 'Continue in this PowerShell. Accept the Windows administrator prompt to install XCPC for all users; browser setup returns here afterwards.'
+    try {
+        $process = Start-Process -FilePath $powershell -Verb RunAs -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded) -Wait -PassThru
+    } catch {
+        throw 'Windows administrator authorization was cancelled or unavailable. Run this installer again and accept the UAC prompt; your ordinary PowerShell remains the correct starting point.'
+    }
     return [int]$process.ExitCode
 }
 
@@ -267,6 +325,7 @@ function Invoke-XcpcWindowsSetup {
         $layout = Get-XcpcLayout $InstallerArgs
         $bin = $layout.Bin
         if ($layout.Global -and -not (Test-XcpcAdministrator)) {
+            if ($env:XCPC_SETUP_ELEVATED -eq '1') { throw 'Windows did not grant administrator access to the installer. Rerun install.ps1 and accept the UAC prompt.' }
             $status = Invoke-XcpcElevatedSetup $InstallerArgs
             if ($status -eq 0) {
                 Update-XcpcProcessPath
@@ -274,6 +333,9 @@ function Invoke-XcpcWindowsSetup {
                 if ($InstallerArgs -notcontains '--skip-browser-registration') { Initialize-XcpcUserBridge $layout.Root }
             }
             return $status
+        }
+        if ($layout.Global -and $env:XCPC_SETUP_ELEVATED -ne '1') {
+            Write-Host 'Administrator access is already available. Installing shared commands; account and browser settings remain private to the current Windows user.'
         }
         Update-XcpcProcessPath
         $prerequisites = Get-XcpcPrerequisites -SystemWide:$layout.Global
@@ -293,6 +355,7 @@ function Invoke-XcpcWindowsSetup {
                 Write-Host "Installing $($package.Name)..."
                 $wingetArgs = @('install', '--exact', '--id', $package.Id, '--source', 'winget',
                     '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
+                if ($layout.Global -and $package.Key -eq 'Python') { $wingetArgs += '--force' }
                 if ($layout.Global -and $package.Key -in @('Python','Git')) { $wingetArgs += @('--scope', 'machine') }
                 $status = Invoke-XcpcNative $winget $wingetArgs
                 if ($status -ne 0) {
@@ -304,7 +367,7 @@ function Invoke-XcpcWindowsSetup {
             $missing = @($packages | Where-Object { -not $prerequisites.($_.Key) })
             if ($missing.Count) {
                 $names = ($missing | ForEach-Object { $_.Name }) -join ', '
-                throw "Installed prerequisites are still unavailable: $names. Open a new PowerShell window and rerun .\install.ps1; check that their commands are on PATH."
+                throw "Installed prerequisites are still unavailable: $names. The installer checked machine registrations and executable paths in this process. Python must be installed for all users, including venv and ensurepip; a per-user Conda/Python installation cannot back the shared XCPC commands. Review the package installer output above, then rerun install.ps1."
             }
         }
         $python = $prerequisites.Python

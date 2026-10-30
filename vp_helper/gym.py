@@ -68,8 +68,8 @@ class Gym:
     def prepare(self) -> Contest:
         data = self.api("contest.standings", contestId=self.id, showUnofficial=False, participantTypes="CONTESTANT")
         raw = data["contest"]
-        if raw["type"] != "ICPC":
-            raise VPError("This Gym contest does not use ICPC scoring.")
+        if raw["type"] not in ("ICPC", "CF", "IOI"):
+            raise VPError("Codeforces returned an unsupported contest scoring rule.")
         if raw["phase"] != "FINISHED":
             raise VPError("Only completed original contests can be started as a native VP.")
         soup = self.web.soup(self.url, params={"locale": "en"})
@@ -108,14 +108,21 @@ class Gym:
                         pdfs[f"{label}.pdf"] = href
                         break
         duration = int(raw["durationSeconds"])
-        freeze = raw.get("freezeDurationSeconds")
+        from .codeforces_live import freeze_metadata
+        freeze_known, freeze_at = freeze_metadata(raw, duration)
         medals = medals_from_html(dashboard_html, self.url)
         self._original = data
+        # Codeforces registers native virtual participations using ICPC rules,
+        # including Div./Educational rounds whose original scoreboard uses CF.
+        extra = {"scoring": "ICPC", "original_scoring": raw["type"], "freeze_known": freeze_known,
+                 "problem_info": data["problems"]}
+        if freeze_known:
+            extra["freeze_source"] = "platform"
         return Contest(self.platform, self.id, self.url, name, name,
                        {p["index"]: p["index"] for p in data["problems"]},
-                       Rules(duration, freeze_at=duration-int(freeze) if freeze else None,
+                       Rules(duration, freeze_at=freeze_at,
                              problem_reveal_count=ccpc_reveal_count(name)),
-                       pdfs, medals, raw.get("startTimeSeconds"), raw.get("websiteUrl"))
+                       pdfs, medals, raw.get("startTimeSeconds"), raw.get("websiteUrl"), extra)
 
     def contest_name(self) -> str:
         if self.platform == 'cf':
@@ -316,14 +323,17 @@ class Gym:
             cells = {}
             for label, result in zip(labels, raw["problemResults"]):
                 solved = result.get("points", 0) > 0
+                if data["contest"]["type"] == "IOI":
+                    maximum = next((p.get("points") for p in data["problems"] if p["index"] == label), None)
+                    solved = maximum is not None and result.get("points", 0) >= maximum
                 t = result.get("bestSubmissionTimeSeconds")
-                if solved and t is None:
+                if solved and t is None and data["contest"]["type"] == "ICPC":
                     raise VPError("The Gym original scoreboard lacks solve times needed for DOMjudge ties.")
                 cells[label] = Cell(int(result.get("rejectedAttemptCount", 0)) + int(solved), 0,
                                     solved, int(t // 60) if t is not None else None)
             rows.append(TeamScore(ident, party.get("teamName") or members, cells,
                                   penalty_minutes=contest.rules.penalty_minutes,
-                                  known_penalty=int(raw["penalty"])))
+                                  known_penalty=int(raw["penalty"]) if data["contest"]["type"] == "ICPC" else None))
         return rows
 
     def reference(self, contest: Contest, elapsed: float) -> Reference:
@@ -344,6 +354,19 @@ class Gym:
             self._original = final
         complete = final["contest"]["phase"] == "FINISHED" and not final["contest"].get("frozen", False)
         rows = self.rows_from_api(final, contest)
+        if final["contest"]["type"] != "ICPC":
+            # The original CF/IOI ranking is not an ICPC ranking. Build the
+            # native virtual comparison from actual original submissions;
+            # never reinterpret a points total or zero API penalty as ICPC.
+            if complete and self._replay is None and time.monotonic() >= self._next_replay_attempt:
+                self._next_replay_attempt = time.monotonic() + 120
+                try:
+                    self._replay = self._original_replay(contest, rows)
+                except VPError as exc:
+                    self._replay_error = str(exc)
+            if self._replay is not None:
+                return self._replay.at(contest, elapsed, released=released)
+            return Reference(released=released, message=self._replay_error or "Original submissions unavailable for the native ICPC virtual ranking.")
         if any(raw["party"].get("ghost") for raw in final["rows"]):
             try:
                 # Imported CONTESTANT ghosts can have lost starred-team flags.
@@ -375,9 +398,31 @@ class Gym:
         source = contest.url + "/original-submissions"
         cache = read_json(cache_path("cf-events", source))
         teams = [{"id": row.id, "name": row.name, "official": row.eligible} for row in rows]
+        def replay(events):
+            expected = rows
+            if self._original["contest"]["type"] != "ICPC":
+                from .scoring import score_submissions
+                expected = []
+                originals = {row.id: row for row in rows}
+                for team in teams:
+                    row = score_submissions(events, list(contest.problems), contest.rules, contest.rules.duration,
+                                            released=True, team_id=team["id"], name=team["name"])
+                    row.eligible = team["official"]
+                    # For CF rounds positive final points mean an accepted
+                    # solution. Check all such cells against the fetched
+                    # timeline before trusting the converted ICPC ranking.
+                    checked = (list(contest.problems) if self._original["contest"]["type"] == "CF" else
+                               [p["index"] for p in self._original["problems"]
+                                if isinstance(p.get("points"), (int, float)) and p["points"] > 0])
+                    if any(
+                            row.cells[label].solved != originals[team["id"]].cells[label].solved
+                            for label in checked):
+                        raise VPError("Original Codeforces submissions do not reproduce the final accepted problems.")
+                    expected.append(row)
+            return OriginalReplay(contest, teams, events, expected)
         if cache.get("source") == source:
             try:
-                return OriginalReplay(contest, teams, [Submission(**s) for s in cache["submissions"]], rows)
+                return replay([Submission(**s) for s in cache["submissions"]])
             except (KeyError, TypeError, VPError):
                 pass
         submissions = []
@@ -397,6 +442,6 @@ class Gym:
             if len(data) < 1000:
                 break
             offset += 1000
-        replay = OriginalReplay(contest, teams, submissions, rows)
+        result = replay(submissions)
         write_json(cache_path("cf-events", source), {"source": source, "submissions": [asdict(s) for s in submissions]})
-        return replay
+        return result

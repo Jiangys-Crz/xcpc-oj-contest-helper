@@ -51,7 +51,12 @@ function Set-XcpcOnlineCommandPath {
     if (-not (Test-Path -LiteralPath $command -PathType Leaf)) { throw "XCPC command was not installed: $command" }
     $machinePath = Get-XcpcOnlineEnvironmentPath 'Machine'
     $updated = Join-XcpcOnlinePath @($Bin, $machinePath)
-    if ($updated -cne $machinePath) { Set-XcpcOnlineMachinePath $updated }
+    $machineEntries = @([Environment]::ExpandEnvironmentVariables($machinePath) -split ';' |
+        ForEach-Object { $_.Trim().Trim('"').TrimEnd('\','/') })
+    # The elevated native installer already registers the shared command.
+    # An ordinary parent must not require another administrator write simply
+    # because an existing PATH entry is in a different position or letter case.
+    if ($machineEntries -notcontains $Bin.TrimEnd('\','/')) { Set-XcpcOnlineMachinePath $updated }
     # The native installer runs in a child PowerShell. Refresh this IEX session
     # too; retain process-only entries such as an activated Conda environment.
     $env:Path = [Environment]::ExpandEnvironmentVariables((Join-XcpcOnlinePath @(

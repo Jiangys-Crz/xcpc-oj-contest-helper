@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from .models import Cell, Contest, Medals, Reference, Rules, Submission, TeamScore, VPError
 
 
@@ -59,9 +61,15 @@ def codeforces_verdict(value: str | None) -> str:
 def score_submissions(
     submissions: list[Submission], problems: list[str], rules: Rules,
     elapsed: float, *, public: bool = False, released: bool = False,
-    team_id: str = "me", name: str = "me",
+    team_id: str = "me", name: str = "me", scoring: str = "ICPC",
+    problem_max_scores: dict[str, float] | None = None,
+    oi_time_tiebreak: bool = False,
 ) -> TeamScore:
-    cells = {p: Cell() for p in problems}
+    scoring = scoring.upper()
+    if scoring not in ("ICPC", "CF", "OI", "IOI", "WEEKLY"):
+        raise VPError("Unknown contest scoring mode: " + scoring)
+    maximums = problem_max_scores or {}
+    cells = {p: Cell(max_score=_native_score(maximums.get(p))) for p in problems}
     frozen = public and rules.frozen(elapsed, released)
     # Latest polling response replaces previous verdicts; callers deduplicate by ID.
     unique = {s.id: s for s in submissions if s.team == team_id}
@@ -69,7 +77,7 @@ def score_submissions(
         if s.practice or s.problem not in cells or not 0 <= s.time < rules.duration or s.time > elapsed:
             continue
         c = cells[s.problem]
-        if c.solved:
+        if scoring == "ICPC" and c.solved:
             continue
         if frozen and s.time >= (rules.freeze_at or 0):
             c.pending += 1
@@ -79,14 +87,60 @@ def score_submissions(
             c.unresolved += 1
         elif s.verdict == "TOO-LATE" or s.verdict in NON_ATTEMPT_VERDICTS:
             continue
-        elif s.verdict == "COMPILER-ERROR" and not rules.compile_penalty:
+        elif s.verdict == "COMPILER-ERROR" and scoring == "ICPC" and not rules.compile_penalty:
             continue
+        else:
+            c.tries += 1
+            if scoring != "ICPC":
+                awarded = _native_score(s.score)
+                if scoring in ("CF", "IOI", "WEEKLY"):
+                    if awarded is not None:
+                        c.score = max(c.score or 0, awarded)
+                else:
+                    # OI uses the last judged submission.
+                    c.score = awarded
+                    c.unresolved = 0
+                    c.score_time = int(s.time // 60) * 60 if awarded is not None and awarded > 0 else None
+                if awarded is None:
+                    c.unresolved += 1
+                c.solved = (s.verdict == "CORRECT" if scoring == "OI" else
+                            c.solved or s.verdict == "CORRECT")
+                if c.max_score is not None and c.score is not None:
+                    c.solved = c.score >= c.max_score
+            if s.verdict == "CORRECT" and (scoring == "ICPC" or c.solved):
+                c.solved = True
+                c.solve_time = int(s.time // 60)
+    return TeamScore(team_id, name, cells, penalty_minutes=rules.penalty_minutes, scoring=scoring,
+                     oi_time_tiebreak=oi_time_tiebreak)
+
+
+def _native_score(value) -> float | None:
+    return float(value) if type(value) in (int, float) and math.isfinite(value) and value >= 0 else None
+
+
+def score_practice_submissions(
+    submissions: list[Submission], problems: list[str], elapsed: float,
+    *, team_id: str = "me", name: str = "me",
+) -> TeamScore:
+    """Practice records attempts and ACs without applying contest scoring rules."""
+    cells = {p: Cell() for p in problems}
+    unique = {s.id: s for s in submissions if s.team == team_id}
+    for s in sorted(unique.values(), key=lambda s: (s.time, s.id.zfill(24))):
+        if s.problem not in cells or s.time > elapsed or s.verdict in NON_ATTEMPT_VERDICTS | {"TOO-LATE"}:
+            continue
+        c = cells[s.problem]
+        # Preserve the Cell convention: tries are judged attempts; pending are
+        # separate. Both contribute to the displayed total, including after AC.
+        if s.verdict == "PENDING":
+            c.pending += 1
+        elif s.verdict in UNRESOLVED_VERDICTS:
+            c.unresolved += 1
+            c.pending += 1
         else:
             c.tries += 1
             if s.verdict == "CORRECT":
                 c.solved = True
-                c.solve_time = int(s.time // 60)
-    return TeamScore(team_id, name, cells, penalty_minutes=rules.penalty_minutes)
+    return TeamScore(team_id, name, cells, scoring="PRACTICE")
 
 
 def rank_of(me: TeamScore, original: list[TeamScore]) -> int:
@@ -106,7 +160,8 @@ def submission_history(submissions: list[Submission], problems: list[str], rules
               if s.team == team_id and s.problem in problems and 0 <= s.time <= elapsed}
     ordered = sorted(unique.values(), key=lambda s: (s.time, s.id.zfill(24)), reverse=True)
     return [{"id": s.id, "problem": s.problem, "time": s.time, "verdict": s.verdict,
-             "practice": s.practice or s.time >= rules.duration} for s in ordered]
+             "practice": s.practice or s.time >= rules.duration,
+             **({"score": s.score} if s.score is not None else {})} for s in ordered]
 
 
 def recent_submissions(submissions: list[Submission], problems: list[str], rules: Rules,

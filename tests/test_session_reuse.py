@@ -150,7 +150,7 @@ class SessionReuseTests(Isolated):
             practice.monitor(path)
         client.statements.assert_not_called()
 
-    def test_hydro_correction_polling_has_no_tid_and_filters_other_records(self):
+    def test_hydro_practice_merges_contest_history_and_corrections_and_filters_other_records(self):
         from vp_helper.hydro import HydroLive
         import test_hydro_live as h
         client=HydroLive(h.URL,{'handle':'tester','uid':42})
@@ -161,11 +161,14 @@ class SessionReuseTests(Isolated):
         records=[{'_id':sid,'uid':42,'pid':10,'domainId':'system','status':1},
                  {'_id':f'{8601:08x}'+ '2'*16,'uid':43,'pid':10,'status':1},
                  {'_id':f'{8602:08x}'+ '3'*16,'uid':42,'pid':10,'contest':'b'*24,'status':1}]
-        client.get_json=Mock(side_effect=[{'rdocs':records},{'rdocs':[]}])
+        original={'_id':f'{8000:08x}'+'4'*16,'uid':42,'pid':10,'domainId':'system','contest':h.TID,'status':1}
+        client.get_json=Mock(side_effect=[{'rdocs':[original]},{'rdocs':[]},{'rdocs':records},{'rdocs':[]}])
         events=client.submissions(contest)
-        self.assertEqual(len(events),1)
-        self.assertEqual(events[0]['id'],sid)
-        self.assertTrue(events[0]['practice'])
-        for call in client.get_json.call_args_list:
+        self.assertEqual({event['id'] for event in events},{sid,original['_id']})
+        self.assertTrue(next(event for event in events if event['id']==sid)['practice'])
+        self.assertEqual(events[0]['time'],-500)
+        for call in client.get_json.call_args_list[:2]:
+            self.assertEqual(call.kwargs['tid'],h.TID)
+        for call in client.get_json.call_args_list[2:]:
             self.assertNotIn('tid',call.kwargs)
-        self.assertEqual(events[0]['verdict'],'CORRECT')
+        self.assertTrue(all(event['verdict']=='CORRECT' for event in events))

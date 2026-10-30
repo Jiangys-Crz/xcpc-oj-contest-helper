@@ -215,6 +215,7 @@ Write-Output ('__RESULT__' + (@{ Status = $status; Installs = @($script:installs
                     self.assertEqual(args[:3], ['install', '--exact', '--id'])
                     self.assertEqual(args[4:6], ['--source', 'winget'])
                     self.assertEqual(args[-2:], ['--scope','machine'] if args[3] in ('Python.Python.3.13','Git.Git') else ['--accept-source-agreements','--disable-interactivity'])
+                    self.assertEqual('--force' in args, args[3]=='Python.Python.3.13')
                 self.assertEqual(data['Refreshes'], 1 + len(expected))
                 self.assertEqual(data['WingetCalls'], int(bool(expected)))
 
@@ -389,3 +390,103 @@ Write-Output ('__RESULT__'+(@{Calls=$script:calls}|ConvertTo-Json -Compress -Dep
         self.assertEqual(len(data['Calls']),2)
         for arguments in data['Calls']:
             self.assertEqual(arguments[1:],['/grant','*S-1-5-32-545:(OI)(CI)RX','/T','/C'])
+
+    def test_machine_registry_python_is_found_immediately_without_path_or_conda_launcher(self):
+        data=self.run_powershell(r'''
+$script:calls=@()
+function Get-XcpcMachinePythonPaths { [pscustomobject]@{Executable='C:\Python313\python.exe';Directory='C:\Python313'} }
+function Test-Path {param($LiteralPath,$PathType);return $LiteralPath -eq 'C:\Python313\python.exe'}
+function Get-XcpcApplicationPaths {throw 'Conda and the stale Python launcher must not override a registered machine Python'}
+function Get-ChildItem {throw 'Registered Python should be tested without assuming a Program Files directory layout'}
+function Invoke-XcpcNative {param($FilePath,$ArgumentList,[switch]$Quiet);$script:calls+=,@($FilePath,$ArgumentList);return 0}
+$python=Find-XcpcPython -SystemWide
+Write-Output ('__RESULT__'+(@{Python=$python;Calls=$script:calls}|ConvertTo-Json -Compress -Depth 6))
+''')
+        self.assertEqual(data['Python'], {'Executable':r'C:\Python313\python.exe','Prefix':[]})
+        self.assertEqual(len(data['Calls']),1)
+        arguments=data['Calls'][0][1]
+        self.assertEqual(arguments[:2],['-I','-c'])
+        self.assertEqual(arguments[3],r'C:\Python313')
+
+    def test_machine_registry_proof_accepts_shared_custom_python_and_rejects_user_profiles(self):
+        data=self.run_powershell(r'''
+function Get-XcpcMachinePythonPaths { [pscustomobject]@{Executable='/machine/shared Python/python.exe';Directory='/machine/shared Python'} }
+function Test-Path {param($LiteralPath,$PathType);return $true}
+function Invoke-XcpcNative {param($FilePath,$ArgumentList,[switch]$Quiet);$script:code=$ArgumentList[2];return 0}
+$null=Find-XcpcPython -SystemWide
+Write-Output ('__RESULT__'+(@{Code=$script:code}|ConvertTo-Json -Compress))
+''')
+        for prefix,registered,expected in (('/machine/shared Python','/machine/shared Python',0),
+                                            ('/users/other/Python313','/users/other/Python313',1),
+                                            ('/unregistered/Python313','/machine/shared Python',1)):
+            fixture=("import sys,os;sys.base_prefix="+repr(prefix)+";sys.argv=['-c',"+repr(registered)+
+                     "];os.environ['USERPROFILE']='/users/alice';os.environ['PUBLIC']='/users/Public';"
+                     "os.environ['ProgramFiles']='/machine/Program Files';os.environ.pop('ProgramW6432',None);os.environ.pop('ProgramFiles(x86)',None);")
+            result=subprocess.run([sys.executable,'-I','-c',fixture+data['Code']],capture_output=True,text=True,timeout=10)
+            self.assertEqual(result.returncode,expected,result.stderr)
+
+    def test_setup_continues_in_same_process_when_winget_registers_python_but_path_stays_stale(self):
+        data=self.run_powershell(r'''
+$script:registered=$false;$script:installedWith=$null;$script:wingetArgs=@()
+function Test-XcpcAdministrator {return $true}
+function Get-XcpcMachinePythonPaths {if($script:registered){[pscustomobject]@{Executable='C:\ProgramData\Python313\python.exe';Directory='C:\ProgramData\Python313'}}}
+function Get-XcpcApplicationPaths {param($Name,[switch]$SkipWindowsApps);if($Name -eq 'py.exe'){return 'private-py'};if($Name -eq 'python.exe'){return 'private-conda'}}
+function Get-ChildItem {param($LiteralPath,[switch]$Directory,$Filter,$ErrorAction)}
+function Test-Path {param($LiteralPath,$PathType);return $true}
+function Find-XcpcTool {param($Name,[switch]$ProbeVersion,[switch]$SystemWide);return 'available-'+$Name}
+function Ensure-XcpcWinGet {return 'winget-fixture'}
+function Update-XcpcProcessPath {}
+function Set-XcpcGlobalPermissions {param($Root,$Bin)}
+function Add-XcpcCommandPath {param($Bin,[switch]$SystemWide)}
+function Initialize-XcpcUserBridge {param($Root)}
+function Invoke-XcpcNative {
+  param($FilePath,$ArgumentList,[switch]$Quiet)
+  if($FilePath -eq 'winget-fixture'){$script:registered=$true;$script:wingetArgs=$ArgumentList;return 0}
+  if($FilePath -eq 'C:\ProgramData\Python313\python.exe'){
+    if($ArgumentList[0] -ne '-I'){$script:installedWith=$FilePath};return 0
+  }
+  return 1
+}
+$status=Invoke-XcpcWindowsSetup
+Write-Output ('__RESULT__'+(@{Status=$status;Python=$script:installedWith;Winget=$script:wingetArgs}|ConvertTo-Json -Compress))
+''')
+        self.assertEqual(data['Status'],0)
+        self.assertEqual(data['Python'],r'C:\ProgramData\Python313\python.exe')
+        self.assertIn('--force',data['Winget'])
+        self.assertEqual(data['Winget'][-2:],['--scope','machine'])
+
+    def test_online_ordinary_parent_does_not_rewrite_an_existing_machine_path_entry(self):
+        data=self.run_powershell(". '"+str(ONLINE).replace("'","''")+"'\n"+r'''
+$bin=Join-Path $env:ProgramFiles 'XCPC\bin'
+$script:machine='C:\Existing;'+$bin.ToUpperInvariant()+'\;C:\Other'
+function Get-XcpcOnlineEnvironmentPath {param($Scope);if($Scope -eq 'Machine'){return $script:machine};return 'C:\User commands'}
+function Set-XcpcOnlineMachinePath {throw 'Ordinary parent cannot write the machine PATH'}
+function Test-Path {param($LiteralPath,$PathType);return $true}
+function Confirm-XcpcOnlineCommand {param($Command);$script:confirmed=$Command}
+Set-XcpcOnlineCommandPath $bin
+Write-Output ('__RESULT__'+(@{Bin=$bin;ProcessPath=$env:Path;Confirmed=$script:confirmed}|ConvertTo-Json -Compress))
+''')
+        self.assertTrue(data['ProcessPath'].startswith(data['Bin']+';'))
+        self.assertEqual(Path(data['Confirmed']).name,'xcpc.exe')
+
+    def test_declined_elevation_explains_that_the_normal_parent_is_correct(self):
+        data=self.run_powershell(r'''
+$env:SystemRoot=$env:LOCALAPPDATA
+function Test-XcpcAdministrator {return $false}
+function Start-Process {throw 'fixture UAC declined'}
+$status=Invoke-XcpcWindowsSetup 2>$null
+Write-Output ('__RESULT__'+(@{Status=$status;Message=$Error[0].Exception.Message}|ConvertTo-Json -Compress))
+''')
+        self.assertEqual(data['Status'],1)
+        self.assertIn('ordinary PowerShell remains the correct starting point',data['Message'])
+
+    def test_failed_elevation_does_not_start_another_uac_loop(self):
+        data=self.run_powershell(r'''
+$env:XCPC_SETUP_ELEVATED='1'
+function Test-XcpcAdministrator {return $false}
+function Invoke-XcpcElevatedSetup {throw 'Must not request elevation recursively'}
+$status=Invoke-XcpcWindowsSetup 2>$null
+Write-Output ('__RESULT__'+(@{Status=$status;Message=$Error[0].Exception.Message}|ConvertTo-Json -Compress))
+''')
+        self.assertEqual(data['Status'],1)
+        self.assertIn('did not grant administrator access',data['Message'])

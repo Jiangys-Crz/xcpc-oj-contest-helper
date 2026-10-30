@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import math
 import time
 from urllib.parse import urlsplit
 
@@ -17,6 +18,17 @@ from .cf_judgements import PendingJudgements
 
 PHASES = {"BEFORE", "CODING", "PENDING_SYSTEM_TEST", "SYSTEM_TEST", "FINISHED"}
 LIVE_TYPES = {"CONTESTANT", "OUT_OF_COMPETITION"}
+
+
+def freeze_metadata(raw: dict, duration: int) -> tuple[bool, int | None]:
+    # `frozen` is a current state, not the freeze duration. In particular a
+    # historic final board saying frozen=false does not disable a VP freeze.
+    if "freezeDurationSeconds" not in raw:
+        return False, None
+    value = raw["freezeDurationSeconds"]
+    if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= duration:
+        raise VPError("Codeforces returned an invalid scoreboard freeze duration.")
+    return True, duration - int(value) if value else None
 
 
 def public_api(web: WebSession, method: str, **params):
@@ -90,11 +102,24 @@ def apply_metadata(contest: Contest, raw: dict, problems: list[dict] | None = No
         raise VPError("Codeforces returned invalid contest timing or scoring information.")
     contest.name = raw["name"]
     contest.original_start = float(raw["startTimeSeconds"])
-    contest.rules = Rules(int(raw["durationSeconds"]))
+    duration = int(raw["durationSeconds"])
+    known, freeze = freeze_metadata(raw, duration)
+    contest.rules = Rules(duration, freeze_at=freeze)
     contest.extra.update(mode="live", scoring=raw["type"], phase=raw["phase"], frozen=bool(raw.get("frozen")))
+    contest.extra["score_policy"] = "native" if raw["type"] == "CF" else "best"
+    if contest.extra.get("freeze_source") not in ("manual", "room"):
+        contest.extra["freeze_known"] = known
+        if known:
+            contest.extra["freeze_source"] = "platform"
+        else:
+            contest.extra.pop("freeze_source", None)
     if problems is not None:
         contest.problems = {p["index"]: p["index"] for p in problems}
         contest.extra["problem_info"] = problems
+        contest.extra["problem_max_scores"] = {
+            p["index"]: p["points"] for p in problems
+            if type(p.get("points")) in (int, float) and math.isfinite(p["points"]) and p["points"] > 0
+        }
 
 
 class CodeforcesLive:
@@ -126,11 +151,15 @@ class CodeforcesLive:
     def prepare(self) -> tuple[Contest, dict]:
         page = self.web.soup(self.url, params={"locale": "en"})
         verify_login(page, self.handle)
-        data = self.api("contest.list", gym="false")
-        raw = next((c for c in data if str(c["id"]) == self.id), None)
+        if self.platform == "gym":
+            data = self.api("contest.standings", contestId=self.id, showUnofficial=True)
+            raw = data.get("contest")
+        else:
+            data = self.api("contest.list", gym="false")
+            raw = next((c for c in data if str(c["id"]) == self.id), None)
         if raw is None:
             raise VPError("This contest is not available in the public Codeforces contest list.")
-        contest = Contest("cf", self.id, self.url, raw["name"], f"CF {self.id}", {}, Rules(1))
+        contest = Contest(self.platform, self.id, self.url, raw["name"], f"{self.platform.upper()} {self.id}", {}, Rules(1))
         apply_metadata(contest, raw)
         snapshot = self.snapshot(contest) if raw["phase"] != "BEFORE" else {}
         if not snapshot.get("own"):
@@ -175,6 +204,16 @@ class CodeforcesLive:
         data = self.api("contest.standings", contestId=self.id)
         apply_metadata(contest, data["contest"], data["problems"])
         row = own_row(data["rows"], self.handle)
+        if row is not None:
+            row = {**row, "problemResults": [dict(result) for result in row.get("problemResults", [])]}
+            for label, result in zip(contest.problems, row["problemResults"]):
+                points = result.get("points", 0)
+                maximum = contest.extra["problem_max_scores"].get(label)
+                if contest.extra["scoring"] != "IOI":
+                    result["accepted"] = points > 0
+                elif maximum is not None:
+                    result["accepted"] = points >= maximum
+                result["attempted"] = bool(points or result.get("rejectedAttemptCount"))
         stats = {"scored": dict.fromkeys(contest.problems, 0), "attempted": dict.fromkeys(contest.problems, 0)}
         for public in data["rows"]:
             if public["party"].get("participantType") != "CONTESTANT":
@@ -211,7 +250,8 @@ class CodeforcesLive:
                         or kind not in LIVE_TYPES | {"PRACTICE"} | ({"VIRTUAL"} if contest.extra.get("practice") else set())):
                     continue
                 relative = float(raw["creationTimeSeconds"]) - contest.original_start
-                if relative < 0 or (kind == "PRACTICE" and relative < contest.rules.duration and not contest.extra.get("practice")):
+                if ((relative < 0 and not contest.extra.get("practice"))
+                        or (kind == "PRACTICE" and relative < contest.rules.duration and not contest.extra.get("practice"))):
                     continue
                 value = codeforces_verdict(raw.get('verdict'))
                 result[str(raw["id"])] = {

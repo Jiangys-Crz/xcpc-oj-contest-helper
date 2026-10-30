@@ -81,3 +81,26 @@ body{background:#fff}.site-header{height:56px;position:sticky;top:0;z-index:40;b
 .judge-verdict-ignored{color:#7b818a;font-weight:400}
 .judge-scoreboard tbody tr:last-child td{border-bottom:2px solid #111827}
 @media(max-width:760px){.judge-page .page-heading{gap:12px}.judge-page .page-heading h1{font-size:22px}.judge-page .heading-actions{gap:6px}.judge-page .heading-actions .button{font-size:10px;min-height:31px;padding:6px 9px}.judge-contest-times{justify-content:flex-start;gap:6px 15px;padding:10px 11px;font-size:11px}.judge-updated{width:100%;font-size:10px}.judge-score-section{padding-top:19px;padding-bottom:25px}.judge-scoreboard .judge-team,.judge-scoreboard .judge-team-name{min-width:185px;max-width:250px}.judge-submissions-table td,.judge-submissions-table th{padding-left:11px;padding-right:11px}.judge-section-heading{gap:12px}.judge-section-heading h2{font-size:16px}.judge-table-actions{gap:10px}.judge-filters{gap:10px}.judge-filters label{min-width:110px;flex:1}.judge-filters select{min-width:110px}.judge-legend{width:235px;font-size:10px}.judge-legend h3{font-size:11px}.room-tabs{gap:22px}}
+
+.public-problem-statistics{margin-top:1.5rem;border-top:1px solid var(--border);padding-top:1rem}
+.public-problem-statistics table{width:auto;min-width:min(100%,36rem);margin:auto}
+.public-problem-statistics caption{text-align:left;font-size:.78rem;font-weight:600;color:var(--muted);padding:.25rem .75rem .75rem}
+.public-problem-statistics th,.public-problem-statistics td{min-width:3.5rem;padding:.5rem .75rem}
+
+/* Contest tables preserve every label and result; smaller screens scroll. */
+.history-table,.leaderboard,.judge-submissions-table{table-layout:auto;width:max-content;min-width:100%;max-width:none}
+.history-table th,.history-table td,.leaderboard th,.leaderboard td,.judge-submissions-table th,.judge-submissions-table td,.judge-scoreboard th,.judge-scoreboard td{white-space:nowrap;overflow:visible;text-overflow:clip;max-width:none}
+.history-table .contest-link,.history-table .row-subtitle,.leaderboard .board-team,.leaderboard .board-team strong,.leaderboard .board-team small,.leaderboard .board-team a{white-space:nowrap;max-width:none;overflow:visible;text-overflow:clip}
+.judge-scoreboard{width:max-content;max-width:none;min-width:0;margin-inline:auto}
+.judge-scoreboard .judge-team,.judge-scoreboard .judge-team-name{white-space:nowrap;max-width:none;min-width:max-content}
+.judge-page>.page-heading,.page-shell:has(.room-tabs)>.page-heading{display:flex;flex-direction:column;align-items:center;text-align:center;gap:12px}
+.judge-page>.page-heading>div:first-child,.page-shell:has(.room-tabs)>.page-heading>div:first-child{width:100%}
+.judge-page>.page-heading .heading-actions,.page-shell:has(.room-tabs)>.page-heading .heading-actions{justify-content:center}
+.judge-legend{display:flex;width:max-content;max-width:100%;flex-wrap:wrap;align-items:stretch;justify-content:flex-end;border:0;margin:0 0 14px auto;gap:4px;font-size:10px;text-align:center}
+.judge-legend h3{display:flex;align-items:center;padding:6px 8px;font-size:11px;border:0}
+.judge-legend>div{padding:6px 9px;border:1px solid #00000012;border-radius:2px;white-space:nowrap}
+.section-heading>.judge-legend{margin:0 0 0 auto}
+.section-heading:has(>.judge-legend){flex-wrap:wrap}
+.judge-scoreboard .judge-summary th{text-align:right;text-transform:none;font-variant:normal;font-size:11px;padding:5px 10px}
+.judge-scoreboard .judge-summary td{padding:5px 10px;font-size:11px}
+@media(max-width:760px){.judge-legend{width:auto;justify-content:flex-end}.judge-scoreboard .judge-team,.judge-scoreboard .judge-team-name{max-width:none;white-space:nowrap}}

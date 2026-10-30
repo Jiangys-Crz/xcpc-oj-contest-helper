@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+import math
 
 
 class VPError(RuntimeError):
@@ -82,6 +83,9 @@ class Submission:
     time: float
     verdict: str
     practice: bool = False
+    # Native awarded points, when the judge exposes them. Never infer a CF
+    # points formula from the submission time or from a binary verdict.
+    score: float | None = None
 
 
 @dataclass
@@ -91,6 +95,9 @@ class Cell:
     solved: bool = False
     solve_time: int | None = None
     unresolved: int = 0
+    score: float | None = None
+    max_score: float | None = None
+    score_time: int | None = None
 
 
 @dataclass
@@ -101,10 +108,31 @@ class TeamScore:
     eligible: bool = True
     penalty_minutes: int = 20
     known_penalty: int | None = None
+    scoring: str = "ICPC"
+    known_points: float | None = None
+    oi_time_tiebreak: bool = False
+    known_score_tiebreak: int | None = None
 
     @property
     def results_complete(self) -> bool:
-        return not any(c.unresolved for c in self.cells.values())
+        return not any(c.unresolved for c in self.cells.values()) and self.score_complete
+
+    @property
+    def score_complete(self) -> bool:
+        return (self.scoring in ("ICPC", "PRACTICE") or self.known_points is not None
+                or all(not c.unresolved and (not c.tries or c.score is not None) for c in self.cells.values()))
+
+    @property
+    def points(self) -> float | None:
+        if self.scoring == "ICPC":
+            return float(self.solved)
+        if self.scoring == "PRACTICE":
+            return None
+        if self.known_points is not None:
+            return self.known_points
+        if not self.score_complete:
+            return None
+        return sum(c.score or 0 for c in self.cells.values())
 
     @property
     def solved(self) -> int:
@@ -112,6 +140,8 @@ class TeamScore:
 
     @property
     def penalty(self) -> int:
+        if self.scoring != "ICPC":
+            return 0
         if self.known_penalty is not None:
             return self.known_penalty
         return sum(
@@ -124,12 +154,20 @@ class TeamScore:
         return max((c.solve_time or 0 for c in self.cells.values() if c.solved), default=0)
 
     @property
-    def sort_key(self) -> tuple[int, int, int]:
+    def sort_key(self) -> tuple[float, int, int]:
+        if self.scoring != "ICPC":
+            return self.rank_key[0], 0, 0
         return -self.solved, self.penalty, self.last_correct
 
     @property
-    def rank_key(self) -> tuple[int, int]:
+    def rank_key(self) -> tuple[float, int]:
         # Last acceptance orders equal scores without splitting their shared rank.
+        if self.scoring != "ICPC":
+            # Callers suppress ranks for incomplete rows. A missing native
+            # score must not accidentally outrank a row with a known score.
+            tiebreak = (self.known_score_tiebreak if self.known_score_tiebreak is not None else
+                        sum(c.score_time or 0 for c in self.cells.values() if c.score is not None and c.score > 0)) if self.oi_time_tiebreak else 0
+            return -(self.points if self.points is not None else -math.inf), tiebreak
         return -self.solved, self.penalty
 
 

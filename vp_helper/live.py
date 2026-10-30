@@ -26,6 +26,7 @@ from .workspaces import allocate, promote, rename_existing
 
 HISTORY_FIELDS = ["start_time", "contest", "url", "handle", "scoring", "points", "penalty", "rank", "phase", "frozen"]
 PLATFORMS = {"cf": ("Codeforces", "vp-cf-submit", "cf_live_history.csv"),
+             "gym": ("Codeforces Gym", "vp-cf-submit", "gym_live_history.csv"),
              "cwnuoj": ("CWNUOJ", "vp-hydro-submit", "cwnuoj_live_history.csv"),
              "nowcoder": ("Nowcoder", "vp-nowcoder-submit", "nowcoder_live_history.csv")}
 
@@ -36,8 +37,8 @@ def account_for(config: dict, platform: str) -> dict:
 
 def live_adapter(url: str, config: dict):
     platform, _, canonical = contest_url(url)
-    if platform == "cf":
-        return CodeforcesLive(canonical, account_for(config, platform))
+    if platform in ("cf", "gym"):
+        return CodeforcesLive(canonical, account_for(config, platform), **({"allow_gym": True} if platform == "gym" else {}))
     if platform == "cwnuoj":
         from .hydro import HydroLive
         return HydroLive(canonical, account_for(config, platform))
@@ -60,7 +61,7 @@ def configure_submission(api, contest: Contest, directory: Path) -> None:
         raise VPError(f"Live contests require the bundled submit entry. Use the submit installed by {installer}.")
     write_json(directory / "contest.json", {
         "platform": contest.platform, "mode": "live", "name": contest.name, "base_url": contest.url,
-        "contest_id": int(contest.contest_id) if contest.platform == "cf" else contest.contest_id,
+        "contest_id": int(contest.contest_id) if contest.platform in ("cf", "gym") else contest.contest_id,
         "problems": list(contest.problems), "problem_ids": contest.problems,
         **({"uid": contest.extra["uid"]} if contest.platform in ("cwnuoj", "nowcoder") else {}),
         "handle": api.handle, "cookie": api.account["cookie"],
@@ -89,13 +90,17 @@ def prepare_live(url: str) -> tuple[Path, dict]:
         if (platform in ("cwnuoj", "nowcoder") and old.get("url") == canonical and old.get("mode") == "live"
                 and old.get("contest", {}).get("extra", {}).get("uid") != contest.extra["uid"]):
             raise VPError("The user ID changed; restore this contest's account before resuming it.")
-        name = (f"live-cf-{contest.contest_id}-{api.handle.lower()}" if platform == "cf" else
+        name = (f"live-{platform}-{contest.contest_id}-{api.handle.lower()}" if platform in ("cf", "gym") else
                 f"live-cwnuoj-{contest.extra['domain']}-{contest.contest_id}-{contest.extra['uid']}" if platform == "cwnuoj" else
                 f"live-nowcoder-{contest.contest_id}-{contest.extra['uid']}")
         path = root / (name + ".json")
         saved = read_json(path)
         if saved and (saved.get("mode") != "live" or saved.get("handle", "").lower() != api.handle.lower()):
             raise VPError("The saved live participation belongs to another account or mode.")
+        from .freeze import configure, retain
+        if saved:
+            retain(contest, Contest.from_dict(saved["contest"]))
+        configure(contest)
         if saved:
             rename_existing(path, saved, contest)
             directory = Path(saved["directory"])
@@ -126,7 +131,12 @@ def fetch(api, saved_contest: dict, directory: Path | None = None):
             records = api.submissions(contest)
             message = getattr(api, 'submission_message', '')
             return records, message if isinstance(message, str) else ''
+        previous = Contest.from_dict(saved_contest)
         snapshot = api.snapshot(contest)
+        from .freeze import retain
+        retain(contest, previous)
+        if contest.extra.get('freeze_source') in ('manual', 'room'):
+            snapshot["frozen"] = bool(snapshot.get("frozen") or contest.rules.frozen(platform_now(contest.url) - contest.original_start))
         return (contest.to_dict(), snapshot), ""
     except (VPError, OSError) as exc:
         return None, str(exc)

@@ -73,8 +73,11 @@ def history(args: list[str]) -> None:
                     points = str(len({e["problem"] for e in events if e["verdict"] == "CORRECT"}))
             else:
                 score = score_submissions([Submission(**e) for e in events], list(contest.problems),
-                                          contest.rules, platform_now(state)-state["start_time"])
-                points = str(score.solved)
+                                          contest.rules, platform_now(state)-state["start_time"],
+                                          scoring=contest.extra.get('scoring', 'ICPC'),
+                                          problem_max_scores=contest.extra.get('problem_max_scores', {}),
+                                          oi_time_tiebreak=bool(contest.extra.get('oi_time_tiebreak')))
+                points = str(score.solved if score.scoring == 'ICPC' else score.points if score.points is not None else '—')
             table.add_row(state.get("attempt_id", path.stem), state.get("mode", "vp"), contest.name,
                           datetime.fromtimestamp(state["start_time"]).strftime("%Y-%m-%d %H:%M:%S"),
                           points, str(sum(bool(e.get("practice")) for e in events)),

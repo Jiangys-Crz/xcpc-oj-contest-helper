@@ -51,14 +51,14 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     practice_mode = config.get("mode") == "practice"
     if config.get("platform") not in ("cf", "gym") or config.get("mode") not in ("live", "practice"):
         raise VPError("Run submit from a Codeforces live contest directory prepared by live URL.")
-    api = CodeforcesLive(config["base_url"], config, **({"allow_gym": True} if practice_mode else {}))
+    api = CodeforcesLive(config["base_url"], config, **({"allow_gym": True} if practice_mode or config.get("platform") == "gym" else {}))
     if str(config.get("contest_id")) != api.id:
         raise VPError("The submission configuration contains conflicting contest IDs.")
     label = (problem or source.stem).upper()
     if not re.fullmatch(r"[A-Z][0-9]*", label):
         raise VPError("Use a filename such as A.cpp or specify the problem with --problem A.")
     refresh_submission_login(config_path, config, "cf")
-    api = CodeforcesLive(config["base_url"], config, **({"allow_gym": True} if practice_mode else {}))
+    api = CodeforcesLive(config["base_url"], config, **({"allow_gym": True} if practice_mode or config.get("platform") == "gym" else {}))
     context = config.get("vp_context", {})
     if not context.get("state_path") or Path(context["state_path"]).resolve().parent != state_directory().resolve():
         raise VPError("This submission context is outside the live state directory. Reconnect with live URL.")

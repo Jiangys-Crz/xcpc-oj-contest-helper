@@ -18,8 +18,12 @@ def refresh_name(api, contest: Contest) -> None:
     contest.name = title.strip()
     contest.directory_name = contest.name
     if contest.platform in ('qoj', 'cf', 'gym') and contest.extra.get('mode') not in ('live', 'practice'):
-        from .parsing import ccpc_reveal_count
-        contest.rules.problem_reveal_count = ccpc_reveal_count(contest.name)
+        if contest.extra.get('contest_format'):
+            from .freeze import configure_format
+            configure_format(contest, room_format=contest.extra['contest_format'])
+        else:
+            from .parsing import ccpc_reveal_count
+            contest.rules.problem_reveal_count = ccpc_reveal_count(contest.name)
 
 
 def name(contest: Contest) -> str:

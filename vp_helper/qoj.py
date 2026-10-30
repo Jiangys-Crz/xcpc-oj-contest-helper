@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, replace
 from collections import Counter
 from datetime import datetime
+import math
 import re
 import time
 from urllib.parse import urljoin, urlsplit
@@ -92,9 +93,12 @@ class QOJ:
         if not problem_map:
             raise VPError("QOJ did not return the contest problem list.")
         text = soup.get_text(" ", strip=True)
-        if "Ruleset: ICPC" not in text:
-            raise VPError("This QOJ contest does not use ICPC scoring.")
-        freeze = re.search(r"Scoreboard will be frozen after\s*(\d+:\d{2}:\d{2})", text)
+        ruleset = re.search(r"Ruleset:\s*(ICPC|OI|IOI)\b", text)
+        if not ruleset:
+            raise VPError("QOJ did not expose a supported ICPC, OI or IOI ruleset.")
+        scoring = ruleset[1]
+        freeze = re.search(r"Scoreboard will be frozen after\s*(\d+:\d{2}:\d{2})", text, re.I)
+        no_freeze = re.search(r"Scoreboard will not be frozen\b", text, re.I)
         penalty = re.search(r"Penalty:\s*(\d+)\s*minute", text)
         # Registrants can choose a shorter rated-VP window. It is not the
         # contest duration (4582 already has two-hour rated participations).
@@ -131,10 +135,39 @@ class QOJ:
                 link = p.select_one('a[href$=".pdf"], iframe[src*=".pdf"], object[data*=".pdf"]')
                 if link:
                     pdfs[f"{label}.pdf"] = urljoin(self.url, link.get("href") or link.get("src") or link.get("data"))
-        return Contest("qoj", self.id, self.url, name, name, problem_map,
+        extra = {"scoring": scoring, "native_scoring": scoring, "freeze_known": bool(freeze or no_freeze)}
+        if scoring != "ICPC":
+            extra.update(score_policy="latest" if scoring == "OI" else "best", oi_time_tiebreak=scoring == "OI")
+        if extra["freeze_known"]:
+            extra["freeze_source"] = "platform"
+        result = Contest("qoj", self.id, self.url, name, name, problem_map,
                        Rules(duration, int(penalty[1]) if penalty else 20,
                              freeze_at=seconds(freeze[1]) if freeze else None,
-                             problem_reveal_count=ccpc_reveal_count(name)), pdfs)
+                             problem_reveal_count=ccpc_reveal_count(name) if scoring == "ICPC" else None), pdfs, extra=extra)
+        if scoring != "ICPC":
+            self.graded_maxima(str(soup), result)
+            if set(result.extra.get("problem_max_scores", {})) != set(problem_map):
+                self.graded_maxima(str(self._page("/standings")), result)
+        return result
+
+    @staticmethod
+    def graded_maxima(html: str, contest: Contest) -> None:
+        labels = js_value(html, "problems_id", list(contest.problems))
+        scores = js_value(html, "score", {})
+        if not isinstance(labels, list) or set(labels) != set(contest.problems) or not isinstance(scores, dict):
+            return
+        maxima = dict(contest.extra.get("problem_max_scores", {}))
+        for values in scores.values():
+            for index, cell in (values.items() if isinstance(values, dict) else enumerate(values) if isinstance(values, list) else []):
+                if not str(index).isdigit() or int(index) >= len(labels) or not isinstance(cell, list) or len(cell) < 5:
+                    continue
+                maximum = cell[4]
+                if type(maximum) in (int, float) and math.isfinite(maximum) and maximum > 0:
+                    label = labels[int(index)]
+                    if label in maxima and maxima[label] != maximum:
+                        raise VPError("QOJ returned inconsistent full scores for this contest problem.")
+                    maxima[label] = maximum
+        contest.extra["problem_max_scores"] = maxima
 
     @staticmethod
     def _registry_duration(soup) -> int | None:
@@ -348,6 +381,7 @@ class QOJ:
         detail_reads = 0
         self.submissions_complete = False
         self.submission_message = ''
+        graded = contest.extra.get("scoring", "ICPC") in ("OI", "IOI")
         inverse = {str(pid): label for label, pid in contest.problems.items()}
         page = 1
         while True:
@@ -400,7 +434,7 @@ class QOJ:
                     at = seconds(cells[-1].get_text(strip=True)) + native_start - self.start_time
                 else:
                     raise VPError("QOJ did not provide the submission timestamp.")
-                if at < 0:
+                if at < 0 and not contest.extra.get("practice"):
                     before = True
                     continue
                 pid = urlsplit(problem["href"]).path.rsplit("/", 1)[-1]
@@ -419,6 +453,19 @@ class QOJ:
                     raise VPError("QOJ submission result column is missing.")
                 status = node.get_text(" ", strip=True)
                 score = float(status) if re.fullmatch(r"\d+(?:\.\d+)?", status) else None
+                if score is not None and not math.isfinite(score):
+                    raise VPError("QOJ returned a non-finite submission score.")
+                if (graded and contest.extra["scoring"] == "OI" and not practice and not contest.extra.get("practice")
+                        and platform_now(self.url) < self.start_time + contest.rules.duration):
+                    # OI publishes sample-test feedback during participation;
+                    # it is not the final full-dataset score or acceptance.
+                    result[sid] = Submission(sid, "me", label, at, "HIDDEN", practice=practice)
+                    continue
+                if graded and score is not None and score > 0:
+                    maximum = self.graded_submission_maximum(node, contest, label)
+                    parsed = "CORRECT" if maximum is not None and score >= maximum else "PARTIAL"
+                    result[sid] = Submission(sid, "me", label, at, parsed, practice=practice, score=score)
+                    continue
                 judging = bool(row.select_one('[id^="status_details_"]') or
                                re.search(r"update_judgement_status_details\s*\(", str(row)))
                 try:
@@ -462,7 +509,7 @@ class QOJ:
                                     self._verdict_cache[sid] = (score, parsed, time.monotonic() + 10 + int(sid) % 3)
                         if parsed == "UNAVAILABLE":
                             unresolved.append(sid)
-                            result[sid] = Submission(sid, "me", label, at, parsed, practice=practice)
+                            result[sid] = Submission(sid, "me", label, at, parsed, practice=practice, score=score if graded else None)
                             continue
                         status = parsed
                 try:
@@ -470,7 +517,7 @@ class QOJ:
                 except VPError:
                     parsed = 'UNAVAILABLE'
                     unresolved.append(sid)
-                result[sid] = Submission(sid, "me", label, at, parsed, practice=practice)
+                result[sid] = Submission(sid, "me", label, at, parsed, practice=practice, score=score if graded else None)
             pages = [int(m[1]) for a in soup.select("a[href]") if (m := re.search(r"[?&]page=(\d+)", a["href"]))]
             if before or not found or page >= max(pages, default=page):
                 self.submissions_complete = True
@@ -482,6 +529,19 @@ class QOJ:
         self.submission_message = ' · '.join(warnings)
         events = self.pending_results.update(self, [asdict(s) for s in result.values()], lambda event: self.pending_detail(contest, event))
         return [Submission(**event) for event in events]
+
+    @staticmethod
+    def graded_submission_maximum(node, contest: Contest, label: str) -> float | None:
+        source = node if node.has_attr("data-max") else node.select_one("[data-max]")
+        if source is not None:
+            try:
+                maximum = float(source["data-max"])
+            except (TypeError, ValueError):
+                maximum = None
+            if maximum is not None and math.isfinite(maximum) and maximum > 0:
+                contest.extra.setdefault("problem_max_scores", {})[label] = maximum
+                return maximum
+        return contest.extra.get("problem_max_scores", {}).get(label)
 
     def seed_pending_submissions(self, records) -> None:
         self.pending_results.seed(records)
@@ -510,6 +570,15 @@ class QOJ:
                 continue
             text = node.get_text(' ', strip=True)
             score = float(text) if re.fullmatch(r'\d+(?:\.\d+)?', text) else None
+            if contest.extra.get("scoring", "ICPC") in ("OI", "IOI") and score is not None:
+                if not math.isfinite(score):
+                    raise VPError("QOJ returned a non-finite pending score.")
+                if (contest.extra["scoring"] == "OI" and not contest.extra.get("practice")
+                        and platform_now(self.url) < self.start_time + contest.rules.duration):
+                    return None
+                maximum = self.graded_submission_maximum(node, contest, event["problem"])
+                parsed = ("CORRECT" if maximum is not None and score >= maximum else "PARTIAL") if score > 0 else self.detail_verdict(detail, score)
+                return {"verdict": parsed, "score": score}
             if score == 100:
                 return {'verdict': 'CORRECT'}
             if score is not None:
@@ -550,6 +619,56 @@ class QOJ:
         for item in submissions:
             if item.verdict not in ("PENDING", "CORRECT", "TOO-LATE", "UNAVAILABLE"):
                 self._verdict_cache[item.id] = (None, item.verdict, time.monotonic() + 10 + int(item.id) % 3)
+
+    @staticmethod
+    def graded_reference_from_html(html: str, contest: Contest, elapsed: float, *, released: bool = False) -> Reference:
+        scoring = contest.extra.get("scoring")
+        if elapsed < contest.rules.duration or contest.rules.frozen(elapsed, released):
+            return Reference(message="QOJ keeps this contest's point scoreboard hidden until the participation ends.", released=released)
+        raw_rows, raw_scores = js_value(html, "standings"), js_value(html, "score")
+        labels = js_value(html, "problems_id", list(contest.problems))
+        if (js_value(html, "contest_type", scoring) != scoring or not isinstance(raw_rows, list)
+                or not isinstance(raw_scores, dict) or not isinstance(labels, list) or set(labels) != set(contest.problems)):
+            return Reference(message="QOJ has not published a matching point scoreboard.", released=released)
+        QOJ.graded_maxima(html, contest)
+        maxima = contest.extra.get("problem_max_scores", {})
+        rows, seen = [], set()
+        for raw in raw_rows:
+            if not isinstance(raw, list) or len(raw) < 3 or not isinstance(raw[2], list) or len(raw[2]) < 4:
+                return Reference(message="QOJ returned an incomplete point scoreboard row.", released=released)
+            info = raw[2]
+            # Native category 4 is a virtual participant; compare against the
+            # original participants, including their native starred ranks.
+            if info[2] == 4:
+                continue
+            if info[2] not in (0, 1, 2, 3) or str(info[0]) in seen or str(info[0]) not in raw_scores:
+                return Reference(message="QOJ returned an unrecognized point-score participant.", released=released)
+            ident = str(info[0])
+            seen.add(ident)
+            values = raw_scores[ident]
+            cells = {label: Cell(score=0, max_score=maxima.get(label)) for label in contest.problems}
+            for index, col in (values.items() if isinstance(values, dict) else enumerate(values) if isinstance(values, list) else []):
+                if not str(index).isdigit() or int(index) >= len(labels) or not isinstance(col, list) or len(col) < 6:
+                    return Reference(message="QOJ returned an incomplete point result.", released=released)
+                label = labels[int(index)]
+                points, at, maximum = col[0], col[1], col[4]
+                if (any(type(value) not in (int, float) or not math.isfinite(value) for value in (points, at, maximum))
+                        or points < 0 or maximum <= 0 or points > maximum or col[5]
+                        or type(col[3]) is not int or col[3] < 0):
+                    return Reference(message="QOJ point results are hidden, pending or invalid.", released=released)
+                cells[label] = Cell(tries=col[3] + 1, solved=points >= maximum,
+                                    solve_time=int(at // 60) if points >= maximum else None,
+                                    score=points, max_score=maximum, score_time=int(at // 60) * 60 if points > 0 else None)
+            if (type(raw[0]) not in (int, float) or not math.isfinite(raw[0])
+                    or not math.isclose(sum(c.score or 0 for c in cells.values()), raw[0], abs_tol=1e-6)
+                    or type(raw[1]) not in (int, float) or not math.isfinite(raw[1]) or raw[1] < 0):
+                return Reference(message="QOJ's native total does not match its point results.", released=released)
+            rows.append(TeamScore(ident, str(info[3]), cells, scoring=scoring, known_points=raw[0],
+                                  oi_time_tiebreak=scoring == "OI", known_score_tiebreak=int(raw[1])))
+        if not rows:
+            return Reference(message="QOJ has not published original point results yet.", released=released)
+        # A latest/best score cell does not expose a complete attempt timeline.
+        return Reference(rows, complete=True, statistics_complete=False, released=released)
 
     @staticmethod
     def reference_from_html(html: str, contest: Contest, elapsed: float, *, released: bool = False) -> Reference:
@@ -639,6 +758,8 @@ class QOJ:
                         and js_value(html, "my_name", "") == self.handle and no_hidden)
         if contest.extra.get("local_attempt") and elapsed >= contest.rules.duration:
             released = True
+        if contest.extra.get("scoring", "ICPC") in ("OI", "IOI"):
+            return self.graded_reference_from_html(html, contest, elapsed, released=released)
         # Keep the public archive connection across metadata and event downloads.
         # This session carries none of the judge account's cookies.
         with requests.Session() as public_web:

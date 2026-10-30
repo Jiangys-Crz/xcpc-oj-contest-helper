@@ -42,7 +42,7 @@ class SubmissionDisplayTests(unittest.TestCase):
         views=[(Dashboard(contest,120,me,'127','Gold',None,[]),('127','中文 team','0','128')),
                (LiveDashboard(contest,120,{'own':own},[]),('127','中文 team','0','128')),
                (LiveDashboard(cf,120,{'own':own},[]),('127','中文 team','0','1/2')),
-               (PracticeDashboard(contest,120,[],handle='中文 team'),('—','中文 team','0','0'))]
+               (PracticeDashboard(contest,120,[],handle='中文 team'),('—','中文 team'))]
         for platform in ('darwin','linux','win32'):
             with patch('sys.platform',platform):
                 for engine in ('rich','curses'):
@@ -62,7 +62,9 @@ class SubmissionDisplayTests(unittest.TestCase):
                                 self.assertEqual(len(empty_centers),len(centers))
                                 for expected,actual in zip(centers,empty_centers):
                                     self.assertLessEqual(abs(expected-actual),0.5)
-                                labels=('rank','team','points','hacks +/−') if view.contest.platform=='cf' else ('rank','team','solved','penalty')
+                                labels=(('rank','team') if view.practice else
+                                        ('rank','team','points','hacks +/−') if view.contest.platform=='cf' else
+                                        ('rank','team','solved','penalty'))
                                 summary_centers=[self.cell_center(header,label)[0] for label in labels]
                                 if previous_summary_centers is not None:
                                     self.assertEqual(summary_centers,previous_summary_centers)
@@ -93,10 +95,11 @@ class SubmissionDisplayTests(unittest.TestCase):
             for engine in ('rich','curses'):
                 first=self.fixed_lines(before,width,engine)
                 second=self.fixed_lines(after,width,engine)
-                headers=lambda lines: next(line for line in lines if 'rank' in line and 'penalty' in line)
+                headers=lambda lines: next(line for line in lines if 'rank' in line and 'team' in line)
                 self.assertEqual(headers(first),headers(second))
                 self.assertNotIn('…','\n'.join(second))
-                self.assertGreater(len(second),len(first))
+                self.assertGreaterEqual(len(second),len(first))
+                self.assertIn('tries','\n'.join(second))
 
     def test_summary_edge_padding_keeps_rank_and_prize_complete(self):
         contest=self.contest()
@@ -105,7 +108,7 @@ class SubmissionDisplayTests(unittest.TestCase):
             for prize in ('','Gold'):
                 view=Dashboard(contest,120,me,'1',prize,None,[],practice=True)
                 lines=self.fixed_lines(view,100,engine)
-                header=next(line for line in lines if 'team' in line and 'penalty' in line)
+                header=next(line for line in lines if 'team' in line and 'rank' in line)
                 self.assertIn('rank',header)
                 if prize:
                     self.assertTrue(any(line.startswith(' Gold Prize') for line in lines))

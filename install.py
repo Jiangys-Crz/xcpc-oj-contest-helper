@@ -192,7 +192,10 @@ def install(args):
         else:
             administrator = os.geteuid() == 0
         if not administrator:
-            raise SystemExit('A machine-wide XCPC installation requires administrator access. Run install.ps1 / install-macos.sh.')
+            if windows:
+                raise SystemExit('Start install.ps1 from your usual PowerShell; it requests Windows administrator authorization automatically. Do not run install.py directly for a shared Windows installation.')
+            wrapper = 'install-macos.sh' if sys.platform == 'darwin' else 'install.sh'
+            raise SystemExit('Start ' + wrapper + ' from your usual account; it requests administrator authorization for the shared application automatically.')
         if not windows:
             os.umask(0o022)
             for folder in (shared,shared/'app',shared/'app/releases'):
