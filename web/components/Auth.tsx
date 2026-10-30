@@ -25,8 +25,8 @@ export function Login({onLogin}:{onLogin:(user:User)=>void}){
       <div className="login-brand-top"><span className="login-monogram" aria-hidden="true">VP</span><span className="login-association">CWNU<br/>PROGRAMMING ASSOCIATION</span></div>
       <div className="login-wordmark"><span className="login-wordmark-rule"/><h1>CWNU <span>XCPC Vp System</span></h1><p>Virtual Participation</p></div>
       <div className="login-competition-art" aria-hidden="true">
-        <div className="login-art-caption"><span>PROBLEMS</span><i/><i/><i/></div>
-        <div className="login-art-grid">{'ABCDEFGHIJKL'.split('').map((label,index)=><span key={label} className={[0,3,8].includes(index)?'art-cell-filled':index===6?'art-cell-outline':''}>{label}</span>)}</div>
+        <div className="login-art-caption"><span>VIRTUAL PARTICIPATION</span><i/><i/><i/></div>
+        <table className="login-preview-table"><thead><tr>{'ABCDEF'.split('').map(label=><th key={label}>{label}</th>)}</tr></thead><tbody><tr><td className="preview-accepted"><span>1 try</span><small>18</small></td><td className="preview-rejected"><span>2 tries</span></td><td className="preview-accepted"><span>1 try</span><small>42</small></td><td className="preview-upsolved"><span>3 tries</span><small>补题 AC</small></td><td className="preview-empty">—</td><td className="preview-empty">—</td></tr></tbody></table>
         <div className="login-art-footer"><span/><span/><span/></div>
       </div>
       <div className="login-brand-bottom"><span>西华师范大学程序设计协会</span><span className="login-square-mark" aria-hidden="true"/></div>
