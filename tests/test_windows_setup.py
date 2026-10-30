@@ -490,3 +490,90 @@ Write-Output ('__RESULT__'+(@{Status=$status;Message=$Error[0].Exception.Message
 ''')
         self.assertEqual(data['Status'],1)
         self.assertIn('did not grant administrator access',data['Message'])
+
+    def test_native_installer_failure_is_saved_outside_downloads_and_replayed(self):
+        # Execute a real native process, not a mocked transcript implementation.
+        body = r'''
+$env:XCPC_SETUP_LOG=$null
+function Test-XcpcAdministrator {return $true}
+function Update-XcpcProcessPath {}
+function Get-XcpcPrerequisites {
+  return [pscustomobject]@{Python=[pscustomobject]@{Executable=FIXTURE_PYTHON;Prefix=@('-c','import sys; print(''PYTHON-INSTALL-FAILED-FIXTURE''); sys.exit(31)')};Git=$true;Terminal=$true}
+}
+$messages=@(& {$script:status=Invoke-XcpcWindowsSetup} 6>&1 2>$null)
+$logs=@(Get-ChildItem -LiteralPath (Join-Path $env:LOCALAPPDATA 'XCPC/Logs') -Filter setup.log -Recurse)
+Write-Output ('__RESULT__'+(@{Status=$script:status;Logs=@($logs.FullName);Content=(Get-Content -Raw -LiteralPath $logs[0].FullName);Messages=($messages|Out-String);Restored=($null -eq $env:XCPC_SETUP_LOG -or $env:XCPC_SETUP_LOG -eq '')}|ConvertTo-Json -Compress))
+'''.replace('FIXTURE_PYTHON', "'"+sys.executable.replace("'","''")+"'")
+        data=self.run_powershell(body)
+        self.assertEqual(data['Status'],31)
+        self.assertEqual(len(data['Logs']),1)
+        self.assertIn('XCPC',data['Logs'][0])
+        self.assertIn('Logs',data['Logs'][0])
+        self.assertIn('PYTHON-INSTALL-FAILED-FIXTURE',data['Content'])
+        self.assertIn('PYTHON-INSTALL-FAILED-FIXTURE',data['Messages'])
+        self.assertIn('Installation log:',data['Messages'])
+        self.assertTrue(data['Restored'])
+
+    def test_uac_parent_replays_the_closed_childs_actual_error(self):
+        data=self.run_powershell(r'''
+$env:SystemRoot=$env:LOCALAPPDATA
+$env:LOCALAPPDATA=Join-Path $env:LOCALAPPDATA "O'Brien profile"
+$env:XCPC_SETUP_LOG=$null
+function Test-XcpcAdministrator {return $false}
+function Start-Process {
+  param($FilePath,$Verb,$ArgumentList,[switch]$Wait,[switch]$PassThru)
+  $script:code=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($ArgumentList[-1]))
+  $script:childLog=$env:XCPC_SETUP_LOG
+  Set-Content -LiteralPath $script:childLog -Encoding UTF8 -Value 'Setup failed: NATIVE-CHILD-ACCESS-DENIED-FIXTURE'
+  return [pscustomobject]@{ExitCode=1}
+}
+$messages=@(& {$script:status=Invoke-XcpcWindowsSetup} 6>&1 2>$null)
+Write-Output ('__RESULT__'+(@{Status=$script:status;Log=$script:childLog;Code=$script:code;Messages=($messages|Out-String);Exists=(Test-Path -LiteralPath $script:childLog);Restored=($null -eq $env:XCPC_SETUP_LOG -or $env:XCPC_SETUP_LOG -eq '')}|ConvertTo-Json -Compress))
+''')
+        self.assertEqual(data['Status'],1)
+        self.assertTrue(data['Exists'])
+        self.assertIn('NATIVE-CHILD-ACCESS-DENIED-FIXTURE',data['Messages'])
+        self.assertIn("$env:XCPC_SETUP_LOG='"+data['Log'].replace("'","''")+"'",data['Code'])
+        self.assertTrue(data['Restored'])
+
+    def test_online_failure_reports_inner_log_after_temporary_source_cleanup(self):
+        data=self.run_powershell(". '"+str(ONLINE).replace("'","''")+"'\n"+r'''
+$env:XCPC_SETUP_LOG='original-caller-value'
+function Invoke-XcpcOnlineSetupCore {
+  $script:log=$env:XCPC_SETUP_LOG
+  $source=Join-Path $env:LOCALAPPDATA 'temporary-source'
+  New-Item -ItemType Directory -Path $source | Out-Null
+  Set-Content -LiteralPath $env:XCPC_SETUP_LOG -Encoding UTF8 -Value 'Setup failed: WINGET-FAILURE-FIXTURE'
+  Remove-Item -LiteralPath $source -Recurse -Force
+  throw 'Installation failed (exit 1).'
+}
+$messages=@(& {try {Invoke-XcpcOnlineSetup} catch {$script:errorMessage=$_.Exception.Message}} 6>&1)
+Write-Output ('__RESULT__'+(@{Message=$script:errorMessage;Log=$script:log;Exists=(Test-Path -LiteralPath $script:log);Restored=$env:XCPC_SETUP_LOG;Messages=($messages|Out-String)}|ConvertTo-Json -Compress))
+''')
+        self.assertEqual(data['Message'],'Installation failed (exit 1).')
+        self.assertTrue(data['Exists'])
+        self.assertIn('WINGET-FAILURE-FIXTURE',data['Messages'])
+        self.assertIn(data['Log'],data['Messages'])
+        self.assertEqual(data['Restored'],'original-caller-value')
+
+    @unittest.skipUnless(sys.version_info >= (3,12), 'real Python 3.12+ required for the actual native prerequisite probe')
+    def test_real_machine_python_probe_works_with_legacy_and_standard_native_arguments(self):
+        # Legacy reproduces Windows PowerShell 5.1's embedded-double-quote
+        # stripping even when this regression runs in portable PowerShell 7.
+        for mode in ('Legacy','Standard'):
+            with self.subTest(mode=mode):
+                body=r'''
+$PSNativeCommandArgumentPassing=ARGUMENT_MODE
+$env:ProgramFiles=FIXTURE_BASE
+$env:ProgramW6432=FIXTURE_BASE
+$env:USERPROFILE=Join-Path $env:LOCALAPPDATA 'users/fixture'
+$env:PUBLIC=Join-Path $env:LOCALAPPDATA 'users/Public'
+function Get-XcpcMachinePythonPaths {[pscustomobject]@{Executable=FIXTURE_PYTHON;Directory=(FIXTURE_BASE+[IO.Path]::DirectorySeparatorChar)}}
+function Get-XcpcApplicationPaths {throw 'The actual registered Python prerequisite probe failed'}
+$python=Find-XcpcPython -SystemWide
+Write-Output ('__RESULT__'+(@{Executable=$python.Executable;Prefix=@($python.Prefix)}|ConvertTo-Json -Compress))
+'''
+                for key,value in (('ARGUMENT_MODE',mode),('FIXTURE_BASE',sys.base_prefix),('FIXTURE_PYTHON',sys.executable)):
+                    body=body.replace(key,"'"+value.replace("'","''")+"'")
+                data=self.run_powershell(body)
+                self.assertEqual(data,{'Executable':sys.executable,'Prefix':[]})

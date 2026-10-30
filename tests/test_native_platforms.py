@@ -11,6 +11,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
+from isolation import isolate_local_state
 
 import requests
 
@@ -36,8 +37,7 @@ class Isolated(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory())).resolve()
-        self.stack.enter_context(patch.dict(os.environ, {'XDG_CONFIG_HOME':str(self.root/'config'),
-                                                        'XDG_STATE_HOME':str(self.root/'state')}))
+        isolate_local_state(self.stack, self.root)
 
 
 class ExtensionLoginTests(Isolated):

@@ -9,6 +9,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
+from isolation import isolate_local_state
 
 from bs4 import BeautifulSoup
 from rich.console import Console
@@ -190,7 +191,7 @@ class IsolatedState(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
-        self.stack.enter_context(patch.dict(os.environ, {"XDG_STATE_HOME": str(self.root / "state"), "XDG_CONFIG_HOME": str(self.root / "config")}))
+        isolate_local_state(self.stack, self.root)
         self.state_root = self.root / "state/vp"
         self.path = self.state_root / "live-cf-1234-tester.json"
         self.state = {"mode": "live", "url": URL, "handle": "tester", "start_time": 1000,

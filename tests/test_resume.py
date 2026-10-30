@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
+from isolation import isolate_local_state
 
 from vp_helper import cli
 from vp_helper.models import Contest, Rules, VPError
@@ -26,6 +27,7 @@ class ResumeTests(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
+        isolate_local_state(self.stack, self.root)
         self.directory = self.root / "contest code"
         self.directory.mkdir()
         self.source = self.directory / "A.cpp"

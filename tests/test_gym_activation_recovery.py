@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
+from isolation import isolate_local_state
 
 from vp_helper import cli, vp
 from vp_helper.gym import Gym
@@ -17,9 +18,7 @@ class GymActivationRecoveryTests(unittest.TestCase):
         self.stack=ExitStack()
         self.addCleanup(self.stack.close)
         self.root=Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
-        self.stack.enter_context(patch.dict(os.environ,{
-            'XDG_STATE_HOME':str(self.root/'state'),
-            'XDG_CONFIG_HOME':str(self.root/'config')}))
+        isolate_local_state(self.stack, self.root)
         self.url='https://codeforces.com/gym/102181'
         self.server=datetime(2026,10,29,12,0,tzinfo=timezone.utc).timestamp()
         self.started=self.server-3600

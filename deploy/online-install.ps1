@@ -65,7 +65,7 @@ function Set-XcpcOnlineCommandPath {
     Write-Host "Command directory: $Bin"
 }
 
-function Invoke-XcpcOnlineSetup {
+function Invoke-XcpcOnlineSetupCore {
     if ($env:OS -ne 'Windows_NT') { throw 'Use install.sh on Ubuntu or macOS.' }
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     $xcpcProgramFiles = if ($env:ProgramW6432) { $env:ProgramW6432 } elseif ($env:ProgramFiles) { $env:ProgramFiles } else { [Environment]::GetFolderPath('ProgramFiles') }
@@ -114,13 +114,35 @@ function Invoke-XcpcOnlineSetup {
         if (-not (Test-Path -LiteralPath $xcpcInstaller -PathType Leaf)) { throw 'Incomplete source archive.' }
         $env:XCPC_SOURCE_REVISION = $xcpcManifest.revision
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $xcpcInstaller
-        if ($LASTEXITCODE -ne 0) { throw "Installation failed (exit $LASTEXITCODE)." }
+        if ($LASTEXITCODE -ne 0) { throw "Installation failed (exit $LASTEXITCODE). Installer output is saved in: $env:XCPC_SETUP_LOG" }
         Set-XcpcOnlineCommandPath $xcpcGlobalBin
         Initialize-XcpcOnlineUserBridge $xcpcGlobalBin
         Write-Host 'Installation complete. Run: xcpc login'
     } finally {
         $env:XCPC_SOURCE_REVISION = $xcpcPreviousRevision
         Remove-Item -LiteralPath $xcpcTemporary -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Invoke-XcpcOnlineSetup {
+    $previousLog = $env:XCPC_SETUP_LOG
+    try {
+        $base = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { [IO.Path]::GetTempPath() }
+        $directory = Join-Path $base ('XCPC\Logs\install-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $directory -Force | Out-Null
+        $env:XCPC_SETUP_LOG = Join-Path $directory 'setup.log'
+        Invoke-XcpcOnlineSetupCore
+    } catch {
+        if ($env:XCPC_SETUP_LOG) {
+            Write-Host "Installation log: $env:XCPC_SETUP_LOG"
+            if (Test-Path -LiteralPath $env:XCPC_SETUP_LOG -PathType Leaf) {
+                Write-Host 'Last installer output:'
+                Get-Content -LiteralPath $env:XCPC_SETUP_LOG -Encoding UTF8 -Tail 40 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+            }
+        }
+        throw
+    } finally {
+        $env:XCPC_SETUP_LOG = $previousLog
     }
 }
 

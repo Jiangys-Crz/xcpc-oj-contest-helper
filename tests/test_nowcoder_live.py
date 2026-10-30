@@ -7,6 +7,7 @@ import sqlite3
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
+from isolation import isolate_local_state
 
 import requests
 from rich.console import Console
@@ -271,7 +272,7 @@ class IsolatedState(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
-        self.stack.enter_context(patch.dict(os.environ, {"XDG_STATE_HOME": str(self.root / "state")}))
+        isolate_local_state(self.stack, self.root)
         self.path = self.root / "state/vp/live-nowcoder-123-42.json"
         self.api = NowcoderLive(URL, {"uid": 42, "handle": "42", "cookie_source": "manual"})
         self.api._identified = True

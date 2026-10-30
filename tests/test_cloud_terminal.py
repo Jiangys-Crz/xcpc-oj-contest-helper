@@ -146,6 +146,17 @@ class CloudTerminalTests(unittest.TestCase):
         self.worker.assert_not_called()
         self.assertFalse(cloud._outbox().exists())
 
+    def test_external_state_file_cannot_use_saved_cloud_account_or_queue_upload(self):
+        external=self.root/'temporary-fixture.json'
+        write_json(external,self.state)
+        with patch.object(cloud,'configuration_path',side_effect=AssertionError('account must not be read')), \
+                patch.object(cloud,'_request') as request:
+            cloud.queue_state(external,self.state)
+        self.worker.assert_not_called()
+        request.assert_not_called()
+        self.assertFalse(cloud._outbox().exists())
+        self.assertFalse(external.with_suffix('.cloud-owner').exists())
+
     def test_corrupt_optional_cloud_config_does_not_block_local_contests(self):
         cloud.configuration_path().write_text('{broken')
         self.assertIsNone(cloud.room_url('https://codeforces.com/contest/2181'))

@@ -352,6 +352,10 @@ def _outbox():
 
 def queue_state(path, state):
     try:
+        # Only managed sessions may use this user's saved cloud credentials.
+        # Temporary/imported files are not authorized synchronization sources.
+        if Path(path).resolve().parent != state_directory().resolve():
+            return
         saved = read_json(configuration_path())
     except (VPError, OSError):
         return

@@ -69,11 +69,14 @@ function Find-XcpcPython {
     param([switch]$SystemWide)
     $probeCode = 'import sys; sys.exit(1) if sys.version_info < (3, 12) else None; import venv, ensurepip; ensurepip.version()'
     if ($SystemWide) {
-        $probeCode += '; import os; from pathlib import Path; base=Path(sys.base_prefix).resolve(); prefixes=[os.environ.get(k) for k in ("ProgramW6432","ProgramFiles","ProgramFiles(x86)")]+sys.argv[1:]; profiles=[Path(p).resolve().parent for p in (os.environ.get("USERPROFILE"),os.environ.get("PUBLIC")) if p]; sys.exit(0 if not any(base.is_relative_to(p) for p in profiles) and any(p and base.is_relative_to(Path(p).resolve()) for p in prefixes) else 1)'
+        # Windows PowerShell 5.1's legacy native argument parser strips embedded
+        # double quotes in a Python -c argument. Use Python single-quoted literals
+        # so the exact same probe works there and in PowerShell 7.
+        $probeCode += "; import os; from pathlib import Path; base=Path(sys.base_prefix).resolve(); prefixes=[os.environ.get(k) for k in ('ProgramW6432','ProgramFiles','ProgramFiles(x86)')]+sys.argv[1:]; profiles=[Path(p).resolve().parent for p in (os.environ.get('USERPROFILE'),os.environ.get('PUBLIC')) if p]; sys.exit(0 if not any(base.is_relative_to(p) for p in profiles) and any(p and base.is_relative_to(Path(p).resolve()) for p in prefixes) else 1)"
         foreach ($registered in @(Get-XcpcMachinePythonPaths)) {
             if (Test-Path -LiteralPath $registered.Executable -PathType Leaf) {
                 try {
-                    if ((Invoke-XcpcNative $registered.Executable @('-I','-c',$probeCode,$registered.Directory) -Quiet) -eq 0) {
+                    if ((Invoke-XcpcNative $registered.Executable @('-I','-c',$probeCode,$registered.Directory.TrimEnd('\','/')) -Quiet) -eq 0) {
                         return [pscustomobject]@{ Executable=$registered.Executable; Prefix=@() }
                     }
                 } catch { }
@@ -158,6 +161,26 @@ function Test-XcpcAdministrator {
     return (New-Object Security.Principal.WindowsPrincipal($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function New-XcpcSetupLog {
+    # Keep logs outside the downloaded source, which the online installer removes.
+    $base = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { [IO.Path]::GetTempPath() }
+    $directory = Join-Path $base ('XCPC\Logs\install-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    return (Join-Path $directory 'setup.log')
+}
+
+function Write-XcpcSetupDiagnostics {
+    param([string]$LogPath)
+    if (-not $LogPath) { return }
+    Write-Host "Installation log: $LogPath"
+    if (Test-Path -LiteralPath $LogPath -PathType Leaf) {
+        Write-Host 'Last installer output:'
+        Get-Content -LiteralPath $LogPath -Encoding UTF8 -Tail 40 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+    } else {
+        Write-Host 'No installer log was created; Windows may have rejected administrator authorization before setup started.'
+    }
+}
+
 function Invoke-XcpcElevatedSetup {
     param([string[]]$InstallerArgs)
     $scriptPath = Join-Path $PSScriptRoot 'install.ps1'
@@ -165,6 +188,11 @@ function Invoke-XcpcElevatedSetup {
     $command = '$env:XCPC_SETUP_ELEVATED="1"; & ' + ($quoted -join ' ')
     if ($env:XCPC_SOURCE_REVISION -match '^(?:[0-9a-f]{40}|[0-9a-f]{64})$') {
         $command = '$env:XCPC_SOURCE_REVISION=' + "'" + $env:XCPC_SOURCE_REVISION + "'; " + $command
+    }
+    if ($env:XCPC_SETUP_LOG) {
+        # UAC may start a separate logon environment. Pass only this per-run
+        # output path, with the same literal quoting as installer arguments.
+        $command = '$env:XCPC_SETUP_LOG=' + "'" + $env:XCPC_SETUP_LOG.Replace("'", "''") + "'; " + $command
     }
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -320,7 +348,14 @@ function Invoke-XcpcWindowsSetup {
         Write-Host '  --help     Show this help without installing or downloading anything.'
         return 0
     }
+    $xcpcPreviousLog = $env:XCPC_SETUP_LOG
+    $xcpcTranscript = $false
+    $xcpcSetupStatus = 1
     try {
+        if (-not $env:XCPC_SETUP_LOG) {
+            try { $env:XCPC_SETUP_LOG = New-XcpcSetupLog }
+            catch { Write-Warning "Could not create an installation log: $($_.Exception.Message)" }
+        }
         if ($env:OS -ne 'Windows_NT') { throw 'This setup script requires native Windows. On macOS use bash install-macos.sh; on Ubuntu use bash install.sh.' }
         $layout = Get-XcpcLayout $InstallerArgs
         $bin = $layout.Bin
@@ -332,7 +367,15 @@ function Invoke-XcpcWindowsSetup {
                 $env:Path = Join-XcpcPath @($bin, $env:Path)
                 if ($InstallerArgs -notcontains '--skip-browser-registration') { Initialize-XcpcUserBridge $layout.Root }
             }
+            $xcpcSetupStatus = $status
             return $status
+        }
+        # Only the process doing the installation writes the transcript. The
+        # ordinary UAC parent reads it after the child closes, avoiding two
+        # PowerShell hosts trying to append to the same file concurrently.
+        if ($env:XCPC_SETUP_LOG) {
+            try { Start-Transcript -LiteralPath $env:XCPC_SETUP_LOG -Append -Force | Out-Null; $xcpcTranscript = $true }
+            catch { Write-Warning "Could not start the installation log: $($_.Exception.Message)" }
         }
         if ($layout.Global -and $env:XCPC_SETUP_ELEVATED -ne '1') {
             Write-Host 'Administrator access is already available. Installing shared commands; account and browser settings remain private to the current Windows user.'
@@ -375,15 +418,20 @@ function Invoke-XcpcWindowsSetup {
         if (-not @($InstallerArgs | Where-Object { $_ -match '^--target-root(?:=|$)' }).Count) { $pythonArgs += @('--target-root', $layout.Root) }
         if (-not @($InstallerArgs | Where-Object { $_ -match '^--target-bin(?:=|$)' }).Count) { $pythonArgs += @('--target-bin', $layout.Bin) }
         $status = Invoke-XcpcNative $python.Executable $pythonArgs
-        if ($status -ne 0) { return $status }
+        if ($status -ne 0) { $xcpcSetupStatus = $status; return $status }
         if ($layout.Global) { Set-XcpcGlobalPermissions $layout.Root $layout.Bin }
         if ($InstallerArgs -notcontains '--skip-path-configuration') { Add-XcpcCommandPath $bin -SystemWide:$layout.Global }
         if ($layout.Global -and $env:XCPC_SETUP_ELEVATED -ne '1' -and $InstallerArgs -notcontains '--skip-browser-registration') { Initialize-XcpcUserBridge $layout.Root }
         Write-Host 'Installation complete. Open a new terminal, then run xcpc --help.'
+        $xcpcSetupStatus = 0
         return 0
     } catch {
         Write-Error "Setup failed: $($_.Exception.Message)" -ErrorAction Continue
         return 1
+    } finally {
+        if ($xcpcTranscript) { try { Stop-Transcript | Out-Null } catch { } }
+        if ($xcpcSetupStatus -ne 0) { Write-XcpcSetupDiagnostics $env:XCPC_SETUP_LOG }
+        $env:XCPC_SETUP_LOG = $xcpcPreviousLog
     }
 }
 

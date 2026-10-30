@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
+from isolation import isolate_local_state
 
 from vp_helper import cli, commands, live
 from vp_helper.models import Contest, Rules, VPError
@@ -16,8 +17,7 @@ class SettingsTests(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory())).resolve()
-        self.stack.enter_context(patch.dict(os.environ, {"XDG_CONFIG_HOME":str(self.root/"config"),
-                                                       "XDG_STATE_HOME":str(self.root/"state")}))
+        isolate_local_state(self.stack, self.root)
         self.config = config_directory()/"config.json"
 
     def test_unconfigured_output_defaults_to_desktop(self):

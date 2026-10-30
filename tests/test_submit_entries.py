@@ -64,7 +64,7 @@ else:
             return response
     requests.Session=Session
 ''')
-                env = {**os.environ,"PYTHONPATH":str(root),"XDG_STATE_HOME":str(root/"state"),
+                env = {**os.environ,"PYTHONPATH":str(root),"XDG_STATE_HOME":str(root/"state"),"XDG_CONFIG_HOME":str(root/"config"),
                        "VP_FIXTURE_PLATFORM":platform}
                 if platform=='qoj':
                     declined=subprocess.run([str(ENTRY),str(source)],input='n\n',cwd=root,env=env,

@@ -1,4 +1,4 @@
-XCPC 0.9.2 · Ubuntu ARM64 快速安装
+XCPC 0.9.3 · Ubuntu ARM64 快速安装
 
 完整安装与使用教程请阅读同目录的 README.md。
 Ubuntu 24.04 / 26.04 ARM64 使用系统 Python 3.12+；仓库带有适配
