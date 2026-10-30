@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import platform
+import getpass
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -11,6 +13,13 @@ from . import __version__
 from .accounts import account_key, api_credentials
 from .models import VPError
 from .storage import config_directory, read_json, state_directory, workspace_directory
+
+
+def runtime_user():
+    if os.name == 'posix':
+        import pwd
+        return pwd.getpwuid(os.geteuid()).pw_name + '（UID ' + str(os.geteuid()) + '）'
+    return getpass.getuser()
 
 
 def _display(value, default='未设置'):
@@ -37,6 +46,7 @@ def print_version_info():
     config = _load(configuration / 'config.json', warnings)
     saved = _load(configuration / 'cloud-account.json', warnings)
     print('XCPC ' + __version__)
+    print('运行用户：' + _display(runtime_user()))
     print('系统：' + _display(platform.platform()))
     print('Python：' + platform.python_version())
     print('Python 路径：' + str(Path(sys.executable)))

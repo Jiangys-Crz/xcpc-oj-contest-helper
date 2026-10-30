@@ -65,6 +65,16 @@ def restore_bootstraps(backups):
         replace_file(path, data)
 
 
+def protect_runtime_parent(root):
+    """Secure one owned application directory, leaving its contents untouched."""
+    root=Path(root)
+    if root.is_symlink() or not root.is_dir():
+        raise RuntimeError('Shared application directories must be real directories.')
+    if getattr(os,'geteuid',lambda:-1)() == 0:
+        os.chown(root,0,0,follow_symlinks=False)
+    root.chmod(((stat.S_IMODE(root.stat().st_mode)&0o777)|0o555)&~0o022)
+
+
 def make_runtime_readable(root):
     """Publish application files for all users without following external links.
 
@@ -78,9 +88,7 @@ def make_runtime_readable(root):
     root_owned = getattr(os,'geteuid',lambda:-1)() == 0
     for directory, folders, files in os.walk(root, followlinks=False):
         current = Path(directory)
-        if root_owned:
-            os.chown(current,0,0,follow_symlinks=False)
-        current.chmod(((stat.S_IMODE(current.stat().st_mode)&0o777)|0o555)&~0o022)
+        protect_runtime_parent(current)
         for name in folders:
             path=current/name
             if root_owned and path.is_symlink():
@@ -187,13 +195,15 @@ def install(args):
             raise SystemExit('A machine-wide XCPC installation requires administrator access. Run install.ps1 / install-macos.sh.')
         if not windows:
             os.umask(0o022)
+            for folder in (shared,shared/'app',shared/'app/releases'):
+                if folder.is_symlink():
+                    raise SystemExit('Shared application directories must not be custom symlinks; the target was preserved.')
     root.joinpath('releases').mkdir(parents=True, exist_ok=True)
     commands.mkdir(parents=True, exist_ok=True)
     if global_install and not windows:
         for folder in (root,root/'releases'):
-            folder.chmod(stat.S_IMODE(folder.stat().st_mode)|0o555)
-        if root.is_relative_to(shared):
-            shared.chmod(stat.S_IMODE(shared.stat().st_mode)|0o555)
+            protect_runtime_parent(folder)
+        protect_runtime_parent(shared)
     marker = commands / '.xcpc-native-commands.json'
     if marker.exists():
         previous = json.loads(marker.read_text(encoding='utf8'))

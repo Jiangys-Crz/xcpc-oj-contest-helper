@@ -47,6 +47,7 @@ class VersionInfoTests(unittest.TestCase):
                     for secret in secrets:
                         self.assertNotIn(secret, text)
                     self.assertIn('整台电脑（所有用户）', text)
+                    self.assertIn('运行用户：', text)
                     self.assertIn('Chrome / Edge 扩展' if system != 'linux' else 'Firefox 普通窗口', text)
                     if system != 'linux':
                         self.assertIn('Chrome 已同步配置数：1', text)

@@ -127,6 +127,12 @@ def main() -> None:
             config = read_json(config_directory() / "config.json")
             account = config.get(account_key(config, platform), {})
             print("XCPC " + __version__ + " · 此检查只显示配置位置和验证结果，不显示 Cookie 或密码。")
+            from .version_info import runtime_user
+            print('运行用户：' + runtime_user())
+            if sys.platform == 'linux':
+                import os
+                if os.geteuid() == 0:
+                    print('当前为 root。请切回登录 Firefox 的普通用户运行检查和比赛命令；每个用户的登录状态独立保存。')
             for line in login_diagnostics(platform, account):
                 print(line)
         elif args and args[0] == "end" and len(args) <= 2:

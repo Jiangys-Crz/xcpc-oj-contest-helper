@@ -70,6 +70,14 @@ if [[ -n "$vp_target_root" || -n "$vp_target_bin" ]]; then
     vp_prefix="$vp_target_root"
     vp_bin="$vp_target_bin"
 fi
+if ! $vp_local && [[ "$vp_prefix" == /opt/vp-helper ]]; then
+    for vp_parent in "$vp_prefix" "$vp_prefix/releases" "$vp_prefix/runtime"; do
+        if [[ -L "$vp_parent" ]]; then
+            printf 'Shared application directory is a custom symlink; preserved: %s\n' "$vp_parent" >&2
+            exit 1
+        fi
+    done
+fi
 if [[ -n "$vp_submit_path" ]]; then
     if [[ ! -f "$vp_submit_path" || ! -x "$vp_submit_path" ]]; then
         printf '%s\n' 'The existing submit path must be an executable file.' >&2
@@ -302,6 +310,10 @@ if local != 'true':
     spec = importlib.util.spec_from_file_location('xcpc_runtime_permissions', Path(source)/'install.py')
     installer = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(installer)
+    if Path(prefix) == Path('/opt/vp-helper'):
+        for parent in (Path(prefix),Path(prefix)/'releases',Path(prefix)/'runtime'):
+            if parent.exists():
+                installer.protect_runtime_parent(parent)
     installer.make_runtime_readable(release)
     if runtime:
         installer.make_runtime_readable(runtime)

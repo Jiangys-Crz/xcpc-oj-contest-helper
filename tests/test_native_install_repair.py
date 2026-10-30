@@ -87,6 +87,17 @@ class NativeInstallRepairTests(unittest.TestCase):
             with self.subTest(root=root,commands=commands),self.assertRaisesRegex(SystemExit,'mix shared and private'):
                 installer.installation_targets(SimpleNamespace(target_root=root,target_bin=commands),windows=False)
 
+    @unittest.skipUnless(os.name=='posix','POSIX application permissions')
+    def test_global_parent_protection_removes_write_access_without_touching_other_files(self):
+        parent=self.root/'shared parent';parent.mkdir();parent.chmod(0o777)
+        private=parent/'unrelated-private-file';private.write_text('private fixture\n');private.chmod(0o600)
+        installer.protect_runtime_parent(parent)
+        self.assertEqual(parent.stat().st_mode&0o777,0o755)
+        self.assertEqual(private.stat().st_mode&0o777,0o600)
+        if os.geteuid()==0:self.assertEqual(parent.stat().st_uid,0)
+        link=self.root/'custom shared symlink';self.symlink(parent,link,directory=True)
+        with self.assertRaisesRegex(RuntimeError,'real directories'):installer.protect_runtime_parent(link)
+
     def test_path_setup_prioritizes_shared_command_over_legacy_user_command(self):
         home=self.root.parent/'home';home.mkdir()
         global_bin=home/'shared bin';global_bin.mkdir()
