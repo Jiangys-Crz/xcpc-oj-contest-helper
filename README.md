@@ -147,7 +147,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 
 无需先手动安装 Python、Git 或 Windows Terminal。脚本会复用公共目录内可用的 Python 3.12+，并通过 WinGet 补齐系统级 Python 3.13、Git，以及当前用户缺少的 Windows Terminal；WinGet 不可用时，会先尝试为当前用户注册或修复 App Installer。Windows 安装器出现确认提示时按提示完成即可。如果自动修复失败，脚本会显示原因和 [App Installer 官方安装入口](https://apps.microsoft.com/detail/9nblggh4nns1)。已有 Git 时，也可以用 `git clone` 获取源码后运行同一条安装命令。
 
-使用平时的 PowerShell（包括 Conda 的 `(base)` 环境）启动即可；安装器会弹出一次 UAC 请求安装公共程序，随后回到原用户配置浏览器连接。已经打开管理员 PowerShell 时也可安装。新安装的系统 Python 会直接从注册表识别，无需先退出 Conda或重开窗口才能继续安装。
+使用平时的 PowerShell（包括 Conda 的 `(base)` 环境）启动即可；安装器会弹出一次 UAC 请求安装公共程序，随后回到原用户配置浏览器连接。已经打开管理员 PowerShell 时也可安装。新安装的系统 Python 会直接从注册表识别，无需先退出 Conda 或重开窗口才能继续安装。
 
 `ExecutionPolicy Bypass` 仅作用于这次安装进程，不修改系统的永久执行策略。安装器通过 UAC 请求管理员权限，为整台电脑配置命令路径；安装结束后重新打开 Windows Terminal 或 PowerShell，再执行：
 
