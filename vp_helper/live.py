@@ -203,7 +203,8 @@ def monitor_live(path: Path) -> None:
         submission_start = contest.original_start
         submission_error = reference_error = ""
         backoff = 5.0
-        with ThreadPoolExecutor(max_workers=3) as network, TerminalDashboard() as view:
+        from .windows_terminal import view_options
+        with ThreadPoolExecutor(max_workers=3) as network, TerminalDashboard(**view_options(path)) as view:
             while view.input():
                 now = time.monotonic()
                 changed = False

@@ -2,7 +2,7 @@
 
 线上组队、多队虚拟赛、训练历史与队内虚拟打印，配合原有终端完成原站参赛和提交。网站使用 Next.js 全栈，终端继续支持 Ubuntu、macOS 和 Windows。
 
-当前版本：**0.9.4**。线上地址：[CWNU XCPC Vp System](https://vp.cwnupaa.com)。
+当前版本：**0.9.5**。线上地址：[CWNU XCPC Vp System](https://vp.cwnupaa.com)。
 
 一键安装教程：[网站安装教程](https://vp.cwnupaa.com/install)。Ubuntu / macOS 在终端运行：
 
@@ -60,6 +60,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://vp.cwnupaa.c
 
 登录后，本地 VP、live、BT 的比赛信息和提交记录自动同步到“历史记录”。团队记录对参赛时的队员共享，并单独标记“个人 / 队伍”；`VP / live / BT` 是另一项比赛类型。榜单 Rank 显示原站排名。原 AC 为绿色，失败为红色，赛后新 AC 为蓝色；补题记录不显示开始、结束时间。
 
+历史记录与 VP 列表按创建时间倒序显示，最新创建的在前；同步判题结果、补题或修改预约时间不会改变已有记录的顺序。
+
 历史详情和房间“我的提交”按 DOMjudge 的结构显示成绩行、题目尝试次数与提交列表；队伍成员共享本队的提交，提交编号可跳转原站查看结果。VP 进行期间不能查看其他队伍或个人的提交详情，房间创建者也不能绕过此限制。
 
 VP 房间采用创建时设置的封榜分钟数，`60` 表示结束前一小时封榜，`0` 表示不封榜；比赛结束后自动解封。封榜期间，公共排行榜的所有行只显示封榜前的成绩及后续的待公开次数；本人和队友仍可在“我的提交”和本队历史详情查看真实判题结果。Rank 仍取原站排名，没有可用的封榜前原站排名时显示 `?`。比赛时长由终端读取原站比赛后同步；尚未连接终端时暂按五小时显示。已经预约原站 VP 的房间不能再修改赛制、时间和封榜规则。
@@ -82,15 +84,15 @@ CCPC 新赛制中，公共统计的题号需有至少 50 支原赛队伍（包�
 | --- | --- | --- | --- |
 | Ubuntu | Python 3.12+、Git；旧版 Ubuntu x86_64 可使用随附 Python | tmux | Firefox，自动读取登录状态 |
 | macOS | Python 3.12+、Git、tmux，缺少时通过 Homebrew 安装 | tmux | 已有 Chrome / Edge 加载扩展 |
-| Windows | Python 3.12+（国内下载）、Git、Windows Terminal；后两者通过 WinGet 安装 | Windows Terminal 原生分屏 | 已有 Chrome / Edge 加载扩展 |
+| Windows | Python 3.12+（国内下载）、Git；缺少 Git 时通过 WinGet 安装 | 当前终端显示；已有 Windows Terminal 可同窗口分屏 | 已有 Chrome / Edge 加载扩展 |
 
-Windows 不需要安装 tmux 或 WSL。macOS / Windows 安装器不会替你安装或更换浏览器。
+Windows 不需要安装 tmux 或 WSL，Windows Terminal 也不是必需依赖。macOS / Windows 安装器不会替你安装或更换浏览器。
 
 ### 国内下载与回退
 
 默认优先使用国内来源：Python 依赖使用清华 PyPI 镜像，Ubuntu 使用临时清华软件源（ARM64 使用 `ubuntu-ports`），macOS 使用临时 Homebrew API 和 bottle 镜像。已有离线依赖仍优先使用。镜像失败会回退，Ubuntu 回到系统原有软件源，其余依赖回到官方来源；不会改写个人 pip 配置、系统 APT 配置或已有 Homebrew Git 仓库地址。
 
-Windows 缺少公共 Python 时，优先从本站国内服务器下载官方 Python 安装包，核对 SHA256 和 Python Software Foundation 数字签名后安装；不可用时回退 WinGet。WinGet 使用临时中科大索引，安装后移除临时索引；Git、Windows Terminal 的安装包仍可能从官方地址下载。国内索引不等于所有厂商安装包都已镜像。
+Windows 缺少公共 Python 时，优先从本站国内服务器下载官方 Python 安装包，核对 SHA256 和 Python Software Foundation 数字签名后安装；不可用时回退 WinGet。WinGet 使用临时中科大索引，安装后移除临时索引；Git 的安装包仍可能从官方地址下载。国内索引不等于所有厂商安装包都已镜像。
 
 如需使用官方来源，Ubuntu / macOS 运行：
 
@@ -159,7 +161,7 @@ xcpc --help
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-无需先手动安装 Python、Git 或 Windows Terminal。脚本会复用公共目录内可用的 Python 3.12+，缺少时优先通过国内服务器下载并校验官方 Python 3.13 安装包，再通过 WinGet 补齐 Git 和当前用户缺少的 Windows Terminal。国内 Python 下载不可用时也会回退 WinGet；WinGet 不可用时，会先尝试为当前用户注册或修复 App Installer。Windows 安装器出现确认提示时按提示完成即可。如果自动修复失败，脚本会显示原因和 [App Installer 官方安装入口](https://apps.microsoft.com/detail/9nblggh4nns1)。已有 Git 时，也可以用 `git clone` 获取源码后运行同一条安装命令。
+无需先手动安装 Python 或 Git。脚本会复用公共目录内可用的 Python 3.12+，缺少时优先通过国内服务器下载并校验官方 Python 3.13 安装包，再通过 WinGet 补齐公共 Git。安装器同时检查机器级注册信息、两个 Program Files 目录及当前路径，可直接识别刚安装或位于自定义公共目录中的 Git；只安装在某个用户目录内的 Git 不作为公共程序的依赖。国内 Python 下载不可用时也会回退 WinGet；WinGet 不可用时，会先尝试为当前用户注册或修复 App Installer。Windows 安装器出现确认提示时按提示完成即可。如果自动修复失败，脚本会显示原因和 [App Installer 官方安装入口](https://apps.microsoft.com/detail/9nblggh4nns1)。已有 Git 时，也可以用 `git clone` 获取源码后运行同一条安装命令。
 
 使用平时的 PowerShell（包括 Conda 的 `(base)` 环境）启动即可；安装器会弹出一次 UAC 请求安装公共程序，随后回到原用户配置浏览器连接。已经打开管理员 PowerShell 时也可安装。新安装的系统 Python 会直接从注册表识别，无需先退出 Conda 或重开窗口才能继续安装。
 
@@ -173,7 +175,7 @@ xcpc --help
 
 XCPC 程序默认位于 `%ProgramFiles%\XCPC\app`，命令位于 `%ProgramFiles%\XCPC\bin`，所有电脑用户均可运行。每位用户独立登录自己的浏览器和云端账号。接下来按第 2 节加载已有 Chrome / Edge 的扩展。
 
-打开比赛后，Windows Terminal 使用原生分屏：上方显示详情，下方是比赛目录中的 PowerShell，无需 tmux。没有找到 `wt.exe` 时，详情会在独立终端打开，当前终端进入比赛目录；输入 `exit` 返回。
+Windows 的 `vp`、`live`、`bt` 和 `xcpc dashboard` 都在当前终端显示，不新建终端窗口。已经位于 Windows Terminal 中时，当前窗口使用上下分屏：上方显示详情，下方约 35% 的空间是比赛目录中的命令终端。使用普通 PowerShell 或其他 Windows 控制台时，当前控制台显示详情面板，按 `q` 返回比赛目录中的命令输入；从其他目录启动时会在同一控制台进入比赛命令环境，输入 `exit` 返回原目录。运行 `submit` 后可用 `xcpc dashboard` 恢复详情。按 `q` 只关闭面板，不结束 VP。Windows Terminal 为可选软件，安装器不会安装它，也不会因缺少它而失败。
 
 ## 2. 设置网站登录
 
@@ -328,7 +330,10 @@ bt https://codeforces.com/gym/100123
 bt https://qoj.ac/contest/3617
 bt https://oj.cwnupaa.com/contest/6adb59680b835c39ff13486c
 bt https://ac.nowcoder.com/acm/contest/142115
+bt https://ac.nowcoder.com/acm/contest/996
 ```
+
+牛客的题单也可用 `bt`，例如上面的 `996`（0x01 基本算法-位运算）。题单会按原名称建立文件夹，读取已有提交、尝试次数和通过状态；不支持使用 `live` 参加题单。
 
 已有 VP / live 记录时，恢复原比赛目录和提交记录；没有记录时建立补题工作区。补题会读取原站已有的提交，包括网页提交，只记录每题尝试次数和是否通过，不按任何赛制计算分数或罚时。补题不计时，不显示公共统计，Rank 固定。原赛 AC 方格保留绿色，补题新 AC 方格显示蓝色；下方提交记录沿用正常判定颜色。
 
@@ -448,7 +453,7 @@ Ubuntu 使用 `xcpc doctor 站点` 检查 Firefox 配置位置和数据库读取
 
 Ubuntu 可用 `bash install.sh --offline` 禁止从 PyPI 回退，缺少系统依赖时仍可能需要 apt。可用 `--python /path/to/python3` 选择 Python。
 
-macOS / Windows 安装脚本支持 `--target-root`、`--target-bin` 和 `--offline`。`--offline` 只使用已有系统环境和随附 wheels，缺少 Python、Git 或本系统比赛面板工具时会提示退出，不会下载或安装这些依赖。随附 wheels 主要用于 Ubuntu，macOS / Windows 首次安装建议联网。
+macOS / Windows 安装脚本支持 `--target-root`、`--target-bin` 和 `--offline`。`--offline` 只使用已有系统环境和随附 wheels，缺少 Python、Git（macOS 还需要 tmux）时会提示退出，不会下载或安装这些依赖。Windows Terminal 为可选软件。随附 wheels 主要用于 Ubuntu，macOS / Windows 首次安装建议联网。
 
 `--target-root` 设置程序安装目录，`--target-bin` 设置命令目录；macOS / Windows 安装脚本会自动配置命令路径，包括自定义的 `--target-bin`，完成后重新打开终端。比赛文件保存路径仍使用 `xcpc path` 设置。
 

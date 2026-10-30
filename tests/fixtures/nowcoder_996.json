@@ -1,0 +1,146 @@
+{
+  "source": "Anonymous read-only GETs from Nowcoder on 2026-10-30; description, owner profile and page UUID omitted. No user login or submissions were made.",
+  "urls": {
+    "info": "https://ac.nowcoder.com/acm/contest/contest-info?id=996",
+    "problems": "https://ac.nowcoder.com/acm/contest/problem-list?id=996&page=1&pageSize=50",
+    "status": "https://ac.nowcoder.com/acm-heavy/acm/contest/status-list?id=996&page=1&pageSize=20&onlyMyStatusFilter=true",
+    "problem": "https://ac.nowcoder.com/acm/contest/996/A"
+  },
+  "info": {
+    "contestId": 996,
+    "name": "0x01 基本算法-位运算",
+    "type": 0,
+    "category": 10,
+    "contestType": 0,
+    "isFinished": true,
+    "startTime": 1564624800000,
+    "endTime": 1564624800000,
+    "countDownTime": -228736025560,
+    "participationEnabled": false,
+    "isSignUp": false,
+    "isTeamSignUp": false,
+    "rankingVisible": true,
+    "settingInfo": {
+      "allowTeamSignUp": false,
+      "isProblemAutoOpen": true,
+      "ratingStatus": "No",
+      "rankSaveStatus": "Finished"
+    }
+  },
+  "problems": {
+    "data": [
+      {
+        "submitPersonCount": 0,
+        "tagId": 108635,
+        "index": "A",
+        "avgAcSubmitCount": 0.0,
+        "title": "a^b",
+        "totalScore": 0,
+        "score": 0,
+        "acceptedCount": 0,
+        "submitCount": 0,
+        "avgScore": 0.0,
+        "myStatus": "未通过",
+        "problemId": 50906,
+        "info": {}
+      },
+      {
+        "submitPersonCount": 0,
+        "tagId": 108636,
+        "index": "B",
+        "avgAcSubmitCount": 0.0,
+        "title": "Raising Modulo Numbers",
+        "totalScore": 0,
+        "score": 0,
+        "acceptedCount": 0,
+        "submitCount": 0,
+        "avgScore": 0.0,
+        "myStatus": "未通过",
+        "problemId": 50907,
+        "info": {}
+      },
+      {
+        "submitPersonCount": 0,
+        "tagId": 108637,
+        "index": "C",
+        "avgAcSubmitCount": 0.0,
+        "title": "64位整数乘法",
+        "totalScore": 0,
+        "score": 0,
+        "acceptedCount": 0,
+        "submitCount": 0,
+        "avgScore": 0.0,
+        "myStatus": "未通过",
+        "problemId": 50908,
+        "info": {}
+      },
+      {
+        "submitPersonCount": 0,
+        "tagId": 108638,
+        "index": "D",
+        "avgAcSubmitCount": 0.0,
+        "title": "最短Hamilton路径",
+        "totalScore": 0,
+        "score": 0,
+        "acceptedCount": 0,
+        "submitCount": 0,
+        "avgScore": 0.0,
+        "myStatus": "未通过",
+        "problemId": 50909,
+        "info": {}
+      },
+      {
+        "submitPersonCount": 0,
+        "tagId": 655,
+        "index": "E",
+        "avgAcSubmitCount": 0.0,
+        "title": "起床困难综合症",
+        "totalScore": 0,
+        "score": 0,
+        "acceptedCount": 0,
+        "submitCount": 0,
+        "avgScore": 0.0,
+        "myStatus": "未通过",
+        "problemId": 17857,
+        "info": {}
+      }
+    ],
+    "basicInfo": {
+      "contestId": 996,
+      "pageCount": 1,
+      "problemCount": 5,
+      "pageSize": 50,
+      "pageCurrent": 1
+    }
+  },
+  "anonymousStatus": {
+    "data": [],
+    "isContestFinished": true,
+    "basicInfo": {
+      "basicUid": 0,
+      "contestId": 996,
+      "pageCount": 0,
+      "pageSize": 20,
+      "statusCount": 0,
+      "searchUserName": "",
+      "pageCurrent": 1
+    }
+  },
+  "problemConfig": {
+    "contestId": "996",
+    "questionId": "520395",
+    "problemId": "50906",
+    "tagId": "4",
+    "subTagId": "1",
+    "doneQuestionId": "996",
+    "codeJudgeType": "0",
+    "supportLang": "java,cpp"
+  },
+  "javascriptProtocol": {
+    "source": "https://static.nowcoder.com/acm/nowcoder/2.0.118/javascripts-acm/lib/common.js",
+    "sha256": "c24ce5bb25d07e19ca508d602d653cf38bad0a6ab080cc0aff1cadbb1db22c85",
+    "urlPrefix": "/nccommon",
+    "codeSubmit": "/submit_cd",
+    "submissionEndpoint": "https://ac.nowcoder.com/nccommon/submit_cd"
+  }
+}

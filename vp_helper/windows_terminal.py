@@ -5,8 +5,12 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+from uuid import uuid4
 
-from .storage import read_json, write_json
+from .storage import file_lock, read_json, write_json
+
+
+_monitors = {}
 
 
 def process_token(pid, *, terminate=None):
@@ -39,44 +43,160 @@ def process_token(pid, *, terminate=None):
         kernel.CloseHandle(handle)
 
 
-def track_monitor(path):
+def track_monitor(path, *, layout=None):
     if sys.platform != 'win32':
-        return
-    stamp = {'pid': os.getpid(), 'token': process_token(os.getpid())}
+        return lambda: None
+    path = Path(path).resolve()
+    if path in _monitors:
+        return _monitors[path]['cleanup']
+    stamp = {'pid': os.getpid(), 'token': process_token(os.getpid()),
+             'layout': layout or 'legacy'}
     target = path.with_suffix('.windows-monitor')
+    request = path.with_suffix('.windows-reload')
+    entry = {'generation': read_json(request).get('id')}
     write_json(target, stamp)
     def cleanup():
-        if read_json(target) == stamp:
-            target.unlink(missing_ok=True)
+        with file_lock(path.with_suffix('.windows-control.lock')):
+            if read_json(target) == stamp:
+                target.unlink(missing_ok=True)
+                request.unlink(missing_ok=True)
+        if _monitors.get(path) is entry:
+            _monitors.pop(path, None)
+        atexit.unregister(cleanup)
+    entry['cleanup'] = cleanup
+    _monitors[path] = entry
     atexit.register(cleanup)
+    return cleanup
+
+
+def monitor_current(path):
+    """A fresh request closes curses normally, then the same pane reloads it."""
+    entry = _monitors.get(Path(path).resolve())
+    return entry is None or entry['generation'] == read_json(Path(path).with_suffix('.windows-reload')).get('id')
+
+
+def view_options(path):
+    return {'continue_monitor': lambda: monitor_current(path)} if sys.platform == 'win32' else {}
+
+
+def process_parents():
+    """Read only PIDs/parent PIDs; no process command lines or credentials."""
+    import ctypes
+    from ctypes import wintypes
+    class Entry(ctypes.Structure):
+        _fields_ = [('size', wintypes.DWORD), ('usage', wintypes.DWORD), ('pid', wintypes.DWORD),
+                    ('heap', ctypes.c_size_t), ('module', wintypes.DWORD), ('threads', wintypes.DWORD),
+                    ('parent', wintypes.DWORD), ('priority', wintypes.LONG), ('flags', wintypes.DWORD),
+                    ('name', wintypes.WCHAR * 260)]
+    kernel = ctypes.windll.kernel32
+    kernel.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(Entry)]
+    kernel.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(Entry)]
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    snapshot = kernel.CreateToolhelp32Snapshot(2, 0)  # TH32CS_SNAPPROCESS
+    if snapshot in (None, ctypes.c_void_p(-1).value):
+        return {}
+    try:
+        entry = Entry(); entry.size = ctypes.sizeof(entry)
+        parents = {}
+        available = kernel.Process32FirstW(snapshot, ctypes.byref(entry))
+        while available:
+            parents[entry.pid] = entry.parent
+            available = kernel.Process32NextW(snapshot, ctypes.byref(entry))
+        return parents
+    finally:
+        kernel.CloseHandle(snapshot)
+
+
+def foreground_terminal():
+    """Split only an existing foreground Terminal that owns this process.
+
+    ConPTY's GetConsoleWindow is an invisible message-only window, so use the
+    Terminal GUI's class and process ancestry instead. A stale WT_SESSION in
+    an unrelated console must never launch another window through `wt -w 0`.
+    """
+    if sys.platform != 'win32' or not os.environ.get('WT_SESSION'):
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user = ctypes.windll.user32
+        user.GetForegroundWindow.restype = wintypes.HWND
+        user.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        window = user.GetForegroundWindow()
+        name = ctypes.create_unicode_buffer(128)
+        if not (window and user.GetClassNameW(window, name, len(name))
+                and name.value == 'CASCADIA_HOSTING_WINDOW_CLASS'):
+            return False
+        owner = wintypes.DWORD()
+        if not user.GetWindowThreadProcessId(window, ctypes.byref(owner)) or not owner.value:
+            return False
+        parents = process_parents()
+        process = os.getpid(); seen = set()
+        while process and process not in seen:
+            if process == owner.value:
+                return True
+            seen.add(process); process = parents.get(process)
+        return False
+    except (AttributeError, OSError, ValueError):
+        return False
 
 
 def open_dashboard(path, state):
-    target = path.with_suffix('.windows-monitor')
-    active = read_json(target)
-    if active.get('pid') and active.get('token') is not None and process_token(active['pid']) == active['token']:
-        if not state.get('_reload_monitor') and not state.get('practice_view'):
-            print('比赛面板已打开：' + state['directory'])
-            return
-        # Only this recorded monitor process, verified by its creation time.
-        process_token(active['pid'], terminate=active['token'])
-    directory = state['directory']
-    monitor = [sys.executable, '-m', 'vp_helper.cli', '_monitor', str(path)]
-    terminal = shutil.which('wt.exe')
-    if terminal:
-        window = 'xcpc-' + path.stem
-        command = [terminal, '-w', window, 'new-tab', '--title', 'XCPC', '-d', directory,
-                   *monitor, ';', 'split-pane', '-H', '-s', '0.35', '-d', directory,
-                   sys.executable, '-m', 'vp_helper.windows_terminal', 'shell', str(path)]
-        try:
-            subprocess.run(command, check=True, timeout=15)
-            print('已打开比赛窗口，上方为详情，下方为比赛目录中的命令终端。')
-            return
-        except (OSError, subprocess.SubprocessError):
+    from .cli import monitor
+    path = Path(path).resolve()
+    with file_lock(path.with_suffix('.windows-control.lock')):
+        active = read_json(path.with_suffix('.windows-monitor'))
+        if active.get('pid') and active.get('token') is not None and process_token(active['pid']) == active['token']:
+            if active.get('layout') == 'current':
+                if state.get('_reload_monitor') or state.get('practice_view'):
+                    write_json(path.with_suffix('.windows-reload'), {'id': uuid4().hex})
+                print('比赛面板已在原终端中显示：' + state['directory'])
+                return
+            # Migrate an older independent monitor, after checking PID identity.
+            process_token(active['pid'], terminate=active['token'])
+        with file_lock(path.with_suffix('.monitor.lock'), nonblocking=True):
             pass
-    subprocess.Popen(monitor, cwd=directory, creationflags=subprocess.CREATE_NEW_CONSOLE)
-    print('详情已在独立终端打开；当前终端进入比赛目录。输入 exit 返回。')
-    command_shell(path)
+        # Register before any network wait, including a scheduled VP start.
+        cleanup = track_monitor(path, layout='current')
+    previous = Path.cwd()
+    split_shell = False
+    try:
+        os.chdir(state['directory'])
+        # WT has an additional semicolon action parser after CreateProcess
+        # quoting. Preserve literal paths by using this console in that case.
+        literal_paths = (state['directory'], sys.executable, str(path))
+        terminal = shutil.which('wt.exe') if not any(';' in p for p in literal_paths) and foreground_terminal() else None
+        if terminal:
+            command = [terminal, '-w', '0', 'split-pane', '-H', '-s', '0.35', '--title', 'XCPC commands',
+                       '-d', state['directory'], sys.executable, '-m', 'vp_helper.windows_terminal', 'shell', str(path)]
+            try:
+                subprocess.run(command, check=True, timeout=15)
+                split_shell = True
+            except (OSError, subprocess.SubprocessError):
+                # Do not retry an uncertain split or open another terminal.
+                print('无法分屏；在当前终端显示比赛面板，按 q 返回。')
+        else:
+            print('在当前终端显示比赛面板，按 q 返回后可提交代码。')
+        while True:
+            monitor(path)
+            entry = _monitors.get(path)
+            generation = read_json(path.with_suffix('.windows-reload')).get('id')
+            if entry is None or entry['generation'] == generation:
+                break
+            entry['generation'] = generation
+    finally:
+        try:
+            os.chdir(previous)
+        finally:
+            cleanup()
+    if not split_shell and previous != Path(state['directory']).resolve():
+        # A child cannot change its caller's PowerShell directory. Reuse this
+        # console for a shell in the contest folder after q; exit returns to
+        # the original caller. Reopening from that folder needs no extra shell.
+        command_shell(path)
 
 
 def command_shell(path):

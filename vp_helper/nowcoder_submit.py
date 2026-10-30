@@ -23,6 +23,7 @@ from .storage import read_json, state_directory
 from .submit_context import submission_configuration
 from .submission_confirmation import confirm_submission
 from .submission_results import print_judging_link
+from .session_cookies import honor_judge_response_cookies
 
 # Standard input/output judge (codeJudgeType 0). These IDs and names are also
 # present in the site's editor. Other judge types need their own templates.
@@ -114,6 +115,7 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     except _RequestException:
         print_judging_link(api.url)
         raise VPError("Submission outcome unknown. Check Nowcoder records before retrying; the request was not repeated.") from None
+    honor_judge_response_cookies(api.web.session, response)
     try:
         data = response.json()
     except ValueError:

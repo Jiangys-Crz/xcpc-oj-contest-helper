@@ -308,6 +308,43 @@ class SubmitTests(IsolatedState):
         self.stack.enter_context(patch("vp_helper.hydro_submit.refresh_submission_login"))
         self.stack.enter_context(patch("vp_helper.hydro_submit.submission_configuration", return_value=(self.root / "contest.json", self.config)))
 
+    def test_continuous_submissions_refresh_form_and_honor_get_and_post_cookie_rotations(self):
+        from test_judge_sessions import OfflineSession, response
+        from vp_helper.http import WebSession
+        posts = []
+        forms = []
+        def router(method, url, cookie, options):
+            if method == 'POST':
+                self.assertEqual(cookie.count('sid='), 1)
+                self.assertIn('sid=form-'+str(len(forms)), cookie)
+                self.assertEqual(options['data']['csrf'], 'token-'+str(len(forms)))
+                posts.append(options['data'])
+                return response(url, data={'rid': RID} if len(posts) < 3 else {'error': {'name': 'Denied'}},
+                                status=200 if len(posts) < 3 else 403,
+                                cookies=[('sid', 'posted-'+str(len(posts)), '.cwnupaa.com', '/')])
+            if '/record/' in url:
+                self.assertEqual(cookie.count('sid='), 1)
+                self.assertIn('sid=posted-'+str(len(posts)), cookie)
+                return response(url, data={'rdoc': self.record})
+            forms.append(url)
+            native = page(self.form.replace('synthetic', 'token-'+str(len(forms))))
+            return response(url, body=native, cookies=[('sid', 'form-'+str(len(forms)), '.cwnupaa.com', '/')])
+        backend = OfflineSession(router)
+        with patch('vp_helper.http._requests.Session', return_value=backend):
+            self.api.web = WebSession(ORIGIN, {'cookie': 'sid=imported'}, auto_refresh=False)
+        self.api.get_json.side_effect = lambda url, **params: ({'langRange': {'cc.cc20o2': 'C++20'}}
+            if '/submit' in url else self.api.web.get(url).json())
+        with patch('sys.stdout', io.StringIO()) as output:
+            self.assertEqual(hydro_submit.submit(self.source), RID)
+            self.assertEqual(hydro_submit.submit(self.source), RID)
+            with self.assertRaisesRegex(VPError, 'did not confirm'):
+                hydro_submit.submit(self.source)
+        self.assertEqual(len(posts), 3)
+        self.assertEqual(len(forms), 3)
+        self.assertEqual(self.api.identity.call_count, 3)
+        self.assertIn('Check judging results here:', output.getvalue())
+        self.assertNotIn('sid=', output.getvalue())
+
     def test_single_post_dynamic_language_and_hex_receipt(self):
         self.assertEqual(hydro_submit.submit(self.source), RID)
         self.api.web.session.post.assert_called_once()

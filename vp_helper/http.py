@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from http.cookies import SimpleCookie
 from pathlib import Path
 import sys
 import time
@@ -10,6 +9,7 @@ from bs4 import BeautifulSoup
 
 from .models import VPError
 from .parsing import CWNUOJ_HOST, NOWCODER_HOST
+from .browser_sites import canonical_host
 
 # ---------------------------------------------------------------------------
 # Transport selection.
@@ -49,6 +49,8 @@ _IMPERSONATED_USER_AGENT = (
 _RETRY_TOTAL = 2
 _RETRY_STATUS = frozenset({429, 502, 503, 504})
 _RETRY_BACKOFF = 1.0
+_BROWSER_PLATFORMS = {'qoj.ac': 'qoj', 'contest.ucup.ac': 'qoj', 'codeforces.com': 'cf',
+                      CWNUOJ_HOST: 'cwnuoj', NOWCODER_HOST: 'nowcoder'}
 
 try:
     from curl_cffi import requests as _requests
@@ -67,13 +69,14 @@ except ImportError:  # pragma: no cover - curl_cffi not installed
 class WebSession:
     def __init__(self, origin: str, account: dict, *, auto_refresh: bool = True):
         self.origin = origin.rstrip("/")
-        if auto_refresh and account.get('cookie_source') in ('chrome', 'edge') and account.get('browser_host'):
-            from .browser_sites import canonical_host
-            host = urlsplit(self.origin).hostname
+        host = urlsplit(self.origin).hostname or ''
+        canonical = canonical_host(host)
+        if (auto_refresh and canonical in _BROWSER_PLATFORMS
+                and account.get('cookie_source') in ('chrome', 'edge') and account.get('browser_host')):
             if canonical_host(account['browser_host']) != canonical_host(host):
                 from .browser_login import refresh_browser_account
                 selected = {**account, '_browser_target': host}
-                platform = {'qoj.ac':'qoj', 'contest.ucup.ac':'qoj', CWNUOJ_HOST:'cwnuoj', NOWCODER_HOST:'nowcoder'}.get(host, 'cf')
+                platform = _BROWSER_PLATFORMS[canonical]
                 if not refresh_browser_account(platform, selected):
                     raise VPError('请在已加载 XCPC 扩展的浏览器配置中登录 ' + host + ' 后同步。')
                 selected.pop('_browser_target', None)
@@ -82,8 +85,8 @@ class WebSession:
         self._browser_checked = False
         self._http1_only = False
         self._auto_refresh = (auto_refresh and bool(account.get("handle"))
-                              and urlsplit(self.origin).hostname in ("qoj.ac", "codeforces.com", CWNUOJ_HOST, NOWCODER_HOST))
-        if account.get('cookie_source') in ('chrome', 'edge') and urlsplit(self.origin).hostname == 'contest.ucup.ac':
+                              and canonical in ("qoj.ac", "codeforces.com", CWNUOJ_HOST, NOWCODER_HOST))
+        if account.get('cookie_source') in ('chrome', 'edge') and canonical == 'contest.ucup.ac':
             self._auto_refresh = auto_refresh and bool(account.get('handle'))
         if _IMPERSONATE:
             # Linux retains its fixed Firefox profile. Extension snapshots use
@@ -99,22 +102,15 @@ class WebSession:
         self._set_cookies(account.get("cookie", ""))
 
     def _set_cookies(self, value: str) -> None:
-        host = urlsplit(self.origin).hostname
-        cookie = SimpleCookie()
-        cookie.load(value)
-        for key, value in cookie.items():
-            try:
-                self.session.cookies.set(key, value.value, domain=host, path="/")
-            except TypeError:
-                # Some backends expose a narrower Cookies API.
-                self.session.cookies.set(key, value.value)
+        from .session_cookies import import_cookie_header
+        import_cookie_header(self.session, self.origin, value)
 
     def _refresh_browser(self, *, force: bool = False) -> bool:
         if not self._auto_refresh:
             return False
         from .browser_login import refresh_browser_account
         host = urlsplit(self.origin).hostname
-        platform = {"qoj.ac": "qoj", 'contest.ucup.ac': 'qoj', CWNUOJ_HOST: "cwnuoj", NOWCODER_HOST: "nowcoder"}.get(host, "gym")
+        platform = _BROWSER_PLATFORMS[canonical_host(host)]
         selected = {**self.account, '_browser_target': host} if self.account.get('cookie_source') in ('chrome', 'edge') else self.account
         if not refresh_browser_account(platform, selected, force=force):
             return False
@@ -129,10 +125,11 @@ class WebSession:
 
     def get(self, url: str, *, retry: bool = True, **kwargs) -> object:
         timeout = kwargs.pop('timeout', (10, 40))
-        if not self._browser_checked:
+        host = urlsplit(url).hostname or ''
+        first_party = canonical_host(host) == canonical_host(urlsplit(self.origin).hostname or '')
+        if not self._browser_checked and first_party:
             self._browser_checked = True
             self._refresh_browser()
-        host = urlsplit(url).hostname
         refreshed = False
         retries = _RETRY_TOTAL if retry else 0
         for attempt in range(retries + 1):
@@ -159,13 +156,16 @@ class WebSession:
                     request_options['http_version'] = CurlHttpVersion.V1_1
                     sent_at = tick()
                     r = self.session.get(url, timeout=timeout, **request_options)
-                if (not refreshed and r.status_code == 200
+                if (not refreshed and first_party and r.status_code == 200
+                        and canonical_host(urlsplit(r.url).hostname or '') == canonical_host(urlsplit(self.origin).hostname or '')
                         and urlsplit(r.url).path in ("/login", "/user/login", "/enter")):
                     refreshed = True
                     if self._refresh_browser(force=True):
                         # Only an idempotent GET is repeated after refreshing login.
                         sent_at = tick()
                         r = self.session.get(url, timeout=timeout, **request_options)
+                from .session_cookies import honor_judge_response_cookies
+                honor_judge_response_cookies(self.session, r)
             except _RequestException as exc:
                 if attempt == retries:
                     detail = (str(exc).splitlines() or [''])[0][:500]
@@ -197,6 +197,8 @@ class WebSession:
         return self.check(r, sent_at=sent_at)
 
     def check(self, r, *, sent_at=None):
+        from .session_cookies import honor_judge_response_cookies
+        honor_judge_response_cookies(self.session, r)
         if urlsplit(r.url).hostname in ('codeforces.com', 'www.codeforces.com'):
             from .cf_forms import honor_response_cookies
             honor_response_cookies(self.session, r)

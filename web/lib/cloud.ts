@@ -255,7 +255,7 @@ export class CloudService {
     const rules=JSON.parse(row.rules_json||'{}');
     if(frozen && rules.score_policy!=='subtasks' && filtered?.points!==undefined && row.freeze_points!==null && row.freeze_points!==undefined && row.freeze_event_points!==null && row.freeze_event_points!==undefined)filtered.points+=row.freeze_points-row.freeze_event_points;
     else if(frozen && filtered && (filtered.points===undefined || row.freeze_event_points===null) && row.freeze_points!==null && row.freeze_points!==undefined)filtered.points=row.freeze_points;
-    const value={id:row.id,participantType,contestName:row.contest_name,contestUrl:row.contest_url,platform:row.platform,mode:row.mode,rank:row.mode==='bt'?'—':frozen?frozenRank(row,room!):row.rank,solved:filtered?.solved??row.solved,penalty:row.mode==='bt'?0:filtered?.penalty??row.penalty,points:row.mode==='bt'?null:filtered?filtered.points??null:row.points??null,scoring:rules.scoring||'ICPC',problems:JSON.parse(row.problems_json),cells:filtered?.cells??JSON.parse(row.cells_json),startedAt:row.mode==='bt'?null:row.started_at,endedAt:row.mode==='bt'?null:row.ended_at,participantLabel:row.participant_label,roomId:row.room_id,status:row.status,updatedAt:row.updated_at,rules,...(timing?{...timing,freezeActive:timing.frozen,frozen}: {frozen:false})};
+    const value={id:row.id,participantType,contestName:row.contest_name,contestUrl:row.contest_url,platform:row.platform,mode:row.mode,rank:row.mode==='bt'?'—':frozen?frozenRank(row,room!):row.rank,solved:filtered?.solved??row.solved,penalty:row.mode==='bt'?0:filtered?.penalty??row.penalty,points:row.mode==='bt'?null:filtered?filtered.points??null:row.points??null,scoring:rules.scoring||'ICPC',problems:JSON.parse(row.problems_json),cells:filtered?.cells??JSON.parse(row.cells_json),startedAt:row.mode==='bt'?null:row.started_at,endedAt:row.mode==='bt'?null:row.ended_at,participantLabel:row.participant_label,roomId:row.room_id,status:row.status,createdAt:row.created_at,updatedAt:row.updated_at,rules,...(timing?{...timing,freezeActive:timing.frozen,frozen}: {frozen:false})};
     const statistics=row.statistics_json?this.statisticsView(room||{starts_at:row.started_at||now(),duration_seconds:rules.duration,freeze_minutes:rules.freeze_minutes,scoring_system:rules.contest_format},[row],JSON.parse(row.problems_json),at):{};
     return details?{...value,...statistics,submissions:filtered?.submissions??submissions.filter(s=>Date.parse(s.submittedAt)<=at)}:value;
   }
@@ -316,11 +316,21 @@ export class CloudService {
       return value;
     });
     const status=['scheduled','running','complete','archived','cancelled','failed'].includes(body.status)?body.status:mode==='bt'?'practice':body.endedAt?'complete':'running';
+    let createdAt:string|null=null;
+    if(body.createdAt!==undefined) {
+      if(typeof body.createdAt!=='string' || !/^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,6})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(body.createdAt))return fail(400,'创建时间必须是有效 ISO 时间');
+      const stamp=Date.parse(iso(body.createdAt,'创建时间'));
+      if(new Date(body.createdAt.slice(0,10)+'T00:00:00Z').toISOString().slice(0,10)!==body.createdAt.slice(0,10))return fail(400,'创建时间无效');
+      if(stamp<0)return fail(400,'创建时间无效');
+      // Native clocks may lead this server slightly. A future client clock
+      // must neither reject otherwise valid results nor pin history on top.
+      createdAt=new Date(Math.min(stamp,Date.now())).toISOString();
+    }
     let startedAt=mode==='bt'?null:body.startedAt?iso(body.startedAt,'开始时间'):null;
     const endedAt=mode==='bt'?null:body.endedAt?iso(body.endedAt,'结束时间'):null;
     if(status==='failed')startedAt=null;
     if(startedAt && endedAt && endedAt<startedAt) {if(['failed','cancelled'].includes(status))startedAt=null;else return fail(400,'结束时间不能早于开始时间');}
-    return {localId,url,mode,status,platform,name,problems,rules,cells,submissions,publicStatistics,revealedProblems,statisticsAt,startedAt,endedAt,rank:mode==='bt'?'—':text(String(body.rank??'—'),'原站排名',100),solved:number(body.solved,'解决题数',100),penalty:mode==='bt'?0:number(body.penalty,'罚时'),points:mode==='bt'||body.points===undefined?null:score(body.points),revision:number(body.revision,'同步版本',Number.MAX_SAFE_INTEGER)};
+    return {localId,url,mode,status,platform,name,problems,rules,cells,submissions,publicStatistics,revealedProblems,statisticsAt,startedAt,endedAt,createdAt,rank:mode==='bt'?'—':text(String(body.rank??'—'),'原站排名',100),solved:number(body.solved,'解决题数',100),penalty:mode==='bt'?0:number(body.penalty,'罚时'),points:mode==='bt'||body.points===undefined?null:score(body.points),revision:number(body.revision,'同步版本',Number.MAX_SAFE_INTEGER)};
   }
   private sync(user:User,body:Row) {
     const data=this.sanitizeSnapshot(body);
@@ -388,7 +398,7 @@ export class CloudService {
       }
       const values=[user.id,old?.local_id||data.localId,room?.id||null,participant?.id||null,participant?.label||labelUser(user),data.name,data.url,data.platform,mode,startedAt,endedAt,practiceContinuation || old?.ended_at && old.rank!=='—'?old!.rank:data.rank,practiceContinuation?old!.solved:data.solved,practiceContinuation?old!.penalty:data.penalty,JSON.stringify(data.problems),JSON.stringify(data.cells),JSON.stringify(submissions),data.revision,now()];
       if(old)this.store.run('UPDATE histories SET owner_id=?,local_id=?,room_id=?,participant_id=?,participant_label=?,contest_name=?,contest_url=?,platform=?,mode=?,started_at=?,ended_at=?,rank=?,solved=?,penalty=?,problems_json=?,cells_json=?,submissions_json=?,revision=?,updated_at=? WHERE id=?',...values,hid);
-      else this.store.run('INSERT INTO histories(id,owner_id,local_id,room_id,participant_id,participant_label,contest_name,contest_url,platform,mode,started_at,ended_at,rank,solved,penalty,problems_json,cells_json,submissions_json,revision,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',hid,...values);
+      else this.store.run('INSERT INTO histories(id,owner_id,local_id,room_id,participant_id,participant_label,contest_name,contest_url,platform,mode,started_at,ended_at,rank,solved,penalty,problems_json,cells_json,submissions_json,revision,updated_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',hid,...values,data.createdAt||now());
       this.store.run('UPDATE histories SET status=? WHERE id=?',data.status,hid);
       const rules=effectiveRules;
       this.store.run('UPDATE histories SET rules_json=?,points=? WHERE id=?',JSON.stringify(rules),practiceContinuation?old!.points:data.points??old?.points??null,hid);
@@ -456,7 +466,7 @@ export class CloudService {
     if(path==='notifications' && method==='GET')return {data:this.store.all('SELECT * FROM notifications WHERE recipient_id=? ORDER BY created_at DESC LIMIT 300',user.id).map(n=>this.notificationView(n))};
     if(segments[0]==='notifications' && segments.length===3 && segments[2]==='respond' && method==='POST')return {data:this.respond(segments[1],user,body)};
     if(path==='rooms') {
-      if(method==='GET')return {data:this.store.all('SELECT DISTINCT r.* FROM rooms r LEFT JOIN participant_members m ON m.room_id=r.id WHERE r.creator_id=? OR m.user_id=? ORDER BY r.starts_at DESC',user.id,user.id).map(r=>this.roomView(r,user))};
+      if(method==='GET')return {data:this.store.all('SELECT DISTINCT r.* FROM rooms r LEFT JOIN participant_members m ON m.room_id=r.id WHERE r.creator_id=? OR m.user_id=? ORDER BY r.created_at DESC,r.id DESC',user.id,user.id).map(r=>this.roomView(r,user))};
       if(method==='POST') {const name=text(body.name,'VP名称',200),url=contestUrl(body.contestUrl,true),startsAt=iso(body.startsAt,'开始时间'),freeze=freezeMinutes(body.freezeMinutes),system=scoringSystem(body.scoringSystem,url);if(Date.parse(startsAt)<=Date.now())return fail(400,'开始时间必须晚于当前时间');const rid=id();this.store.transaction(()=>{this.store.run('INSERT INTO rooms(id,name,contest_url,starts_at,creator_id,created_at) VALUES(?,?,?,?,?,?)',rid,name,url,startsAt,user.id,now());this.store.run('INSERT INTO room_rules(room_id,duration_seconds,freeze_minutes,scoring_system) VALUES(?,?,?,?)',rid,0,freeze,system);this.audit(user,'room.create',rid);});return {data:this.roomView(this.room(rid),user)};}
     }
     if(segments[0]==='rooms' && segments.length>=2) {
@@ -501,7 +511,7 @@ export class CloudService {
     }
     if(path==='history' && method==='GET') {
       const query=new URL(request.url).searchParams,search=(query.get('search')||'').slice(0,200).toLowerCase(),type=query.get('type');
-      return {data:this.store.all('SELECT DISTINCT h.* FROM histories h LEFT JOIN participant_members m ON m.participant_id=h.participant_id WHERE h.owner_id=? OR m.user_id=? ORDER BY h.updated_at DESC',user.id,user.id).filter(h=>(!search||h.contest_name.toLowerCase().includes(search))&&(!type||type===h.mode)).map(h=>this.historyView(h,false,user))};
+      return {data:this.store.all('SELECT DISTINCT h.* FROM histories h LEFT JOIN participant_members m ON m.participant_id=h.participant_id WHERE h.owner_id=? OR m.user_id=? ORDER BY h.created_at DESC,h.id DESC',user.id,user.id).filter(h=>(!search||h.contest_name.toLowerCase().includes(search))&&(!type||type===h.mode)).map(h=>this.historyView(h,false,user))};
     }
     if(segments[0]==='history' && segments.length===2 && method==='GET') {const h=this.store.one('SELECT * FROM histories WHERE id=?',segments[1]);if(!h||!this.historyVisible(h,user,true))return fail(404,'比赛记录不存在或无权查看');return {data:this.historyView(h,true,user)};}
     if(segments[0]==='client') {

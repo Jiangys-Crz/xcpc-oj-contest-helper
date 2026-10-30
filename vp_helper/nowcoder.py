@@ -63,6 +63,25 @@ def freeze_metadata(setting: dict, duration: int) -> tuple[bool, int | None, int
     return True, duration - before if before else None, duration + after if after is not None and before else None
 
 
+def practice_collection(data: dict) -> bool:
+    """Recognize native untimed training collections, never a live contest.
+
+    The public contest-info response for /acm/contest/996 declares an already
+    finished zero-length schedule. Category-10 auto-open collections may also
+    omit their end time; require both native collection flags in that case.
+    A malformed ordinary contest schedule remains an error.
+    """
+    if data.get('isFinished') is not True:
+        return False
+    start, end = data.get('startTime'), data.get('endTime')
+    zero_length = (type(start) in (int, float) and type(end) in (int, float)
+                   and math.isfinite(start) and math.isfinite(end) and start > 0 and end == start)
+    untimed = (data.get('category') == 10 and (data.get('settingInfo') or {}).get('isProblemAutoOpen') is True
+               and (end is None or type(end) in (int, float) and end == 0)
+               and (start is None or type(start) in (int, float) and math.isfinite(start) and start >= 0))
+    return zero_length or untimed
+
+
 def judging_verdict(value) -> str:
     value = value.strip() if isinstance(value, str) else value
     if value in (None, '', '--', '-'):
@@ -196,6 +215,9 @@ class NowcoderLive:
             raise VPError("Nowcoder returned an unsupported contest identity or scoring rule.")
         if contest.extra.get("uid") is not None and contest.extra["uid"] != self.uid:
             raise VPError("The Nowcoder user ID changed. Restore this contest's account.")
+        collection = practice_collection(data)
+        if collection and require_registration:
+            raise VPError("This Nowcoder problem set supports bt only. Live requires a timed contest.")
         if require_registration and data.get("isTeamSignUp"):
             raise VPError("Nowcoder team contests are not supported yet.")
         if require_registration and not data.get("isSignUp"):
@@ -206,7 +228,19 @@ class NowcoderLive:
         if setting.get("needPassword") and not data.get("filledPassword"):
             raise VPError("Unlock this contest on Nowcoder first, then reconnect with live URL.")
         start, end = data.get("startTime"), data.get("endTime")
-        if not all(type(t) in (int, float) for t in (start, end)) or start <= 0 or end <= start:
+        if collection:
+            contest.name = data['name']
+            # A one-second internal range satisfies Rules; it is not presented
+            # as a contest schedule. Epoch zero preserves absolute record times
+            # when the original collection has no native start timestamp.
+            contest.original_start = start / 1000 if type(start) in (int, float) and start > 0 else 0
+            contest.rules = Rules(1)
+            contest.extra.update(mode='practice', practice=True, practice_set=True, scoring=SCORING[data['type']],
+                                 phase='FINISHED', frozen=False, uid=self.uid, end_time=None,
+                                 ranking_visible=False, freeze_known=True, freeze_source='platform',
+                                 score_policy='latest' if SCORING[data['type']] == 'OI' else 'best')
+            return
+        if not all(type(t) in (int, float) and math.isfinite(t) for t in (start, end)) or start <= 0 or end <= start:
             raise VPError("Nowcoder returned an invalid official schedule.")
         server_ms = start - data["countDownTime"] if type(data.get("countDownTime")) in (int, float) else platform_now(self.url) * 1000
         phase = "BEFORE" if server_ms < start else "CODING" if server_ms < end else "FINISHED"
@@ -404,7 +438,8 @@ class NowcoderLive:
                         and 0 < raw["score"] < raw["fullScore"]):
                     verdict = "PARTIAL"
                 result[sid] = {"id": sid, "team": "me", "problem": label, "time": submitted_at - contest.original_start,
-                               "verdict": verdict, "points": raw.get("score"), "practice": submitted_at >= contest.extra["end_time"]}
+                               "verdict": verdict, "points": raw.get("score"),
+                               "practice": bool(contest.extra.get('practice_set') or submitted_at >= contest.extra["end_time"])}
             if page >= basic.get("pageCount", 0):
                 self.submissions_complete = True
                 break

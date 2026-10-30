@@ -52,6 +52,75 @@ test('association login synchronizes all five fields, preserves administrator ro
   await api('POST','auth/logout',{},user.token);await api('GET','auth/me',undefined,user.token,401);
 });
 
+test('history uses immutable local creation order, including offline sync and legacy clients',async(t)=>{
+  const epoch=Date.parse('2030-01-01T00:00:00Z');t.mock.timers.enable({apis:['Date'],now:epoch});
+  const {api,login,service}=fixture(t),user=await login('captain');
+  const recent=snapshot('recent');recent.createdAt=new Date(epoch-10000).toISOString();
+  const recentId=(await api('POST','client/sync',recent,user.token)).data.id;
+  t.mock.timers.setTime(epoch+60000);
+  const offline=snapshot('offline');offline.createdAt='2029-12-01T12:00:00+08:00';
+  const offlineId=(await api('POST','client/sync',offline,user.token)).data.id;
+  assert.deepEqual((await api('GET','history',undefined,user.token)).data.map((h:Data)=>h.id),[recentId,offlineId]);
+  const stored=(await api('GET',`history/${offlineId}`,undefined,user.token)).data;
+  assert.equal(stored.createdAt,'2029-12-01T04:00:00.000Z');
+  const update={...offline,revision:2,createdAt:new Date(epoch+60000).toISOString()};
+  await api('POST','client/sync',update,user.token);
+  assert.equal((await api('GET',`history/${offlineId}`,undefined,user.token)).data.createdAt,stored.createdAt);
+  assert.deepEqual((await api('GET','history',undefined,user.token)).data.map((h:Data)=>h.id),[recentId,offlineId]);
+  t.mock.timers.setTime(epoch+120000);
+  const legacy=snapshot('legacy-bt');legacy.mode='bt';
+  const legacyId=(await api('POST','client/sync',legacy,user.token)).data.id;
+  const detail=(await api('GET',`history/${legacyId}`,undefined,user.token)).data;
+  assert.equal(detail.createdAt,new Date(epoch+120000).toISOString());assert.equal(detail.startedAt,null);assert.equal(detail.endedAt,null);
+  assert.deepEqual((await api('GET','history',undefined,user.token)).data.map((h:Data)=>h.id),[legacyId,recentId,offlineId]);
+  assert.equal(service.store.one('SELECT COUNT(*) n FROM histories')!.n,3);
+  const tied='2029-01-01T00:00:00.000Z';service.store.run('UPDATE histories SET created_at=?',tied);
+  assert.deepEqual((await api('GET','history',undefined,user.token)).data.map((h:Data)=>h.id),[legacyId,recentId,offlineId].sort().reverse());
+});
+
+test('history creation timestamps reject malformed input and clamp future client clocks',async(t)=>{
+  const epoch=Date.parse('2030-01-01T00:00:00Z');t.mock.timers.enable({apis:['Date'],now:epoch});
+  const {api,login}=fixture(t),user=await login('captain');
+  for(const value of [null,1700000000,'not-a-time','2029-01-01','2029-02-30T12:00:00Z','1969-12-31T23:59:59Z']) {
+    await api('POST','client/sync',{...snapshot('invalid'),createdAt:value},user.token,400);
+  }
+  for(const [index,stamp] of ['2030-01-01T00:00:01Z','2099-01-01T00:00:00Z'].entries()) {
+    const hid=(await api('POST','client/sync',{...snapshot('future-'+index),createdAt:stamp},user.token)).data.id;
+    assert.equal((await api('GET',`history/${hid}`,undefined,user.token)).data.createdAt,new Date(epoch).toISOString());
+  }
+});
+
+test('VP rooms use creation order independently from start changes and preserve team-visible history order',async(t)=>{
+  const epoch=Date.parse('2030-01-01T00:00:00Z');t.mock.timers.enable({apis:['Date'],now:epoch});
+  const {api,login,room,invite,service}=fixture(t),owner=await login('owner'),captain=await login('captain'),member=await login('member');
+  const team=(await api('POST','teams',{nameZh:'排序队',nameEn:'Ordering'},captain.token)).data;
+  const teamNotice=(await api('POST',`teams/${team.id}/invitations`,{userId:member.user.id},captain.token)).data.id;
+  await api('POST',`notifications/${teamNotice}/respond`,{accept:true},member.token);
+  const older=await room(owner.token);await api('PATCH',`rooms/${older.id}`,{startsAt:new Date(epoch+7200e3).toISOString()},owner.token);
+  t.mock.timers.setTime(epoch+1000);const newer=await room(owner.token);
+  for(const r of [older,newer]) {
+    const invitation=await invite(r.id,owner.token,{teamId:team.id});
+    await api('POST',`notifications/${invitation}/respond`,{accept:true},captain.token);
+  }
+  for(const user of [owner,captain,member])assert.deepEqual((await api('GET','rooms',undefined,user.token)).data.map((r:Data)=>r.id),[newer.id,older.id]);
+  await api('PATCH',`rooms/${older.id}`,{name:'Edited old room',startsAt:new Date(epoch+10800e3).toISOString()},owner.token);
+  for(const user of [owner,captain,member])assert.deepEqual((await api('GET','rooms',undefined,user.token)).data.map((r:Data)=>r.id),[newer.id,older.id]);
+  assert.equal((await api('GET',`rooms/${older.id}`,undefined,owner.token)).data.createdAt,older.createdAt);
+  const recent=snapshot('new-team');recent.roomId=newer.id;recent.startedAt=newer.startsAt;recent.createdAt=new Date(epoch+1000).toISOString();
+  const recentId=(await api('POST','client/sync',recent,captain.token)).data.id;
+  t.mock.timers.setTime(epoch+2000);
+  const old=snapshot('old-team');old.roomId=older.id;old.startedAt=new Date(epoch+10800e3).toISOString();old.createdAt=new Date(epoch).toISOString();
+  const oldId=(await api('POST','client/sync',old,captain.token)).data.id;
+  await api('POST','client/sync',{...old,revision:2,createdAt:new Date(epoch+2000).toISOString()},captain.token);
+  for(const user of [captain,member]) {
+    const histories=(await api('GET','history',undefined,user.token)).data;
+    assert.deepEqual(histories.map((h:Data)=>h.id),[recentId,oldId]);assert(histories.every((h:Data)=>h.participantType==='team'));
+  }
+  assert.deepEqual((await api('GET','history',undefined,owner.token)).data,[]);
+  service.store.run('UPDATE rooms SET created_at=?','2029-01-01T00:00:00.000Z');
+  assert.deepEqual((await api('GET','rooms',undefined,owner.token)).data.map((r:Data)=>r.id),[newer.id,older.id].sort().reverse());
+});
+
 test('API cookies, CSRF, settings masking, search privacy, body limits and rate limits are enforced',async(t)=>{
   const {api,service,login,admin}=fixture(t);const a=await admin(),u=await login('captain');
   const auth=await api('POST','auth/admin-login',{account:'admin',password:'Admin-Only-Test-123!'});

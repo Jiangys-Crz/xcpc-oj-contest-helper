@@ -502,7 +502,8 @@ def monitor(path: Path) -> None:
         from .vp import activate
         error = ""
         retry_at = 0.0
-        with TerminalDashboard() as view:
+        from .windows_terminal import view_options
+        with TerminalDashboard(**view_options(path)) as view:
             while waiting.get("status") == "scheduled":
                 if not view.input():
                     return
@@ -571,7 +572,8 @@ def monitor(path: Path) -> None:
         have_polled = False
         future = reference_future = None
         next_render = 0.0
-        with ThreadPoolExecutor(max_workers=2) as network, TerminalDashboard() as view:
+        from .windows_terminal import view_options
+        with ThreadPoolExecutor(max_workers=2) as network, TerminalDashboard(**view_options(path)) as view:
             while view.input():
                 elapsed = platform_now(state) - state["start_time"]
                 cutoff = boundary(path)

@@ -31,6 +31,22 @@ CREATE TABLE IF NOT EXISTS audit(id TEXT PRIMARY KEY, actor_id TEXT REFERENCES u
     for (const [column, definition] of Object.entries({rules_json:"TEXT NOT NULL DEFAULT '{}'",freeze_rank:'TEXT',freeze_rank_at:'TEXT',points:'REAL',freeze_points:'REAL',freeze_event_points:'REAL',freeze_cells_json:'TEXT',statistics_json:'TEXT',revealed_problems_json:'TEXT',statistics_at:'TEXT'})) {
       if (!historyColumns.has(column)) this.db.exec(`ALTER TABLE histories ADD COLUMN ${column} ${definition}`);
     }
+    this.transaction(() => {
+      if (!(this.db.prepare('PRAGMA table_info(histories)').all() as Row[]).some(column => column.name === 'created_at')) {
+        this.db.exec("ALTER TABLE histories ADD COLUMN created_at TEXT NOT NULL DEFAULT ''");
+      }
+      // Old clients did not retain the first cloud receipt time. Use the
+      // earliest valid native start/last-sync timestamp as a one-time proxy;
+      // BT has no contest schedule, so only its saved sync time is considered.
+      this.db.exec(`UPDATE histories SET created_at=COALESCE(
+        CASE WHEN mode<>'bt' AND julianday(started_at) IS NOT NULL
+          AND (julianday(updated_at) IS NULL OR julianday(started_at)<=julianday(updated_at))
+          THEN strftime('%Y-%m-%dT%H:%M:%fZ',started_at)
+          ELSE strftime('%Y-%m-%dT%H:%M:%fZ',updated_at) END,
+        strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE created_at='';
+CREATE INDEX IF NOT EXISTS histories_creation ON histories(created_at DESC,id DESC);
+CREATE INDEX IF NOT EXISTS rooms_creation ON rooms(created_at DESC,id DESC);`);
+    });
     const ruleColumns = new Set((this.db.prepare('PRAGMA table_info(room_rules)').all() as Row[]).map(c => c.name));
     if (!ruleColumns.has('freeze_minutes')) this.db.exec('ALTER TABLE room_rules ADD COLUMN freeze_minutes INTEGER NOT NULL DEFAULT 0');
     if (!ruleColumns.has('scoring_system')) this.db.exec("ALTER TABLE room_rules ADD COLUMN scoring_system TEXT NOT NULL DEFAULT 'ICPC'");

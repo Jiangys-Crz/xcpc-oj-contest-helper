@@ -406,43 +406,6 @@ class NativeBoundaryTests(Isolated):
                 with storage.file_lock(path,nonblocking=True):
                     pass
 
-    def test_windows_terminal_uses_own_monitor_and_gives_shell_more_space(self):
-        path = self.root/'contest-state.json'
-        state = {'directory':str(self.root/'Contest with spaces')}
-        with patch.object(windows_terminal.shutil,'which',return_value='wt.exe'), \
-                patch.object(windows_terminal.subprocess,'run') as run, patch('sys.stdout',io.StringIO()):
-            windows_terminal.open_dashboard(path,state)
-        args = run.call_args.args[0]
-        self.assertEqual(args[0:3], ['wt.exe','-w','xcpc-contest-state'])
-        self.assertIn('vp_helper.cli',args)
-        self.assertIn('vp_helper.windows_terminal',args)
-        self.assertEqual(args.count(str(path)),2)
-        self.assertEqual(args[args.index('-s')+1],'0.35')
-        self.assertEqual(args[args.index('-d')+1],state['directory'])
-        storage.write_json(path.with_suffix('.windows-monitor'),{'pid':42,'token':123})
-        with patch.object(windows_terminal,'process_token',return_value=456) as token, \
-                patch.object(windows_terminal.shutil,'which',return_value='wt.exe'), \
-                patch.object(windows_terminal.subprocess,'run'),patch('sys.stdout',io.StringIO()):
-            windows_terminal.open_dashboard(path,state | {'_reload_monitor':True})
-        self.assertEqual(token.call_count,1)  # PID reuse must not kill an unrelated process.
-
-    def test_terminal_fallback_and_reopening_existing_monitor(self):
-        path = self.root/'state.json'
-        state={'directory':str(self.root)}
-        storage.write_json(path.with_suffix('.windows-monitor'),{'pid':42,'token':123})
-        with patch.object(windows_terminal,'process_token',return_value=123), \
-                patch.object(windows_terminal.shutil,'which') as find, patch('sys.stdout',io.StringIO()):
-            windows_terminal.open_dashboard(path,state)
-            find.assert_not_called()
-        path.with_suffix('.windows-monitor').unlink()
-        with patch.object(windows_terminal.shutil,'which',return_value=None), \
-                patch.object(windows_terminal.subprocess,'CREATE_NEW_CONSOLE',16,create=True), \
-                patch.object(windows_terminal.subprocess,'Popen') as popen, \
-                patch.object(windows_terminal,'command_shell') as shell,patch('sys.stdout',io.StringIO()):
-            windows_terminal.open_dashboard(path,state)
-            self.assertEqual(popen.call_args.kwargs['creationflags'],16)
-            shell.assert_called_once_with(path)
-
     def test_native_submit_discovery_and_no_symlinks(self):
         release=self.root/'releases/current'
         binary=self.root/'commands/submit.exe'

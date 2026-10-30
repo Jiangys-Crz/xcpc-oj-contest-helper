@@ -3,13 +3,13 @@ import io
 import os
 import re
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from rich.console import Console
 from rich.cells import cell_len
 
 from vp_helper.attempt_history import _records
-from vp_helper.models import Contest, Rules, Submission
+from vp_helper.models import Contest, Medals, Rules, Submission
 from vp_helper.practice import PracticeDashboard
 from vp_helper.scoring import score_submissions
 from vp_helper.submission_results import judging_url
@@ -84,7 +84,7 @@ class SubmissionDisplayTests(unittest.TestCase):
                        {chr(65+i): str(10+i) for i in range(13)}, Rules(18000), original_start=1735689600,
                        extra={'scoring': 'ICPC', 'phase': 'CODING'})
 
-    def test_submitted_problem_wraps_without_taking_width_from_other_problems(self):
+    def test_submitted_problems_keep_complete_words_and_equal_column_spacing(self):
         contest = self.contest()
         score = score_submissions([], list(contest.problems), contest.rules, 120)
         before = Dashboard(contest, 120, score, '1', '', None, [], practice=True)
@@ -96,7 +96,11 @@ class SubmissionDisplayTests(unittest.TestCase):
                 first=self.fixed_lines(before,width,engine)
                 second=self.fixed_lines(after,width,engine)
                 headers=lambda lines: next(line for line in lines if 'rank' in line and 'team' in line)
-                self.assertEqual(headers(first),headers(second))
+                for lines in (first,second):
+                    header=headers(lines)
+                    centers=[self.cell_center(header,label)[0] for label in contest.problems]
+                    gaps=[right-left for left,right in zip(centers,centers[1:])]
+                    self.assertLessEqual(max(gaps)-min(gaps),1)
                 self.assertNotIn('…','\n'.join(second))
                 self.assertGreaterEqual(len(second),len(first))
                 self.assertIn('tries','\n'.join(second))
@@ -144,11 +148,83 @@ class SubmissionDisplayTests(unittest.TestCase):
                             continue  # The points/hacks headers require two more cells.
                         with self.subTest(name=name,width=width,engine=engine,view=type(view).__name__):
                             lines=self.fixed_lines(view,width,engine)
+                            if isinstance(view,LiveDashboard):
+                                # A 15-digit unbroken result cannot fit in
+                                # thirteen readable problem columns here.
+                                self.assertIn('Enlarge the score pane to view all problems.','\n'.join(lines))
+                                self.assertFalse(any('rank' in line and 'team' in line for line in lines))
+                                continue
                             header=next(line for line in lines if 'rank' in line and 'team' in line)
                             centers=[self.cell_center(header,label)[0] for label in contest.problems]
                             gaps=[right-left for left,right in zip(centers,centers[1:])]
                             self.assertLessEqual(max(gaps)-min(gaps),1)
                             self.assertTrue(all(cell_len(line)<=width for line in lines))
+
+    def test_unavailable_awards_never_show_unknown_or_a_false_no_prize(self):
+        contest=self.contest()
+        me=score_submissions([],list(contest.problems),contest.rules,120,name='tester')
+        unavailable=[]
+        for prize in ('Unknown','None',''):
+            output=self.render(Dashboard(contest,120,me,'3',prize,None,[]).fixed(160))
+            self.assertNotIn('Unknown',output)
+            self.assertNotIn('No Prize',output)
+            unavailable.append(output)
+        self.assertEqual(len(set(unavailable)),1)
+        contest.medals=Medals(gold=1,silver=2,bronze=3,source='fixture official medals')
+        self.assertIn('No Prize',self.render(Dashboard(contest,120,me,'3','None',None,[]).fixed(160)))
+        self.assertIn('Gold Prize',self.render(Dashboard(contest,120,me,'3','Gold',None,[]).fixed(160)))
+
+    def test_colored_problem_boxes_have_the_same_complete_rectangle(self):
+        contest=self.contest()
+        records=[Submission('1','me','A',60,'CORRECT'),
+                 Submission('2','me','B',60,'WRONG-ANSWER'),Submission('3','me','B',120,'CORRECT'),
+                 Submission('4','me','C',60,'WRONG-ANSWER'),
+                 Submission('5','me','D',60,'WRONG-ANSWER'),Submission('6','me','D',120,'PENDING')]
+        me=score_submissions(records,list(contest.problems),contest.rules,18000,name='Example Team')
+        practice=[{'id':'7','problem':'E','time':19000,'verdict':'CORRECT','practice':True}]
+        for width in (130,156,160):
+            with self.subTest(width=width):
+                view=Dashboard(contest,19000,me,'3','Unknown',None,practice)
+                console=Console(width=width,color_system='truecolor',legacy_windows=False)
+                colors={(96,231,96),(232,114,114),(102,102,255),(0,0,255)}
+                coordinates={color:set() for color in colors}
+                for y,line in enumerate(console.render_lines(view.fixed(width),console.options)):
+                    x=0
+                    for segment in line:
+                        background=segment.style.bgcolor if segment.style else None
+                        color=background.get_truecolor() if background and background.type.name!='DEFAULT' else None
+                        if color in coordinates:
+                            coordinates[color].update((col,y) for col in range(x,x+segment.cell_length))
+                        x+=segment.cell_length
+                dimensions=[]
+                for color,points in coordinates.items():
+                    self.assertTrue(points,f'{color} must stay visible')
+                    while points:
+                        component={points.pop()};pending=list(component)
+                        while pending:
+                            x,y=pending.pop()
+                            for neighbour in ((x-1,y),(x+1,y),(x,y-1),(x,y+1)):
+                                if neighbour in points:
+                                    points.remove(neighbour);component.add(neighbour);pending.append(neighbour)
+                        xs,ys=zip(*component);size=(max(xs)-min(xs)+1,max(ys)-min(ys)+1)
+                        self.assertEqual(len(component),size[0]*size[1])
+                        dimensions.append(size)
+                self.assertEqual(len(dimensions),5)
+                self.assertEqual(len(set(dimensions)),1)
+
+    def test_monitor_reload_callback_can_stop_without_reading_keyboard(self):
+        callback=Mock(return_value=False)
+        view=TerminalDashboard(continue_monitor=callback)
+        view.screen=Mock()
+        self.assertFalse(view.input())
+        callback.assert_called_once_with()
+        view.screen.getch.assert_not_called()
+        callback.reset_mock(return_value=True)
+        callback.return_value=True
+        view.curses=Mock()
+        view.screen.getch.return_value=-1
+        self.assertTrue(view.input())
+        callback.assert_called_once_with()
 
     def test_impossibly_narrow_score_pane_prompts_instead_of_hiding_problems(self):
         contest=self.contest()

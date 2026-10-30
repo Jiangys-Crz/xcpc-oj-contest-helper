@@ -1,0 +1,23 @@
+.quickGuide{max-width:940px;margin:0 auto 28px;min-width:0}
+.quickNav{display:flex;justify-content:space-between;gap:12px;margin:0 0 22px;padding:0 8px;color:#69788d;font-size:12px}
+.quickNav a{display:flex;align-items:center;gap:7px}
+.quickNav a:hover{color:#245be8}
+.quickNav span{display:inline-flex;width:21px;height:21px;align-items:center;justify-content:center;border:1px solid #dbe5f6;border-radius:50%;font-size:11px;background:#f7f9fe;color:#345c9d}
+.quickStep{margin-bottom:20px}
+.quickStep .subheading{margin:22px 0 10px;font-size:14px;color:#263e60}
+.quickStep .subheading:first-child{margin-top:0}
+.picture{margin:14px 0 0;font-size:12px;color:#466b9f}
+.picture>summary{cursor:pointer;width:fit-content}
+.reference{margin-top:30px;scroll-margin-top:95px}
+.reference>summary{padding:20px 22px;cursor:pointer;border:1px solid #dce4ef;border-radius:5px;background:#fff;font-size:16px;font-weight:600;color:#263e60}
+.reference>summary>span{display:block;font-size:12px;font-weight:400;color:#79879b;margin:6px 0 0 18px}
+.reference[open]>summary{margin-bottom:22px}
+.modeChoices{display:flex;gap:10px;margin:16px 0 10px}
+.modeChoices button{flex:1;display:flex;gap:8px;align-items:center;justify-content:center;border:1px solid #dce4ef;border-radius:4px;background:#fff;padding:10px 12px;color:#52637c;cursor:pointer;font:inherit;font-size:12px}
+.modeChoices button.selected{border-color:#a7bff3;background:#f0f5ff;color:#245be8}
+.modeChoices code{font-size:10px;opacity:.7}
+.quickStep .modeDescription{font-size:12px;color:#6b7a8f;margin-bottom:15px}
+.urlLabel{display:flex;flex-direction:column;gap:7px;font-size:12px;font-weight:600;color:#34475f;margin:12px 0}
+.urlLabel input{width:100%;min-width:0;border:1px solid #d6e0ed;border-radius:4px;padding:11px 12px;background:#fff;color:#253c5e;font:400 12px/1.5 ui-monospace,monospace;outline:none}
+.urlLabel input:focus{border-color:#8eafea;box-shadow:0 0 0 2px #ecf2ff}
+@media(max-width:760px){.quickNav{gap:5px;padding:0;font-size:10px}.quickNav a{gap:4px}.quickNav span{width:18px;height:18px;font-size:10px;flex-shrink:0}.modeChoices{gap:6px}.modeChoices button{padding:9px 5px;font-size:11px;gap:5px}.modeChoices code{font-size:9px}.reference>summary{padding:17px 15px;font-size:15px}.reference>summary>span{font-size:11px}.quickStep .subheading{font-size:13px}}

@@ -356,6 +356,36 @@ class SubmitTests(IsolatedState):
         self.stack.enter_context(patch("vp_helper.nowcoder_submit.submission_configuration", return_value=(self.root / "contest.json", self.config)))
         self.stack.enter_context(patch("vp_helper.nowcoder_submit.time.time", return_value=1200))
 
+    def test_continuous_submissions_reparse_fields_and_rotate_parent_cookie_without_repeating_errors(self):
+        from test_judge_sessions import OfflineSession, response
+        from vp_helper.http import WebSession
+        forms = []
+        posts = []
+        def router(method, url, cookie, options):
+            if method == 'GET':
+                forms.append(url)
+                return response(url, body=page().replace("questionId: '1001'", "questionId: '"+str(1001+len(forms))+"'"),
+                                cookies=[('t', 'form-'+str(len(forms)), '.nowcoder.com', '/')])
+            self.assertEqual(cookie.count('t='), 1)
+            self.assertIn('t=form-'+str(len(forms)), cookie)
+            self.assertEqual(options['data']['questionId'], str(1001+len(forms)))
+            posts.append(options['data'])
+            return response(url, data={'code': 0, 'data': 77+len(posts)} if len(posts) < 3 else {'code': 1125},
+                            cookies=[('t', 'posted-'+str(len(posts)), '.nowcoder.com', '/')])
+        backend = OfflineSession(router)
+        with patch('vp_helper.http._requests.Session', return_value=backend):
+            self.api.web = WebSession(ORIGIN, {'cookie': 't=imported'}, auto_refresh=False)
+        with patch('sys.stdout', io.StringIO()) as output:
+            self.assertEqual(nowcoder_submit.submit(self.source), '78')
+            self.assertEqual(nowcoder_submit.submit(self.source), '79')
+            with self.assertRaisesRegex(VPError, 'browser login or verification'):
+                nowcoder_submit.submit(self.source)
+        self.assertEqual(len(posts), 3)
+        self.assertEqual(len(forms), 3)
+        self.assertEqual(self.refresh.call_count, 3)
+        self.assertIn('Check judging results here:', output.getvalue())
+        self.assertNotIn('t=form-', output.getvalue())
+
     def test_form_protocol_and_numeric_receipt_match_reference(self):
         with patch('sys.stdout', io.StringIO()) as output:
             self.assertEqual(nowcoder_submit.submit(self.source), "77")

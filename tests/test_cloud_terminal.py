@@ -91,6 +91,22 @@ class CloudTerminalTests(unittest.TestCase):
         self.assertEqual(payload['solved'],2)
         self.assertTrue(all(s['practice'] for s in payload['submissions']))
 
+    def test_payload_keeps_true_local_creation_for_each_mode_and_never_invents_it_from_contest_start(self):
+        for mode in ('vp','live','practice'):
+            self.state['mode']=mode
+            self.state['created_at']=1700000050.25
+            payload=cloud.sync_payload(self.path,self.state)
+            self.assertEqual(payload['createdAt'],'2023-11-14T22:14:10.250000+00:00')
+            self.assertNotEqual(payload['createdAt'],payload.get('startedAt'))
+            if mode=='practice':
+                self.assertNotIn('startedAt',payload);self.assertNotIn('endedAt',payload)
+        for value in (None,True,False,-1,'1700000050',float('nan'),float('inf'),1e30):
+            with self.subTest(value=value):
+                self.state['created_at']=value
+                self.assertNotIn('createdAt',cloud.sync_payload(self.path,self.state))
+        self.state.pop('created_at')
+        self.assertNotIn('createdAt',cloud.sync_payload(self.path,self.state))
+
     def test_payload_preserves_compiler_error_scoring_rule_for_frozen_board(self):
         self.state['submissions']=[
             {'id':'1','team':'me','problem':'A','time':10,'verdict':'COMPILER-ERROR'},
@@ -206,7 +222,7 @@ class CloudTerminalTests(unittest.TestCase):
     def test_cloud_room_uses_online_schedule_without_prompting_start_time(self):
         from vp_helper import cli, vp, sessions
         participant={'id':'part-1','captainId':'user-1','label':'队伍-甲、乙','type':'team','members':[]}
-        reply={'room':{'id':'room-1','name':'Team VP','contestUrl':self.state['url'],'startsAt':self.context['startsAt']},'participant':participant,'canSubmit':True}
+        reply={'room':{'id':'room-1','name':'Team VP','contestUrl':self.state['url'],'startsAt':self.context['startsAt']},'participant':participant,'canSubmit':True,'serverNow':'2026-10-30T11:00:00Z'}
         prepared={**self.state,'cloud':self.context}
         with patch.object(cloud,'authorize',return_value=(reply,self.saved)) as auth, \
                 patch.object(cli,'load_account',return_value={'qoj':{'handle':'fixture'}}), \

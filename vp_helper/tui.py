@@ -6,6 +6,8 @@ from datetime import datetime
 from rich import box
 from rich.cells import cell_len, set_cell_size
 from rich.console import Console, Group
+from rich.measure import Measurement
+from rich.segment import Segment
 from rich.table import Table
 from rich.text import Text
 
@@ -16,6 +18,39 @@ from .scoring import NON_ATTEMPT_VERDICTS, UNRESOLVED_VERDICTS
 
 PRACTICE_ACCEPTED = "white on #0000ff"
 SCORE_BOX = box.Box("    \n    \n ── \n    \n ── \n ── \n    \n    \n")
+
+
+@dataclass
+class ProblemBox:
+    """Keep every problem's colored area the same size within a score row."""
+    value: Text
+    width: int
+    height: int
+
+    @property
+    def plain(self):
+        return self.value.plain
+
+    def __rich_measure__(self, console, options):
+        return Measurement(self.width, self.width)
+
+    def __rich_console__(self, console, options):
+        lines = self.value.wrap(console, self.width, overflow="fold", no_wrap=False)
+        content = []
+        for line in lines:
+            remaining = self.width - cell_len(line.plain)
+            content.append(" " * (remaining // 2) + line.plain + " " * (remaining - remaining // 2))
+        content.extend([" " * self.width] * (self.height - len(content)))
+        margin = max(0, options.max_width - self.width)
+        style = console.get_style(self.value.style)
+        for line in content:
+            # Text's automatic justification extends its background into the
+            # extra character assigned to some columns. Explicit plain margins
+            # preserve equal colored widths when division has a remainder.
+            yield Segment(" " * (margin // 2))
+            yield Segment(line, style)
+            yield Segment(" " * (margin - margin // 2))
+            yield Segment.line()
 
 
 def score_table(columns, problems, rows, width, *, separate_summary=False):
@@ -29,6 +64,16 @@ def score_table(columns, problems, rows, width, *, separate_summary=False):
              for index in range(len(columns))]
     count = len(columns) + len(problems)
     problem_minimum = max((content_width(label) for label in problems), default=1)
+    # A narrow untried table can stay compact. Once results are present, keep
+    # complete words ("tries") and times intact rather than splitting them
+    # into fragments such as "trie" / "s".
+    first_cells = rows[0][len(columns):] if rows else []
+    active = any((cell.plain if isinstance(cell, Text) else str(cell)).strip() not in ("", "—")
+                 for cell in first_cells)
+    if active:
+        problem_minimum = max(problem_minimum, max((cell_len(word)
+                              for cell in first_cells
+                              for word in (cell.plain if isinstance(cell, Text) else str(cell)).split()), default=1))
     problem_space = len(problems) * problem_minimum
     padding = 1 if sum(sizes) + problem_space + 2 * count <= width else 0
     available = width - problem_space - (2 * count if padding else count - 1)
@@ -52,6 +97,18 @@ def score_table(columns, problems, rows, width, *, separate_summary=False):
         table.columns[0].width += max(0, 2 * padding - table._get_padding_width(0))
     for label in problems:
         table.add_column(label, justify="center", ratio=1, min_width=problem_minimum, overflow="fold")
+    if active and problems:
+        layout = Console(width=width, legacy_windows=False, safe_box=False)
+        widths = table._calculate_column_widths(layout, layout.options.update_width(width - table._extra_width))
+        problem_width = min(widths[index] - table._get_padding_width(index)
+                            for index in range(len(columns), count))
+        if problem_width < problem_minimum:
+            return Text("Enlarge the score pane to view all problems.", style="#555555")
+        height = max(len((cell if isinstance(cell, Text) else Text(str(cell))).wrap(
+                         layout, problem_width, overflow="fold", no_wrap=False))
+                     for cell in first_cells)
+        rows = [[*rows[0][:len(columns)], *(ProblemBox(cell if isinstance(cell, Text) else Text(str(cell)),
+                                                       problem_width, height) for cell in first_cells)], *rows[1:]]
     for index, row in enumerate(rows):
         table.add_row(*row, end_section=separate_summary and index == 0)
     return table
@@ -118,8 +175,9 @@ class Dashboard:
         heading.add_column(width=sides, no_wrap=True)
         heading.add_column(ratio=1, justify="center", no_wrap=True, overflow="ellipsis")
         heading.add_column(width=sides, justify="right", no_wrap=True)
-        prize = {"Gold": "Gold Prize", "Silver": "Silver Prize", "Bronze": "Bronze Prize",
-                 "None": "No Prize", "Unknown": "Unknown"}.get(self.prize, self.prize)
+        prize = {"Gold": "Gold Prize", "Silver": "Silver Prize", "Bronze": "Bronze Prize"}.get(self.prize, "")
+        if self.prize == "None" and self.contest.medals is not None:
+            prize = "No Prize"
         result = self.rank + (f"\n{prize}" if prize else "")
         timer = "Starts in " + clock(-self.elapsed) if self.elapsed < 0 else f"{clock(min(self.elapsed, self.contest.rules.duration))} / {clock(self.contest.rules.duration)}"
         if self.practice:
@@ -362,7 +420,7 @@ class LiveDashboard:
 class TerminalDashboard:
     """Fixed scoreboard with every submission in a keyboard/mouse scroll region."""
 
-    def __init__(self):
+    def __init__(self, continue_monitor=None):
         # Curses draws the segments; Rich must not substitute legacy Windows boxes.
         self.console = Console(style="default", color_system="256", highlight=False,
                                legacy_windows=False, safe_box=False)
@@ -370,6 +428,7 @@ class TerminalDashboard:
         self.page_size = 1
         self.total_lines = 0
         self.pairs = {}
+        self.continue_monitor = continue_monitor
 
     def __enter__(self):
         import curses
@@ -441,6 +500,8 @@ class TerminalDashboard:
         return attributes
 
     def input(self) -> bool:
+        if self.continue_monitor is not None and not self.continue_monitor():
+            return False
         c = self.curses
         while True:
             key = self.screen.getch()
@@ -518,7 +579,7 @@ class TerminalDashboard:
         footer.add_column(justify="right", no_wrap=True)
         footer.add_row(Text(dashboard.message, style="#666666"), Text(f"{first}–{last} / {len(dashboard.submissions)}", style="#666666"))
         self._draw(height - 2, self._lines(footer, content_width)[0], content_width, left)
-        keys = Text("↑/↓ scroll · PgUp/PgDn · Home/End", style="#999999", no_wrap=True, overflow="ellipsis")
+        keys = Text("q return · ↑/↓ scroll · PgUp/PgDn · Home/End", style="#999999", no_wrap=True, overflow="ellipsis")
         self._draw(height - 1, self._lines(keys, content_width)[0], content_width, left)
         self.screen.noutrefresh()
         self.curses.doupdate()

@@ -39,6 +39,9 @@ from vp_helper.receipts import qoj_id_from_list, qoj_submission_id, qoj_submissi
 from vp_helper.models import VPError
 from vp_helper.submit_context import submission_configuration
 from vp_helper.browser_login import refresh_submission_login
+from vp_helper.http import WebSession
+from vp_helper.session_cookies import honor_judge_response_cookies
+from vp_helper.cf_forms import redact
 
 LANG_MAPPING = {
     '.cpp': 'C++20',
@@ -101,49 +104,50 @@ def post_form(session, url, fields):
                              filename=spec[0], content_type=spec[2])
             else:
                 mime.addpart(name=name, data=content)
-        return session.post(url, multipart=mime, allow_redirects=False, timeout=(10, 40))
+        try:
+            return session.post(url, multipart=mime, allow_redirects=False, timeout=(10, 40))
+        finally:
+            mime.close()
     return session.post(url, files=fields, allow_redirects=False, timeout=(10, 40))
 
 
 def submit(url: str, lang: str, code: str, problem: str) -> None:
-    if _IMPERSONATE:
-        # Keep Linux's Firefox transport; native extension logins use Chromium.
-        chromium = contest.get('cookie_source') in ('chrome', 'edge')
-        session = requests.Session(impersonate='chrome' if chromium else _IMPERSONATE)
-        session.headers.update({'Cookie': cookie})
-        if chromium:
-            session.headers['User-Agent'] = user_agent
-    else:
-        session = requests.Session()
-        session.headers.update({
-            'User-Agent': user_agent,
-            'Cookie': cookie,
-        })
-    response = session.get(url, timeout=(10, 40))
-    response.raise_for_status()
-    if isinstance(response.url, str) and urlsplit(response.url).path in ('/login', '/enter'):
-        browser_name = 'Chrome / Edge' if contest.get('cookie_source') in ('chrome', 'edge') else 'Firefox'
-        raise SystemExit(f'QOJ login expired. Log in to QOJ in {browser_name}, then run submit again.')
+    origin = 'https://' + urlsplit(contest_base_url).netloc
+    if (urlsplit(origin).hostname not in ('qoj.ac', 'www.qoj.ac', 'contest.ucup.ac', 'www.contest.ucup.ac')
+            or urlsplit(origin).username or urlsplit(origin).password or urlsplit(origin).port
+            or urlsplit(url).scheme != 'https' or urlsplit(url).netloc != urlsplit(origin).netloc):
+        raise VPError('QOJ returned an unexpected submission destination. No code was submitted.')
+    # Login was refreshed before loading this script. Keep subsequent native
+    # Set-Cookie values in a scoped jar, never a fixed Cookie request header.
+    web = WebSession(origin, contest)
+    try:
+        return submit_with_session(web, url, lang, code, problem)
+    finally:
+        web.session.close()
 
-    parser = LexborHTMLParser(response.text)
-    token_node = parser.css_first('input[name="_token"]')
-    dynamic_token = ''
 
-    if token_node:
-        dynamic_token = token_node.attributes.get('value', '')
-
-    if not dynamic_token:
-        raise RuntimeError('Failed to get token')
-
+def submit_with_session(web, url: str, lang: str, code: str, problem: str) -> None:
+    session = web.session
     # Some QOJ versions redirect to the submissions list instead of to an
     # assigned ID. Capture the old IDs so an old submission cannot look new.
     handle = contest.get('handle') or contest.get('vp_context', {}).get('handle')
     previous = None
     if handle:
-        baseline = session.get(contest_base_url + '/submissions', params={'submitter': handle, 'locale': 'en'}, timeout=(10, 40))
+        baseline = web.get(contest_base_url + '/submissions', params={'submitter': handle, 'locale': 'en'})
         if baseline.status_code == 200 and urlsplit(baseline.url).path == urlsplit(contest_base_url).path + '/submissions':
             previous = qoj_submission_ids(baseline.text)
 
+    # Read the form last: a baseline GET can itself rotate the session and
+    # invalidate a token read before it. Every command gets fresh native data.
+    response = web.get(url)
+    if urlsplit(response.url).netloc != urlsplit(url).netloc or urlsplit(response.url).path != urlsplit(url).path:
+        raise VPError('QOJ did not return the requested submission page. No code was submitted.')
+    parser = LexborHTMLParser(response.text)
+    token_node = parser.css_first('input[name="_token"]')
+    dynamic_token = token_node.attributes.get('value', '') if token_node else ''
+    if not dynamic_token:
+        print_judging_link(contest_base_url)
+        raise VPError('QOJ did not provide a submission token. Refresh the browser login; no code was submitted.')
 
     payload_files = {
         '_token': (None, dynamic_token),
@@ -160,6 +164,7 @@ def submit(url: str, lang: str, code: str, problem: str) -> None:
     except _RequestException:
         print_judging_link(contest_base_url)
         raise SystemExit('Server confirmation unavailable. Check the submissions page before retrying.') from None
+    honor_judge_response_cookies(session, submit_response)
     origin = 'https://' + urlsplit(contest_base_url).netloc
     sid = qoj_submission_id(submit_response, origin)
     target = urljoin(url, submit_response.headers.get('Location', ''))
@@ -168,15 +173,21 @@ def submit(url: str, lang: str, code: str, problem: str) -> None:
             and destination.netloc == urlsplit(origin).netloc and destination.scheme == 'https'
             and destination.path in ('/submissions', urlsplit(contest_base_url).path + '/submissions')):
         try:
-            current = session.get(contest_base_url + '/submissions', params={'submitter': handle, 'locale': 'en'}, timeout=(10, 40))
-        except _RequestException:
+            current = web.get(contest_base_url + '/submissions', params={'submitter': handle, 'locale': 'en'})
+        except (_RequestException, VPError):
             print_judging_link(contest_base_url)
             raise SystemExit('Submission confirmation unavailable. Check the result link before retrying.') from None
         if current.status_code == 200:
             sid = qoj_id_from_list(current.text, previous, contest_base_url, urlsplit(url).path.rsplit('/', 1)[-1], handle)
     if sid is None:
         print_judging_link(contest_base_url)
-        raise SystemExit('Submission was not confirmed. Check the submissions page before retrying.')
+        page = LexborHTMLParser(submit_response.text)
+        errors = [node.text(strip=True) for node in page.css('.error, .error-message, .alert-danger')]
+        detail = ' '.join(dict.fromkeys(errors))
+        if not detail:
+            detail = ('The platform requests browser verification.' if 'cf-chl-' in submit_response.text or 'Just a moment...' in submit_response.text
+                      else 'Check the submissions page before retrying; the request was not repeated.')
+        raise SystemExit('QOJ did not confirm this submission (HTTP ' + str(submit_response.status_code) + '): ' + redact(detail, [dynamic_token, cookie])[:500])
     print(f'Submission #{sid}: PENDING', flush=True)
     try:
         record_receipt(contest, sid, problem, submitted_at)
@@ -214,4 +225,7 @@ if __name__ == '__main__':
     from vp_helper.submission_confirmation import confirm_submission
     if confirm_submission(code_path, contest, problem, lang, url, config_path):
         code = code_path.read_text('utf8')
-        submit(url, lang, code, problem)
+        try:
+            submit(url, lang, code, problem)
+        except (VPError, OSError, UnicodeError) as exc:
+            raise SystemExit('submit: ' + redact(str(exc), [cookie])) from None

@@ -86,15 +86,58 @@ export const platformGuides: Record<Platform, PlatformGuide> = {
     folderCdExample: 'Set-Location -LiteralPath "D:\\XCPC\\示例训练赛"',
     createFileCommand: 'New-Item -ItemType File -Path .\\A.cpp',
     setupNotes: [
-      '支持 Windows 10 / 11 与 Windows PowerShell 5.1 或更新版本。脚本会补齐系统 Python 3.12+、Git 和 Windows Terminal 等运行依赖。',
+      '支持 Windows 10 / 11 与 Windows PowerShell 5.1 或更新版本。脚本会补齐系统 Python 3.12+ 和公共 Git；Windows Terminal 为可选软件，不会自动安装，也不会因缺少它而失败。',
       '缺少公共 Python 时，优先从本站国内服务器获取官方 Python 3.13 安装包，校验 SHA256 和 Python Software Foundation 数字签名后安装；下载或校验失败时回退 WinGet。',
       '从普通 PowerShell 启动即可；安装器会自动弹出 UAC 管理员授权，为所有电脑用户安装，再回到原用户配置浏览器连接。不必另开管理员窗口；已经在管理员 PowerShell 中时也可安装。',
-      '新安装的系统 Python 会直接从注册表识别，无需先退出 Conda 或重开窗口才能继续安装。执行策略 Bypass 只用于这次安装进程。',
-      '比赛窗口使用 Windows Terminal 原生分屏，不需要 WSL 或 tmux。原站登录使用普通 Chrome / Edge 中的 XCPC 扩展。',
+      '新安装的系统 Python 和机器注册的公共 Git 可在同一次安装中直接识别，无需先退出 Conda 或重开窗口才能继续安装。执行策略 Bypass 只用于这次安装进程。',
+      '比赛详情在当前终端显示：已有 Windows Terminal 会话可同窗口上下分屏，普通控制台按 q 返回原命令行，不会新开终端窗口；不需要 WSL 或 tmux。原站登录使用普通 Chrome / Edge 中的 XCPC 扩展。',
       '安装失败时原窗口会显示具体错误与日志路径。日志位于 %LOCALAPPDATA%\\XCPC\\Logs\\install-日期时间-编号\\setup.log，管理员窗口关闭后仍可查看。',
     ],
   },
 };
+
+/** Short, copy-and-follow instructions; full reference stays below. */
+export const quickStartGuides: Record<Platform, {
+  openTerminal: string;
+  authorization: string;
+  browserSteps: string[];
+  folderCommand: string;
+}> = {
+  ubuntu: {
+    openTerminal: '按 Ctrl + Alt + T 打开“终端”。',
+    authorization: '按提示输入电脑密码并回车。输入密码时屏幕不显示字符是正常的，等待安装完成即可。',
+    browserSteps: ['用普通 Firefox 窗口登录你要参加比赛的网站。', '保持 Firefox 登录即可，程序会自动读取；不需要装扩展，也不用关闭浏览器。'],
+    folderCommand: 'xcpc path "$HOME/XCPC"',
+  },
+  macos: {
+    openTerminal: '按 Command + Space，搜索“终端”并打开。',
+    authorization: '按提示输入电脑的管理员密码并确认，等待安装完成。',
+    browserSteps: [
+      'Chrome 地址栏输入 chrome://extensions；Edge 输入 edge://extensions。',
+      '开启“开发者模式”，点击“加载已解压的扩展程序”。',
+      '选择下面的扩展文件夹。文件选择框可按 Command + Shift + G，粘贴路径后回车。',
+      '在同一个浏览器普通窗口登录比赛网站，再点 XCPC 扩展的“同步登录状态”。看到“已连接本机 XCPC”即可。',
+    ],
+    folderCommand: 'xcpc path "$HOME/XCPC"',
+  },
+  windows: {
+    openTerminal: '点击开始菜单，搜索并打开“PowerShell”。',
+    authorization: '出现管理员授权时点击“是”，不要关闭正在安装的窗口。等待安装完成后，回到原窗口即可。',
+    browserSteps: [
+      'Chrome 地址栏输入 chrome://extensions；Edge 输入 edge://extensions。',
+      '开启“开发者模式”，点击“加载已解压的扩展程序”。',
+      '在文件选择框的地址栏粘贴下面的路径，回车后选择这个文件夹。',
+      '在同一个浏览器普通窗口登录比赛网站，再点 XCPC 扩展的“同步登录状态”。看到“已连接本机 XCPC”即可。',
+    ],
+    folderCommand: 'xcpc path "$HOME\\XCPC"',
+  },
+};
+
+export const firstContestModes = [
+  {command: 'bt', label: '赛后补题', description: '练习已经结束的比赛，Codeforces、Gym、QOJ、CWNUOJ 和牛客都支持。'},
+  {command: 'vp', label: '虚拟参赛', description: '支持 Codeforces、Gym 和 QOJ；运行后按提示设置时间和赛制。'},
+  {command: 'live', label: '实时比赛', description: '接入正在进行的比赛。请先在原站报名，支持 Codeforces、Gym、CWNUOJ 和牛客。'},
+] as const;
 
 export const guideSections: GuideSection[] = [
   {
@@ -275,9 +318,10 @@ export const guideSections: GuideSection[] = [
   {
     id: 'practice',
     title: '赛后补题与已有记录恢复',
-    intro: 'bt 支持 Codeforces、Gym、QOJ、CWNUOJ 和牛客，参数必须是完整的原站比赛链接。',
+    intro: 'bt 支持 Codeforces、Gym、QOJ、CWNUOJ 和牛客，参数使用完整的原站比赛链接；牛客的题单也可用于补题。',
     commands: [
       { label: '进入补题', command: 'bt CONTEST_URL', note: '把 CONTEST_URL 换成实际原站比赛链接，例如 https://qoj.ac/contest/3617。' },
+      { label: '牛客题单示例：0x01 基本算法-位运算', command: 'bt https://ac.nowcoder.com/acm/contest/996', note: '题单仅支持 bt，不支持 live。程序按原题单名称建立文件夹，读取已有提交、尝试次数和通过状态。' },
       { label: '在已有比赛目录恢复面板', command: 'xcpc dashboard' },
     ],
     paragraphs: [
@@ -339,9 +383,10 @@ export const guideSections: GuideSection[] = [
         'Ctrl+B 后松开，再按 D 可脱离并保留后台面板。恢复时执行原比赛命令或在比赛目录运行 xcpc dashboard。',
       ],
       windows: [
-        'Windows Terminal 正常情况下会打开上方详情、下方 PowerShell 的原生分屏，无需学习 tmux，也不需要安装 WSL。',
-        '没有可用 Windows Terminal 时，程序会另开详情终端，当前终端进入比赛目录；在命令终端输入 exit 可返回。',
-        '保留详情窗口可继续同步。关闭后进入原比赛目录运行 xcpc dashboard 恢复，不要为了恢复面板重新建立同名目录。',
+        'vp、live、bt 和 xcpc dashboard 都在当前终端显示，不会新建终端窗口。Windows Terminal 不是必装软件，也不需要 WSL 或 tmux。',
+        '已经处于 Windows Terminal 会话中时，当前窗口上下分屏：原面板在上方显示详情，下方约 35% 的空间用于在比赛目录输入命令。',
+        '普通 PowerShell 或其他 Windows 控制台在当前控制台显示详情面板，按 q 返回原命令行。提交前确认进入该比赛目录，运行 submit 后可执行 xcpc dashboard 恢复；q 只关闭面板，不结束 VP。',
+        '保持面板运行可继续同步。关闭后进入原比赛目录运行 xcpc dashboard 恢复，不要为了恢复面板重新建立同名目录。',
       ],
     },
   },
@@ -443,7 +488,7 @@ export const guideSections: GuideSection[] = [
       rows: [
         ['Ubuntu', 'Ubuntu 软件包下载和 Python 依赖优先使用国内镜像；已有可用环境会继续复用'],
         ['macOS', 'Homebrew 相关下载与 Python 依赖使用国内镜像优先的安装流程'],
-        ['Windows', '缺少公共 Python 时从本站国内服务器获取并校验官方安装包；WinGet 目录索引和 Python 依赖使用国内镜像，Git / Windows Terminal 安装包仍可能从原厂下载'],
+        ['Windows', '缺少公共 Python 时从本站国内服务器获取并校验官方安装包；WinGet 目录索引和 Python 依赖使用国内镜像，Git 安装包仍可能从原厂下载；Windows Terminal 不作为安装依赖'],
         ['XCPC 更新包', '默认从 vp.cwnupaa.com 获取，网站更新源不可用时可回退 Gitee'],
       ],
     },

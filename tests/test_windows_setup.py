@@ -190,7 +190,7 @@ function Invoke-XcpcNative {
         $id = $ArgumentList[3]
         if ($id -eq 'Python.Python.3.13') { $script:present += 'Python' }
         if ($id -eq 'Git.Git') { $script:present += 'Git' }
-        if ($id -eq 'Microsoft.WindowsTerminal') { $script:present += 'Terminal' }
+        if ($id -eq 'Microsoft.WindowsTerminal') { throw 'Windows Terminal is optional and must not be installed' }
         return [int]$config.WingetStatus
     }
     if ($FilePath -ne 'python-fixture') { throw 'unexpected command' }
@@ -204,8 +204,9 @@ Write-Output ('__RESULT__' + (@{ Status = $status; Installs = @($script:installs
 
     def test_installs_only_missing_packages_and_refreshes_path(self):
         for present, expected in (
-            ([], ['Python.Python.3.13', 'Git.Git', 'Microsoft.WindowsTerminal']),
+            ([], ['Python.Python.3.13', 'Git.Git']),
             (['Python', 'Terminal'], ['Git.Git']),
+            (['Python', 'Git'], []),
             (['Python', 'Git', 'Terminal'], []),
         ):
             with self.subTest(present=present):
@@ -216,7 +217,7 @@ Write-Output ('__RESULT__' + (@{ Status = $status; Installs = @($script:installs
                     self.assertEqual(args[:3], ['install', '--exact', '--id'])
                     self.assertEqual(args[4:6], ['--source', 'winget'])
                     self.assertEqual(args[-2:], ['--scope','machine'] if args[3] in ('Python.Python.3.13','Git.Git') else ['--accept-source-agreements','--disable-interactivity'])
-                    self.assertEqual('--force' in args, args[3]=='Python.Python.3.13')
+                    self.assertEqual('--force' in args, args[3] in ('Python.Python.3.13','Git.Git'))
                 self.assertEqual(data['Refreshes'], 1 + len(expected))
                 self.assertEqual(data['WingetCalls'], int(bool(expected)))
 
@@ -278,6 +279,107 @@ Write-Output ('__RESULT__' + (@{ Entries = @($env:Path -split ';') } | ConvertTo
                                               r'C:\Git\cmd', r'C:\Python 313',
                                               r'C:\Python 313\Scripts'])
         self.assertTrue(data['Entries'][5].replace('\\', '/').endswith('/Microsoft/WindowsApps'))
+
+    def test_machine_git_uses_both_program_files_layouts_and_checks_its_version(self):
+        data=self.run_powershell(r'''
+$env:ProgramW6432='/machine/Program Files';$env:ProgramFiles=$env:ProgramW6432
+${env:ProgramFiles(x86)}='/machine/Program Files (x86)'
+$env:USERPROFILE='/users/alice';$env:PUBLIC='/users/Public';$env:LOCALAPPDATA='/users/alice/AppData/Local'
+$script:broken=Join-Path $env:ProgramFiles 'Git\cmd\git.exe'
+$script:valid=Join-Path ${env:ProgramFiles(x86)} 'Git\cmd\git.exe';$script:calls=@()
+function Get-XcpcMachineGitPaths {}
+function Get-XcpcApplicationPaths {param($Name);return '/users/alice/Conda/git.exe'}
+function Test-Path {param($LiteralPath,$PathType);return $LiteralPath -in @($script:broken,$script:valid)}
+function Invoke-XcpcNative {param($FilePath,$ArgumentList,[switch]$Quiet);$script:calls+=@{File=$FilePath;Arguments=$ArgumentList};if($FilePath -eq $script:valid){return 0};return 1}
+$git=Find-XcpcTool 'git.exe' -ProbeVersion -SystemWide
+Write-Output ('__RESULT__'+(@{Git=$git;Expected=$script:valid;Calls=$script:calls}|ConvertTo-Json -Compress -Depth 6))
+''')
+        self.assertEqual(data['Git'],data['Expected'])
+        self.assertEqual(len(data['Calls']),2)
+        self.assertTrue(all(call['Arguments']==['--version'] for call in data['Calls']))
+
+    def test_machine_git_registration_accepts_custom_shared_path_but_rejects_user_profiles(self):
+        data=self.run_powershell(r'''
+$env:ProgramW6432='/machine/Program Files';$env:ProgramFiles=$env:ProgramW6432
+${env:ProgramFiles(x86)}='/machine/Program Files (x86)'
+$env:USERPROFILE='/users/alice';$env:PUBLIC='/users/Public';$env:LOCALAPPDATA='/users/alice/AppData/Local'
+$script:custom='/machine/shared Git/cmd/git.exe';$script:calls=@()
+function Get-XcpcMachineGitPaths {
+ [pscustomobject]@{Executable='/users/bob/Git/cmd/git.exe';Directory='/users/bob/Git'}
+ [pscustomobject]@{Executable=$script:custom;Directory='/machine/shared Git'}
+}
+function Get-XcpcApplicationPaths {param($Name);return '/users/alice/Git/cmd/git.exe'}
+function Test-Path {param($LiteralPath,$PathType);return $LiteralPath -in @($script:custom,'/users/bob/Git/cmd/git.exe')}
+function Invoke-XcpcNative {param($FilePath,$ArgumentList,[switch]$Quiet);$script:calls+=,$FilePath;return 0}
+$git=Find-XcpcTool 'git.exe' -ProbeVersion -SystemWide
+$unregistered=Test-XcpcSharedToolPath '/unregistered/Git/cmd/git.exe'
+$boundary=Test-XcpcSharedToolPath '/machine/Program Files-private/Git/cmd/git.exe'
+$env:USERPROFILE='/alice';$env:PUBLIC='';$env:LOCALAPPDATA='/alice/AppData/Local'
+$rootProfile=Test-XcpcSharedToolPath '/machine/shared Git/cmd/git.exe' '/machine/shared Git'
+Write-Output ('__RESULT__'+(@{Git=$git;Calls=$script:calls;Unregistered=$unregistered;Boundary=$boundary;RootProfile=$rootProfile}|ConvertTo-Json -Compress))
+''')
+        self.assertEqual(data['Git'],'/machine/shared Git/cmd/git.exe')
+        self.assertEqual(data['Calls'],['/machine/shared Git/cmd/git.exe'])
+        self.assertFalse(data['Unregistered']);self.assertFalse(data['Boundary'])
+        self.assertTrue(data['RootProfile'])
+
+    def test_git_registered_during_install_is_immediately_reused_and_its_path_is_persisted(self):
+        data=self.run_powershell(r'''
+$env:ProgramW6432='/machine/Program Files';$env:ProgramFiles=$env:ProgramW6432
+${env:ProgramFiles(x86)}='/machine/Program Files (x86)'
+$env:USERPROFILE='/users/alice';$env:PUBLIC='/users/Public';$env:LOCALAPPDATA='/users/alice/AppData/Local'
+$env:Path='/users/alice/Conda;/machine/Existing'
+$script:registered=$false;$script:git='/machine/shared Git/cmd/git.exe';$script:installs=@();$script:machinePath='/machine/Existing';$script:writes=0
+function Test-XcpcAdministrator {return $true}
+function Get-XcpcMachineGitPaths {if($script:registered){[pscustomobject]@{Executable=$script:git;Directory='/machine/shared Git'}}}
+function Get-XcpcApplicationPaths {param($Name);if($Name -eq 'git.exe'){return '/users/alice/Conda/git.exe'};if($Name -eq 'wt.exe'){return 'terminal-fixture'}}
+function Find-XcpcPython {param([switch]$SystemWide);return [pscustomobject]@{Executable='python-fixture';Prefix=@()}}
+function Test-Path {param($LiteralPath,$PathType);return $script:registered -and $LiteralPath -eq $script:git}
+function Update-XcpcProcessPath {}
+function Ensure-XcpcWinGet {return 'winget-fixture'}
+function Get-XcpcEnvironmentPath {param($Scope);if($Scope -ne 'Machine'){throw 'Private PATH must not be persisted'};return $script:machinePath}
+function Set-XcpcMachinePath {param($Value);$script:machinePath=$Value;$script:writes++}
+function Set-XcpcUserPath {throw 'Private PATH must not be persisted'}
+function Invoke-XcpcNative {
+ param($FilePath,$ArgumentList,[switch]$Quiet)
+ if($FilePath -eq 'winget-fixture'){$script:installs+=,@($ArgumentList);$script:registered=$true;return 0}
+ if($FilePath -eq $script:git){return 0}
+ if($FilePath -eq 'python-fixture'){$script:installPath=$env:Path;return 0}
+ throw 'Private or unverified Git must not be executed'
+}
+function Set-XcpcGlobalPermissions {param($Root,$Bin)}
+function Initialize-XcpcUserBridge {param($Root)}
+function Add-XcpcCommandPath {param($Bin,[switch]$SystemWide)}
+$status=Invoke-XcpcWindowsSetup
+Add-XcpcGitPath $script:git -SystemWide
+Write-Output ('__RESULT__'+(@{Status=$status;Installs=$script:installs;Machine=$script:machinePath;Process=$script:installPath;Writes=$script:writes;Directory=(Split-Path -Parent $script:git);Destination=(Join-Path $env:ProgramW6432 'Git')}|ConvertTo-Json -Compress -Depth 6))
+''')
+        self.assertEqual(data['Status'],0)
+        self.assertEqual(len(data['Installs']),1)
+        self.assertIn('--force',data['Installs'][0]);self.assertEqual(data['Installs'][0][-2:],['--scope','machine'])
+        args=data['Installs'][0];self.assertEqual(args[args.index('--location')+1],data['Destination'])
+        self.assertEqual(data['Machine'],'/machine/Existing;'+data['Directory'])
+        self.assertEqual(data['Writes'],1)
+        self.assertEqual(data['Process'],data['Directory']+';/users/alice/Conda;/machine/Existing')
+
+    def test_missing_git_after_successful_package_command_reports_git_specific_diagnostics(self):
+        data=self.run_powershell(r'''
+$script:message='';$script:published=$false
+function Test-XcpcAdministrator {return $true}
+function Update-XcpcProcessPath {}
+function Get-XcpcPrerequisites {return [pscustomobject]@{Python=[pscustomobject]@{Executable='python-fixture';Prefix=@()};Git=$null;Terminal='terminal-fixture'}}
+function Ensure-XcpcWinGet {return 'winget-fixture'}
+function Invoke-XcpcNative {param($FilePath,$ArgumentList,[switch]$Quiet);return 0}
+function Add-XcpcCommandPath {param($Bin,[switch]$SystemWide);$script:published=$true}
+function Write-Error {param($Message,$ErrorAction);$script:message=$Message}
+$status=Invoke-XcpcWindowsSetup
+Write-Output ('__RESULT__'+(@{Status=$status;Message=$script:message;Published=$script:published}|ConvertTo-Json -Compress))
+''')
+        self.assertEqual(data['Status'],1)
+        self.assertIn('Git setup did not provide a usable shared git.exe',data['Message'])
+        self.assertIn('both HKLM registry views',data['Message'])
+        self.assertNotIn('Python must be installed',data['Message'])
+        self.assertFalse(data['Published'])
 
     def test_winget_registration_precedes_official_per_user_repair(self):
         for registered in (True, False):

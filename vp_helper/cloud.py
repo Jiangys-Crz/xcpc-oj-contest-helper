@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import getpass
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import subprocess
@@ -329,6 +330,12 @@ def sync_payload(path, state):
                               'verdict':e['verdict'],'practice':e['practice'],
                               'url':judging_url(contest.url, str(e['id'])),
                               **({'points':_event_points(e)} if _event_points(e) is not None else {})} for e in records]}
+    created = state.get('created_at')
+    if type(created) in (int, float) and math.isfinite(created) and created >= 0:
+        try:
+            payload['createdAt'] = _iso(created)
+        except (OverflowError, OSError, ValueError):
+            pass  # Old or corrupt metadata must not block result synchronization.
     if mode != 'bt' and scoring != 'ICPC':
         points = own.get('points', score.points)
         if points is not None:

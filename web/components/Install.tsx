@@ -1,7 +1,8 @@
 'use client';
-import {useState} from 'react';
+import {useEffect,useRef,useState,type ReactNode} from 'react';
 import {CopyButton,PageHeader} from './shared';
-import {guideSections,platformGuides,type GuideSection,type Platform} from './guideContent';
+import {firstContestModes,guideSections,platformGuides,quickStartGuides,type GuideSection,type Platform} from './guideContent';
+import styles from './Install.module.css';
 
 const systems:Platform[]=['ubuntu','macos','windows'];
 const imageDetails={
@@ -65,15 +66,107 @@ function Section({section,index,platform}:{section:GuideSection;index:number;pla
   </section>;
 }
 
+function QuickStep({number,title,children}:{number:number;title:string;children:ReactNode}){
+  return <section className={'card guide-section '+styles.quickStep} id={'quick-step-'+number}>
+    <div className="section-heading"><h2><span className="guide-step-number">{number}</span>{title}</h2></div>
+    <div className="install-body">{children}</div>
+  </section>;
+}
+
+function Picture({kind,platform}:{kind:NonNullable<GuideSection['image']>;platform:Platform}){
+  return <details className={styles.picture}><summary>查看操作示意图</summary><ExampleImage kind={kind} platform={platform}/></details>;
+}
+
+function FirstContest({platform}:{platform:Platform}){
+  const [mode,setMode]=useState<(typeof firstContestModes)[number]['command']>('bt');
+  const [link,setLink]=useState('');
+  const selected=firstContestModes.find(item=>item.command===mode)!;
+  const value=link.trim();
+  let valid=false,error='';
+  try{
+    const url=new URL(value),host=url.hostname.replace(/^www\./,'');
+    const qoj=['qoj.ac','contest.ucup.ac'].includes(host)&&/^\/contest\/\d+\/?$/.test(url.pathname);
+    const cf=host==='codeforces.com'&&/^\/(contest|gym)\/\d+\/?$/.test(url.pathname);
+    const paa=host==='oj.cwnupaa.com'&&/^(\/d\/[A-Za-z0-9_.-]+)?\/contest\/[a-f0-9]{24}\/?$/i.test(url.pathname);
+    const nk=host==='ac.nowcoder.com'&&/^\/acm\/contest\/[1-9]\d*\/?$/.test(url.pathname);
+    valid=/^https?:$/.test(url.protocol)&&!url.port&&!url.username&&!url.password&&!/\s/.test(value)&&(qoj||cf||paa||nk);
+    if(valid&&mode==='live'&&qoj){valid=false;error='QOJ 请选“虚拟参赛”或“赛后补题”。';}
+    if(valid&&mode==='vp'&&(paa||nk)){valid=false;error='CWNUOJ 和牛客请选“实时比赛”或“赛后补题”。';}
+  }catch{}
+  // Quote a pasted URL for the selected shell, including '&' and ';'.
+  const quoted=platform==='windows'?"'"+value.replace(/'/g,"''")+"'":"'"+value.replace(/'/g,"'\\''")+"'";
+  return <>
+    <p>选择你要做的事，再粘贴原站的比赛链接。</p>
+    <div className={styles.modeChoices} role="group" aria-label="选择参赛方式">{firstContestModes.map(item=><button key={item.command} type="button" aria-pressed={mode===item.command} className={mode===item.command?styles.selected:''} onClick={()=>setMode(item.command)}>{item.label}<code>{item.command}</code></button>)}</div>
+    <p className={styles.modeDescription}>{selected.description}</p>
+    <label className={styles.urlLabel}>原站比赛链接<input type="url" value={link} onChange={event=>setLink(event.target.value)} placeholder="例如 https://qoj.ac/contest/3617" autoComplete="off" spellCheck={false}/></label>
+    {valid?<Command label="复制到终端执行" command={mode+' '+quoted}/>:<p className="install-note">{error||'从比赛网页的地址栏复制完整链接，粘贴到这里后会生成命令。'}</p>}
+    <p>打开比赛后，程序会自动建立比赛名称文件夹。用编辑器在里面新建、编写并保存 <code>A.cpp</code>，再提交：</p>
+    <Command command="submit A.cpp" note="核对提交信息后，输入 y 并回车确认。"/>
+    <p>{platform==='windows'?'面板在当前终端显示。有下方命令区时直接输入；普通 PowerShell 先按 q 返回命令行，再提交。':'下方的命令区已经进入比赛文件夹，直接在这里输入提交命令。'}</p>
+    <Picture kind="terminal" platform={platform}/>
+  </>;
+}
+
 export default function Install(){
   const [platform,setPlatform]=useState<Platform>('ubuntu');
+  const reference=useRef<HTMLDetailsElement>(null);
   const guide=platformGuides[platform];
+  const quick=quickStartGuides[platform];
+  useEffect(()=>{
+    let frame=0;
+    const reveal=()=>{
+      const id=window.location.hash.slice(1);
+      if(!guideSections.some(section=>'guide-'+section.id===id))return;
+      if(reference.current)reference.current.open=true;
+      cancelAnimationFrame(frame);
+      frame=requestAnimationFrame(()=>document.getElementById(id)?.scrollIntoView({block:'start'}));
+    };
+    reveal();window.addEventListener('hashchange',reveal);
+    return()=>{window.removeEventListener('hashchange',reveal);cancelAnimationFrame(frame);};
+  },[]);
   return <div className="install-guide" id="guide-top">
-    <PageHeader title="安装与使用教程" description="选择你的系统，从安装、登录和建立比赛文件夹开始，完成第一次参赛与提交。"/>
+    <PageHeader title="安装教程" description="选择你的电脑系统，按下面 5 步操作即可。"/>
     <div className="install-platforms" role="tablist" aria-label="选择操作系统">
       {systems.map(system=><button key={system} role="tab" aria-selected={platform===system} aria-controls="install-instructions" id={'install-tab-'+system} className={platform===system?'active':''} onClick={()=>setPlatform(system)}>{platformGuides[system].label}</button>)}
     </div>
-    <section className="card guide-overview" aria-label={guide.label+' 安装信息'}>
+    <div className={styles.quickGuide} role="tabpanel" id="install-instructions" aria-labelledby={'install-tab-'+platform}>
+      <nav className={styles.quickNav} aria-label="安装步骤">{['安装','检查','登录','设置目录','开始使用'].map((title,index)=><a key={title} href={'#quick-step-'+(index+1)}><span>{index+1}</span>{title}</a>)}</nav>
+      <QuickStep number={1} title="打开终端，复制安装命令">
+        <p>{quick.openTerminal}</p>
+        <Command label={guide.label+' 一键安装命令'} command={guide.installCommand}/>
+        <p>无需提前安装 Python 或 Git，脚本会自动准备运行环境。</p>
+      </QuickStep>
+      <QuickStep number={2} title="等待完成，再检查是否安装成功">
+        <p>{quick.authorization}</p>
+        <p>安装完成后，关闭旧终端，重新打开终端并运行：</p>
+        <Command command="xcpc --version"/>
+        <p>能看到 <code>XCPC</code> 版本号就可以继续。{platform==='windows'?'不必另外安装 Windows Terminal，普通 PowerShell 也能使用。':''}</p>
+      </QuickStep>
+      <QuickStep number={3} title="登录比赛网站和本系统">
+        <h3 className={styles.subheading}>{platform==='ubuntu'?'原站登录：使用 Firefox':'原站登录：加载 Chrome / Edge 扩展'}</h3>
+        {platform!=='ubuntu'&&<Command command="xcpc doctor cf" note="先运行一次，准备扩展文件夹。此时提示未收到登录信息，可继续下面的步骤。"/>}
+        <ol className="install-steps">{quick.browserSteps.map(step=><li key={step}>{step}</li>)}</ol>
+        {guide.extensionPath&&<div className="install-path"><code>{guide.extensionPath}</code><CopyButton value={guide.extensionPath} label="复制路径"/></div>}
+        <Picture kind="browser" platform={platform}/>
+        <h3 className={styles.subheading}>登录本系统</h3>
+        <p>运行下面的命令，输入协会官网账号和密码，用于保存云端历史和参加组队房间。</p>
+        <Command command="xcpc login"/>
+        <h3 className={styles.subheading}>Codeforces / Gym 用户还需要配置 API</h3>
+        <p>打开 <a href="https://codeforces.com/settings/api" target="_blank" rel="noreferrer">Codeforces API 设置页 ↗</a> 创建 key 和 secret，再运行下面的命令，按提示输入用户名和密钥。使用其他原站可跳过。</p>
+        <Command command="xcpc api cf"/>
+      </QuickStep>
+      <QuickStep number={4} title="设置代码保存目录">
+        <p>复制下面的命令，将比赛和代码保存到自己用户目录下的 <code>XCPC</code> 文件夹。文件夹会自动创建。</p>
+        <Command command={quick.folderCommand}/>
+        <p>以后每场比赛都会在这里按比赛名称建立子文件夹。想换其他位置时，运行 <code>xcpc path</code> 按提示修改。</p>
+        <Picture kind="folders" platform={platform}/>
+      </QuickStep>
+      <QuickStep number={5} title="打开第一场比赛并提交"><FirstContest platform={platform}/></QuickStep>
+    </div>
+    <details className={styles.reference} ref={reference}>
+      <summary>详细使用与安装排错<span>更多命令、组队、目录位置、更新和常见问题</span></summary>
+      <section className="card guide-overview" aria-label={guide.label+' 安装信息'}>
       <div className="section-heading"><h2>{guide.label} · 先了解文件存放位置</h2><span className="guide-overview-tag">程序共用 · 账号独立</span></div>
       <div className="install-body">
         <p>程序安装目录、个人配置目录与比赛保存目录是三种不同的位置。程序会建立所需的目录；你的源码应保存在比赛名称文件夹中。</p>
@@ -83,17 +176,18 @@ export default function Install(){
           <div><dt>个人账号与设置</dt><dd><code>{guide.configPath}</code></dd></div>
           <div><dt>个人比赛记录</dt><dd><code>{guide.statePath}</code></dd></div>
           <div><dt>比赛保存路径示例</dt><dd><code>{guide.workspaceExample}</code></dd></div>
-          <div><dt>比赛详情窗口</dt><dd>{platform==='windows'?'Windows Terminal 原生分屏':'tmux 上下分屏'}</dd></div>
+          <div><dt>比赛详情窗口</dt><dd>{platform==='windows'?'当前终端；Windows Terminal 可分屏':'tmux 上下分屏'}</dd></div>
         </dl>
         <p className="install-note">默认比赛保存到桌面，可用 <code>xcpc path</code> 更改。示例路径中的 <code>player</code> 请替换成自己的电脑用户名，Windows 盘符按需修改；实际路径以 <code>xcpc --version</code> 为准。</p>
       </div>
-    </section>
+      </section>
     <div className="guide-layout">
       <nav className="guide-index" aria-label="教程目录"><details open><summary>本页目录</summary><ol>{guideSections.map((section,index)=><li key={section.id}><a href={'#guide-'+section.id}><span>{index+1}</span>{section.title}</a></li>)}</ol></details><p>首次使用先完成安装、登录和目录设置，再选择 VP、live 或补题。</p></nav>
-      <div className="install-content guide-content" role="tabpanel" id="install-instructions" aria-labelledby={'install-tab-'+platform}>
+      <div className="install-content guide-content">
         {guideSections.map((section,index)=><Section key={section.id} section={section} index={index} platform={platform}/>)}
         <a className="guide-back-top" href="#guide-top">返回顶部 ↑</a>
       </div>
     </div>
+    </details>
   </div>;
 }

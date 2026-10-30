@@ -222,7 +222,8 @@ def monitor(path: Path) -> None:
         future = None
         next_poll = 0.0
         message = ""
-        with ThreadPoolExecutor(max_workers=2) as pool, TerminalDashboard() as view:
+        from .windows_terminal import view_options
+        with ThreadPoolExecutor(max_workers=2) as pool, TerminalDashboard(**view_options(path)) as view:
             while view.input():
                 if future is not None and future.done():
                     try:

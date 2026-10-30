@@ -126,23 +126,87 @@ function Find-XcpcPython {
     return $null
 }
 
+function Get-XcpcMachineGitPaths {
+    # Git for Windows writes InstallPath to HKLM for an all-users install.
+    # Read both views: the running PowerShell may be 32-bit, and Git may use a
+    # custom shared directory which has not reached this process's PATH yet.
+    $seen = @{}
+    foreach ($view in @([Microsoft.Win32.RegistryView]::Registry64, [Microsoft.Win32.RegistryView]::Registry32)) {
+        $registry = $null
+        try {
+            $registry = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, $view)
+            foreach ($entry in @(
+                @{Key='SOFTWARE\GitForWindows';Value='InstallPath'},
+                @{Key='SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Git_is1';Value='InstallLocation'},
+                @{Key='SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Git_is1';Value='Inno Setup: App Path'}
+            )) {
+                $key = $null
+                try {
+                    $key = $registry.OpenSubKey($entry.Key)
+                    if (-not $key) { continue }
+                    $directory = [Environment]::ExpandEnvironmentVariables([string]$key.GetValue($entry.Value)).Trim().Trim('"').TrimEnd('\','/')
+                    if (-not $directory) { continue }
+                    foreach ($relative in @('cmd\git.exe','bin\git.exe')) {
+                        $executable = Join-Path $directory $relative
+                        if (-not $seen.ContainsKey($executable)) {
+                            $seen[$executable]=$true
+                            [pscustomobject]@{ Executable=$executable; Directory=$directory }
+                        }
+                    }
+                } catch { }
+                finally { if ($key) { $key.Dispose() } }
+            }
+        } catch { }
+        finally { if ($registry) { $registry.Dispose() } }
+    }
+}
+
+function Test-XcpcSharedToolPath {
+    param([string]$Path, [string]$RegisteredDirectory)
+    if (-not $Path) { return $false }
+    # GetFullPath removes '..' before applying directory boundaries. Slash
+    # normalization also keeps 32/64-bit PowerShell and custom paths consistent.
+    try { $candidate = [IO.Path]::GetFullPath($Path).Replace('/','\').TrimEnd('\') }
+    catch { return $false }
+    foreach ($profile in @($env:USERPROFILE,$env:PUBLIC,$env:LOCALAPPDATA) | Where-Object { $_ }) {
+        try { $private = [IO.Path]::GetFullPath($profile).Replace('/','\').TrimEnd('\') } catch { continue }
+        # USERPROFILE and PUBLIC also identify the common Users root, so a
+        # machine registration cannot accidentally depend on another user.
+        if ($profile -ne $env:LOCALAPPDATA) {
+            $parent = $private -replace '\\[^\\]+$',''
+            if ($parent -and $parent -notmatch '^[A-Za-z]:$') { $private = $parent }
+        }
+        if ($candidate -eq $private -or $candidate.StartsWith($private + '\',[StringComparison]::OrdinalIgnoreCase)) { return $false }
+    }
+    $prefixes = @($env:ProgramW6432,$env:ProgramFiles,${env:ProgramFiles(x86)},$RegisteredDirectory) | Where-Object { $_ }
+    foreach ($prefix in $prefixes) {
+        try { $shared = [IO.Path]::GetFullPath($prefix).Replace('/','\').TrimEnd('\') } catch { continue }
+        if ($candidate.StartsWith($shared + '\',[StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
+
 function Find-XcpcTool {
     param([string]$Name, [switch]$ProbeVersion, [switch]$SystemWide)
-    $paths = @()
+    $paths = @(); $registeredGit = @{}
     if ($SystemWide -and $Name -eq 'git.exe') {
-        foreach ($prefix in @($env:ProgramW6432, $env:ProgramFiles) | Where-Object { $_ } | Select-Object -Unique) {
-            $candidate = Join-Path $prefix 'Git\cmd\git.exe'
-            if (Test-Path -LiteralPath $candidate -PathType Leaf) { $paths += $candidate }
+        foreach ($registered in @(Get-XcpcMachineGitPaths)) {
+            if (Test-Path -LiteralPath $registered.Executable -PathType Leaf) {
+                $paths += $registered.Executable
+                $registeredGit[$registered.Executable] = $registered.Directory
+            }
+        }
+        foreach ($prefix in @($env:ProgramW6432, $env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ } | Select-Object -Unique) {
+            foreach ($relative in @('Git\cmd\git.exe','Git\bin\git.exe')) {
+                $candidate = Join-Path $prefix $relative
+                if (Test-Path -LiteralPath $candidate -PathType Leaf) { $paths += $candidate }
+            }
         }
     }
     $paths += @(Get-XcpcApplicationPaths $Name)
     foreach ($path in $paths) {
         if ($SystemWide) {
-            $shared = $false
-            foreach ($prefix in @($env:ProgramW6432, $env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ }) {
-                if ($path.StartsWith($prefix.TrimEnd('\','/') + '\', [StringComparison]::OrdinalIgnoreCase)) { $shared = $true }
-            }
-            if (-not $shared) { continue }
+            if (-not (Test-XcpcSharedToolPath $path $registeredGit[$path])) { continue }
         }
         if (-not $ProbeVersion) { return $path }
         try {
@@ -413,6 +477,8 @@ function Get-XcpcPrerequisites {
     return [pscustomobject]@{
         Python = Find-XcpcPython -SystemWide:$SystemWide
         Git = Find-XcpcTool 'git.exe' -ProbeVersion -SystemWide:$SystemWide
+        # Optional: use an existing Windows Terminal window for a split view.
+        # Other consoles can display the dashboard in the current console.
         Terminal = Find-XcpcTool 'wt.exe'
     }
 }
@@ -433,11 +499,28 @@ function Add-XcpcCommandPath {
     $env:Path = Join-XcpcPath @($Bin, $env:Path)
 }
 
+function Add-XcpcGitPath {
+    param($Git, [switch]$SystemWide)
+    if ($Git -isnot [string] -or -not (Test-Path -LiteralPath $Git -PathType Leaf)) { return }
+    $directory = Split-Path -Parent $Git
+    if (-not $directory) { return }
+    # Git may be installed with Bash-only PATH settings or in a custom HKLM
+    # directory. Make the verified Git usable immediately and in new terminals.
+    $scope = if ($SystemWide) { 'Machine' } else { 'User' }
+    $previous = Get-XcpcEnvironmentPath $scope
+    $updated = Join-XcpcPath @($previous, $directory)
+    if ($updated -cne $previous) {
+        if ($SystemWide) { Set-XcpcMachinePath $updated } else { Set-XcpcUserPath $updated }
+    }
+    $env:Path = Join-XcpcPath @($directory, $env:Path)
+}
+
 function Invoke-XcpcWindowsSetup {
     param([string[]]$InstallerArgs = @())
     if ($InstallerArgs -contains '--help' -or $InstallerArgs -contains '-h') {
         Write-Host 'Usage: .\install.ps1 [--target-root DIRECTORY] [--target-bin DIRECTORY] [--offline]'
-        Write-Host 'Installs missing Python 3.13, Git, and Windows Terminal. Default XCPC commands are installed for all Windows users.'
+        Write-Host 'Installs missing Python 3.13 and Git. Default XCPC commands are installed for all Windows users.'
+        Write-Host 'Windows Terminal is optional and is not installed by this script. Existing Windows Terminal windows use a split view; other consoles display the dashboard in place (press q to return).'
         Write-Host '  --offline  Use bundled wheels; fail if prerequisites are missing, without downloading them.'
         Write-Host '  --help     Show this help without installing or downloading anything.'
         return 0
@@ -480,8 +563,7 @@ function Invoke-XcpcWindowsSetup {
         $prerequisites = Get-XcpcPrerequisites -SystemWide:$layout.Global
         $packages = @(
             @{ Key = 'Python'; Name = 'Python 3.12+'; Id = 'Python.Python.3.13' },
-            @{ Key = 'Git'; Name = 'Git'; Id = 'Git.Git' },
-            @{ Key = 'Terminal'; Name = 'Windows Terminal'; Id = 'Microsoft.WindowsTerminal' }
+            @{ Key = 'Git'; Name = 'Git'; Id = 'Git.Git' }
         )
         $missing = @($packages | Where-Object { -not $prerequisites.($_.Key) })
         if ($missing.Count -and $InstallerArgs -contains '--offline') {
@@ -502,7 +584,16 @@ function Invoke-XcpcWindowsSetup {
                 $sourceName = if ($xcpcWinGetMirror) { $xcpcWinGetMirror.Name } else { 'winget' }
                 $wingetArgs = @('install', '--exact', '--id', $package.Id, '--source', $sourceName,
                     '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
-                if ($layout.Global -and $package.Key -eq 'Python') { $wingetArgs += '--force' }
+                if ($layout.Global -and $package.Key -eq 'Git') {
+                    # Git's native installer remembers the previous directory,
+                    # including private installations. Explicitly select a
+                    # shared destination when a usable shared Git is absent.
+                    $programFiles = if ($env:ProgramW6432) { $env:ProgramW6432 } elseif ($env:ProgramFiles) { $env:ProgramFiles } else { [Environment]::GetFolderPath('ProgramFiles') }
+                    $wingetArgs += @('--location', (Join-Path $programFiles 'Git'))
+                }
+                # WinGet can otherwise report an existing private Git as
+                # already installed while the shared executable remains absent.
+                if ($layout.Global -and $package.Key -in @('Python','Git')) { $wingetArgs += '--force' }
                 if ($layout.Global -and $package.Key -in @('Python','Git')) { $wingetArgs += @('--scope', 'machine') }
                 $status = Invoke-XcpcNative $winget $wingetArgs
                 if ($status -ne 0 -and $xcpcWinGetMirror) {
@@ -520,9 +611,13 @@ function Invoke-XcpcWindowsSetup {
             $missing = @($packages | Where-Object { -not $prerequisites.($_.Key) })
             if ($missing.Count) {
                 $names = ($missing | ForEach-Object { $_.Name }) -join ', '
-                throw "Installed prerequisites are still unavailable: $names. The installer checked machine registrations and executable paths in this process. Python must be installed for all users, including venv and ensurepip; a per-user Conda/Python installation cannot back the shared XCPC commands. Review the package installer output above, then rerun install.ps1."
+                $details = @()
+                if ($missing.Key -contains 'Python') { $details += 'Python must be installed for all users, including venv and ensurepip; a per-user Conda/Python installation cannot back the shared XCPC commands.' }
+                if ($missing.Key -contains 'Git') { $details += 'Git setup did not provide a usable shared git.exe. The installer checked both HKLM registry views, Program Files folders and refreshed PATH; a per-user Git does not satisfy the all-users installation.' }
+                throw ("Installed prerequisites are still unavailable: $names. " + ($details -join ' ') + ' Review the package installer output above, then rerun install.ps1.')
             }
         }
+        Add-XcpcGitPath $prerequisites.Git -SystemWide:$layout.Global
         $python = $prerequisites.Python
         $pythonArgs = @($python.Prefix) + @((Join-Path $PSScriptRoot 'install.py')) + $InstallerArgs
         if (-not @($InstallerArgs | Where-Object { $_ -match '^--target-root(?:=|$)' }).Count) { $pythonArgs += @('--target-root', $layout.Root) }
