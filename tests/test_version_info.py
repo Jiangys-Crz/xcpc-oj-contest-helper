@@ -11,6 +11,12 @@ from vp_helper.storage import config_directory, state_directory, write_json
 
 
 class VersionInfoTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'posix', 'POSIX user lookup')
+    def test_unknown_container_uid_still_has_a_readable_runtime_identity(self):
+        from vp_helper.version_info import runtime_user
+        with patch('os.geteuid', return_value=1000), patch('pwd.getpwuid', side_effect=KeyError(1000)):
+            self.assertEqual(runtime_user(), '未知用户（UID 1000）')
+
     def test_version_reports_config_on_every_platform_without_disclosing_secrets_or_network(self):
         with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {
                 'XDG_CONFIG_HOME': temporary + '/config', 'XDG_STATE_HOME': temporary + '/state'}):

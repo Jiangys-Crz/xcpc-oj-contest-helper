@@ -18,7 +18,12 @@ from .storage import config_directory, read_json, state_directory, workspace_dir
 def runtime_user():
     if os.name == 'posix':
         import pwd
-        return pwd.getpwuid(os.geteuid()).pw_name + '（UID ' + str(os.geteuid()) + '）'
+        uid = os.geteuid()
+        try:
+            name = pwd.getpwuid(uid).pw_name
+        except KeyError:
+            name = '未知用户'
+        return name + '（UID ' + str(uid) + '）'
     return getpass.getuser()
 
 
