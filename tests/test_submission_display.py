@@ -174,6 +174,16 @@ class SubmissionDisplayTests(unittest.TestCase):
         self.assertIn('No Prize',self.render(Dashboard(contest,120,me,'3','None',None,[]).fixed(160)))
         self.assertIn('Gold Prize',self.render(Dashboard(contest,120,me,'3','Gold',None,[]).fixed(160)))
 
+    def test_tied_ranks_display_only_the_number_in_vp_and_live_views(self):
+        contest=self.contest()
+        me=score_submissions([],list(contest.problems),contest.rules,120,name='tester')
+        vp=Dashboard(contest,120,me,'=127','',None,[])
+        live=LiveDashboard(contest,120,{'own':{'party':{'members':[{'handle':'tester'}]},'rank':'=127','points':0,'penalty':0,'problemResults':[]}},[])
+        for view in (vp,live):
+            rendered=self.render(view.fixed(160))
+            self.assertIn('127',rendered)
+            self.assertNotIn('=127',rendered)
+
     def test_colored_problem_boxes_have_the_same_complete_rectangle(self):
         contest=self.contest()
         records=[Submission('1','me','A',60,'CORRECT'),

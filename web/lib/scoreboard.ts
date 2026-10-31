@@ -81,7 +81,7 @@ export function publicScore(history: Row, room: Row, at: number, freeze: boolean
 export function frozenRank(history:Row,room:Row) {
   if(history.mode==='vp' && history.freeze_rank_source!=='original')return '?';
   const at=history.freeze_rank_at?Date.parse(history.freeze_rank_at):NaN,freezeAt=roomTiming(room).freezeAt;
-  return freezeAt && Number.isFinite(at) && at<Date.parse(freezeAt) ? history.freeze_rank || '?' : '?';
+  return freezeAt && Number.isFinite(at) && at<Date.parse(freezeAt) ? String(history.freeze_rank || '?').replace(/^=/,'') : '?';
 }
 
 /** Only verified original-contest comparison supplies a VP rank. */
@@ -89,5 +89,5 @@ export function historyRank(history:Row,room?:Row,frozen=false) {
   if(history.mode==='bt')return '—';
   if(frozen && room)return frozenRank(history,room);
   if(history.mode==='vp' && history.rank_source!=='original')return '—';
-  return history.rank || '—';
+  return String(history.rank || '—').replace(/^=/,'');
 }

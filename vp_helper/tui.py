@@ -178,7 +178,7 @@ class Dashboard:
         prize = {"Gold": "Gold Prize", "Silver": "Silver Prize", "Bronze": "Bronze Prize"}.get(self.prize, "")
         if self.prize == "None" and self.contest.medals is not None:
             prize = "No Prize"
-        result = self.rank + (f"\n{prize}" if prize else "")
+        result = str(self.rank).lstrip('=') + (f"\n{prize}" if prize else "")
         timer = "Starts in " + clock(-self.elapsed) if self.elapsed < 0 else f"{clock(min(self.elapsed, self.contest.rules.duration))} / {clock(self.contest.rules.duration)}"
         if self.practice:
             timer = ""
@@ -388,7 +388,7 @@ class LiveDashboard:
         name = self.participant_label or name
         value = (str(int(own["points"])) if scoring == "ICPC" else f"{own['points']:g}") if own else "—"
         rank = self.practice_rank if self.practice else str(own['rank']) if own else '—'
-        values = [str(rank) if rank is not None else '—', Text(name)]
+        values = [str(rank).lstrip('=') if rank is not None else '—', Text(name)]
         if not self.practice:
             values.append(value)
         if not self.practice and scoring == "ICPC":

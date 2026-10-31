@@ -40,7 +40,7 @@ test('room rows retain original official ranks instead of receiving a relative r
   const one=snapshot(r,p,'57'),two={...snapshot(r,q,'=103'),solved:2,penalty:80};
   await api('POST','client/sync',first.token,one);await api('POST','client/sync',second.token,two);
   const board=await api('GET',`rooms/${r.id}/leaderboard`,owner.token);
-  assert.deepEqual(board.rows.map((row:Data)=>row.rank),['=103','57']);
+  assert.deepEqual(board.rows.map((row:Data)=>row.rank),['103','57']);
   assert.equal(board.rows[0].rankSource,'original');assert.equal(board.rows[1].rankSource,'original');
   const history=(await api('GET','history',first.token))[0];assert.equal(history.rank,'57');assert.equal(history.rankSource,'original');
   assert.equal((await api('GET',`history/${history.id}`,first.token)).rank,'57');

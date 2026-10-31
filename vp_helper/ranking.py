@@ -30,4 +30,4 @@ def verified_rank(state: dict, score: TeamScore) -> str:
             or type(count) is not int or count < 1 or not isinstance(rank, str)
             or not re.fullmatch(r'=?[1-9][0-9]*', rank) or int(rank.lstrip('=')) > count + 1):
         return '—'
-    return rank
+    return rank.lstrip('=')

@@ -2,7 +2,7 @@
 
 线上组队、多队虚拟赛、训练历史与队内虚拟打印，配合原有终端完成原站参赛和提交。网站使用 Next.js 全栈，终端继续支持 Ubuntu、macOS 和 Windows。
 
-当前版本：**0.9.7**。线上地址：[CWNU XCPC Vp System](https://vp.cwnupaa.com)。
+当前版本：**0.9.8**。线上地址：[CWNU XCPC Vp System](https://vp.cwnupaa.com)。
 
 一键安装教程：[网站安装教程](https://vp.cwnupaa.com/install)。Ubuntu / macOS 在终端运行：
 

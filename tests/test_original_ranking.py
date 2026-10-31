@@ -28,6 +28,7 @@ class RankProofTests(unittest.TestCase):
         self.assertEqual(verified_rank({'url':URL,'reference_rank':proof},self.score),'3')
         self.rows[1].cells['A'].solve_time=20
         self.assertEqual(original_rank(self.score,reference,URL)['rank'],'=2')
+        self.assertEqual(verified_rank({'url':URL,'reference_rank':original_rank(self.score,reference,URL)},self.score),'2')
 
     def test_empty_starred_incomplete_or_mixed_scoring_reference_has_no_rank(self):
         for rows,complete in (([],True),([self.rows[-1]],True),(self.rows,False),
