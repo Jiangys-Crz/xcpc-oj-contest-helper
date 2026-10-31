@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xcpc-vp-helper"
-version = "0.9.11"
+version = "0.9.12"
 description = "Cross-platform QOJ/Gym virtual contests and Codeforces/CWNUOJ/Nowcoder live contest terminal"
 requires-python = ">=3.12"
 dependencies = ["requests>=2.31,<3", "beautifulsoup4>=4.12,<5", "rich>=13.7,<15", "curl_cffi>=0.17,<1", "tzdata>=2025.1; sys_platform == 'win32'", "windows-curses>=2.4.1; sys_platform == 'win32'"]

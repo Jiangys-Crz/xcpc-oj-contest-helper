@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import math
 from pathlib import Path
 import re
 import time
@@ -19,6 +20,7 @@ from .storage import file_lock, read_json, state_directory, write_json
 CAPABILITY = 'cf-request-v1'
 MAX_REQUEST = 512 * 1024
 MAX_RESPONSE = 512 * 1024
+DEFAULT_TIMEOUT = 45.0
 _PROFILE = re.compile(r'[a-f0-9-]{32,36}')
 _ID = re.compile(r'[a-f0-9]{32}')
 _FIELDS = {'csrf_token','ftaa','bfaa','_tta','action','contestId','submittedProblemIndex','programTypeId','source','sourceFile','tabSize','sourceCodeConfirmed','captcha','cf-turnstile-response','g-recaptcha-response'}
@@ -32,6 +34,29 @@ class BrowserRPCError(VPError):
     def __init__(self, message, *, outcome_unknown=False):
         super().__init__(message)
         self.outcome_unknown = outcome_unknown
+
+
+def request_timeout(value=None):
+    """Accept requests/RoboBrowser defaults while keeping local jobs bounded."""
+    if value is None:
+        return DEFAULT_TIMEOUT
+    parts = value if isinstance(value, (tuple, list)) else (value,)
+    if isinstance(value, (tuple, list)) and len(parts) != 2:
+        raise BrowserRPCError('The browser request timeout is invalid. No request was sent.')
+    seconds = 0.0
+    for part in parts:
+        if part is None:
+            part = DEFAULT_TIMEOUT
+        if isinstance(part, bool) or not isinstance(part, (int, float)):
+            raise BrowserRPCError('The browser request timeout is invalid. No request was sent.')
+        try:
+            number = float(part)
+        except (OverflowError, ValueError):
+            raise BrowserRPCError('The browser request timeout is invalid. No request was sent.') from None
+        if not math.isfinite(number) or number <= 0:
+            raise BrowserRPCError('The browser request timeout is invalid. No request was sent.')
+        seconds += min(90.0, number)
+    return min(90.0, max(1.0, seconds))
 
 
 def validate_target(method, url):
@@ -119,6 +144,7 @@ class BrowserResponse:
 
 def request(account, method, url, *, data=None, files=None, timeout=45):
     method,url=validate_target(method,url)
+    lifetime=request_timeout(timeout)
     source,profile=_selection(account)
     handle=account.get('handle','')
     if not isinstance(handle,str) or not re.fullmatch(r'[A-Za-z0-9_.-]{0,64}' if method=='GET' else r'[A-Za-z0-9_.-]{1,64}',handle):
@@ -152,7 +178,6 @@ def request(account, method, url, *, data=None, files=None, timeout=45):
         parts=urlsplit(url).path.strip('/').split('/')
         if fields.get('contestId',[parts[1]])!=[parts[1]] or len(parts)==4 and fields.get('submittedProblemIndex')!=[parts[3].upper()]:
             raise BrowserRPCError('The browser form targets a different contest or problem. No request was sent.')
-    lifetime=min(90,max(1,float(timeout)))
     job={'id':uuid4().hex,'source':source,'profile_id':profile,'method':method,'url':url,'data':fields,'file':upload,
          'expected_handle':handle,'created_at':time.time(),'expires_at':time.time()+lifetime,'status':'pending'}
     if len(json.dumps(job,ensure_ascii=False).encode('utf8'))>MAX_REQUEST:

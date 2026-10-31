@@ -77,9 +77,7 @@ class BrowserSession:
                 if hasattr(body, 'read'):
                     body = body.read(browser_rpc.MAX_REQUEST + 1)
                 uploads[name] = (filename, body)
-        timeout = options.pop('timeout', 45)
-        if isinstance(timeout, (tuple, list)):
-            timeout = sum(v for v in timeout if isinstance(v, (int, float)))
+        timeout = browser_rpc.request_timeout(options.pop('timeout', None))
         # Deliberately ignore Python Cookie/User-Agent/Fetch headers: the normal
         # tab supplies its own complete browser request context.
         response = browser_rpc.request(self.account, method, url, data=fields or None,

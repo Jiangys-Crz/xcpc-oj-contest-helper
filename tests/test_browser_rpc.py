@@ -26,6 +26,16 @@ class BrowserRPCTests(unittest.TestCase):
         bridge.store_snapshot({'source':'edge','profile_id':PROFILE,'user_agent':'Fixture Edge','cookies':[], 'capabilities':[rpc.CAPABILITY]})
         self.account={'cookie_source':'edge','browser_profile':str(state_directory()/'browser-login/edge'/f'{PROFILE}.json'),'handle':'MyHandle'}
 
+    def test_timeout_defaults_pairs_and_invalid_values_are_checked_before_dispatch(self):
+        for value, expected in [(None, 45), (5, 5), (500, 90), ((10, 40), 50),
+                                ((5, None), 50), ((None, None), 90), ([None, 5], 50)]:
+            with self.subTest(timeout=value):
+                self.assertEqual(rpc.request_timeout(value), expected)
+        for value in (True, 0, -1, 'bad', float('nan'), float('inf'), (), (1,), (1, 2, 3), (1, -2)):
+            with self.subTest(timeout=value), self.assertRaisesRegex(rpc.BrowserRPCError, 'timeout is invalid'):
+                rpc.request(self.account, 'GET', URL, timeout=value)
+        self.assertFalse(list((state_directory()/'browser-rpc').glob('**/*.json')))
+
     def start_request(self,method='GET',url=URL,**kwargs):
         values={}
         def run():

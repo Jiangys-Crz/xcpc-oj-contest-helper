@@ -55,6 +55,42 @@ class CFBrowserSessionTests(unittest.TestCase):
                         'browser_host': 'codeforces.com', 'user_agent': 'fixture browser UA',
                         'api_key': 'never-send-api-key', 'api_secret': 'never-send-api-secret'}
 
+    def test_real_robobrowser_open_default_none_timeout_uses_actual_rpc_queue(self):
+        for source in ('chrome', 'edge'):
+            with self.subTest(source=source):
+                profile = state_directory() / 'browser-login' / source / ('a' * 32 + '.json')
+                write_json(profile, {'source': source, 'profile_id': profile.stem,
+                                     'capabilities': [browser_rpc.CAPABILITY], 'updated_at': time.time()})
+                account = {**self.account, 'cookie_source': source, 'browser_profile': str(profile)}
+                browser = RoboBrowser(parser='lxml', session=BrowserSession(account))
+                errors = []
+                def open_page():
+                    try:
+                        browser.open('https://codeforces.com/')
+                    except Exception as exc:
+                        errors.append(exc)
+                worker = threading.Thread(target=open_page, daemon=True)
+                worker.start()
+                job = None
+                until = time.monotonic() + 2
+                while job is None and worker.is_alive() and time.monotonic() < until:
+                    job = browser_rpc.poll(source, profile.stem)
+                    if job is None:
+                        time.sleep(.01)
+                self.assertEqual(errors, [])
+                self.assertIsNotNone(job)
+                self.assertEqual(job['method'], 'GET')
+                self.assertAlmostEqual(job['expires_at'] - job['created_at'], 45, delta=.1)
+                self.assertFalse(job['data']); self.assertIsNone(job['file'])
+                browser_rpc.complete(source, profile.stem, job['id'], {
+                    'status': 200, 'url': 'https://codeforces.com/', 'text': HEADER,
+                    'headers': {'Content-Type': 'text/html'}})
+                worker.join(2)
+                self.assertFalse(worker.is_alive()); self.assertEqual(errors, [])
+                self.assertEqual(browser.url, 'https://codeforces.com/')
+                self.assertEqual(browser.parsed.select_one('#header a').get_text(), 'tester')
+                self.assertIsNone(browser_rpc.poll(source, profile.stem))
+
     def test_html_uses_browser_from_first_get_and_api_remains_on_raw_transport(self):
         web = WebSession('https://codeforces.com', self.account)
         self.addCleanup(web.session.close)
