@@ -28,15 +28,14 @@ def read_message(stream):
 
 
 def send_message(stream, value):
-    data = json.dumps(value).encode('utf8')
+    data = json.dumps(value,ensure_ascii=False).encode('utf8')
+    if len(data)>1024*1024:
+        raise ValueError('Native message exceeded the supported size')
     stream.write(struct.pack('<I', len(data)) + data)
     stream.flush()
 
 
-def store_snapshot(value):
-    source, profile = value.get('source'), value.get('profile_id', '')
-    if source not in ('chrome', 'edge') or not re.fullmatch(r'[a-f0-9-]{32,36}', profile):
-        raise ValueError('Invalid browser profile')
+def snapshot_cookies(value, *, cf_only=False):
     cookies = []
     for c in value.get('cookies', []):
         if (not isinstance(c, dict) or c.get('domain') not in DOMAINS or c.get('path') != '/'
@@ -44,18 +43,29 @@ def store_snapshot(value):
                 or not isinstance(c.get('name'), str) or not isinstance(c.get('value'), str)
                 or any(ch in c['name'] + c['value'] for ch in '\r\n;')):
             continue
-        expiry = c.get('expirationDate', -1)
+        if cf_only and c.get('domain').lstrip('.') not in ('codeforces.com','www.codeforces.com'):
+            continue
+        expiry = c.get('expirationDate', c.get('expires', -1))
         if isinstance(expiry, (int, float)) and math.isfinite(expiry):
             saved = {key: c[key] for key in ('name', 'value', 'domain', 'path')} | {'expires': expiry}
             if c.get('partitionKey') is not None:
                 saved['partitionKey'] = {'topLevelSite': c['partitionKey']['topLevelSite']}
             cookies.append(saved)
+    return cookies
+
+
+def store_snapshot(value):
+    source, profile = value.get('source'), value.get('profile_id', '')
+    if source not in ('chrome', 'edge') or not re.fullmatch(r'[a-f0-9-]{32,36}', profile):
+        raise ValueError('Invalid browser profile')
+    cookies = snapshot_cookies(value)
     agent = value.get('user_agent', '')
     if not isinstance(agent, str) or len(agent) > 1000 or '\n' in agent or '\r' in agent:
         raise ValueError('Invalid browser metadata')
     write_json(state_directory() / 'browser-login' / source / (profile + '.json'),
                {'source': source, 'profile_id': profile, 'user_agent': agent, 'updated_at': time.time(), 'cookies': cookies,
-                'read_errors': [host for host in value.get('read_errors', []) if host in HOSTS]})
+                'read_errors': [host for host in value.get('read_errors', []) if host in HOSTS],
+                'capabilities': ['cf-request-v1'] if 'cf-request-v1' in value.get('capabilities', []) else []})
 
 
 
@@ -91,12 +101,25 @@ def main():
         msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)
         msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
     try:
+        identity = None
         while (value := read_message(sys.stdin.buffer)) is not None:
             if str(value.get('type', '')).startswith('cloud-'):
                 send_message(sys.stdout.buffer, cloud_message(value))
             elif value.get('type') == 'snapshot':
+                current=(value['source'],value['profile_id'])
+                if identity is not None and identity != current:
+                    raise ValueError('Browser profile changed on native port')
                 store_snapshot(value)
+                identity=current
                 send_message(sys.stdout.buffer, {'type': 'stored'})
+            elif value.get('type') in ('cf-request-poll','cf-request-result'):
+                if identity is None:
+                    raise ValueError('Browser profile not established')
+                from . import browser_rpc
+                if value['type']=='cf-request-poll':
+                    send_message(sys.stdout.buffer, {'type':'cf-request-job','job':browser_rpc.poll(*identity)})
+                else:
+                    browser_rpc.complete(*identity,value.get('id'),value.get('result'))
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
         raise SystemExit(1) from None
 

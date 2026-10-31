@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "XCPC 登录同步",
-  "version": "0.9.5",
+  "version": "0.9.11",
   "description": "将当前普通浏览器中比赛网站的登录状态同步给本机 XCPC。",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5CgKBNzU8cUARiVsI2qJ5we55swAKWmR5EKJIuQo0i46i6Zp5uJ5gDjMenAfYz4qPbFF8OA2cAG2FMFR9+9+/tj33I7qU2/njbvvn8mmlP9JvnSyUGJ4hh9gFXbTndoUIVFbz0iZmyAGQ/eZyTUIfQF+DuwScSc0/spdtm9J56Xtm8OnjXz3N+gNbtYZnLCuAcNqiFph8KCSCDnt4pZb4rr6PdSAvkQIUzSNXNs5iRp+DysiSOC0xBPnGse/wsKErygWevOK8TW8kongvfUlmTyLCg8fAzkcNyuHGkHguF4hRVQYR637xsXWyWKxH9wxRfYSUuvm1pM8g+pC16Z1IwIDAQAB",
   "permissions": [
     "cookies",
     "storage",
     "nativeMessaging",
-    "alarms"
+    "alarms",
+    "scripting"
   ],
   "host_permissions": [
     "http://ac.nowcoder.com/*",

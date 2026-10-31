@@ -2,9 +2,9 @@
 import {useLayoutEffect,useRef,useState} from 'react';
 
 /** Fit complete, unwrapped content while preserving its natural column widths. */
-export function TableFit({minimumWidth=0,children,className='',compact=false,center=false}:{minimumWidth?:number;children:React.ReactNode;className?:string;compact?:boolean;center?:boolean}){
+export function TableFit({minimumWidth=0,children,className='',compact=false,center=false,widthFraction,fullHeader=false}:{minimumWidth?:number;children:React.ReactNode;className?:string;compact?:boolean;center?:boolean;widthFraction?:number;fullHeader?:boolean}){
   const viewport=useRef<HTMLDivElement>(null),surface=useRef<HTMLDivElement>(null);
-  const [width,setWidth]=useState(0),[height,setHeight]=useState(0),[naturalWidth,setNaturalWidth]=useState(0);
+  const [width,setWidth]=useState(0),[height,setHeight]=useState(0),[naturalWidth,setNaturalWidth]=useState(0),[headerHeight,setHeaderHeight]=useState(0);
   useLayoutEffect(()=>{
     const outer=viewport.current,inner=surface.current;if(!outer||!inner)return;
     const measure=()=>{
@@ -27,14 +27,17 @@ export function TableFit({minimumWidth=0,children,className='',compact=false,cen
       inner.style.transform=oldTransform;
       if(table)table.style.width=oldTableWidth||'';
       setHeight(inner.offsetHeight);
+      setHeaderHeight(table?.tHead?(table.tHead.offsetHeight+(parseFloat(getComputedStyle(table).borderTopWidth)||0)):0);
     };
     measure();const observer=new ResizeObserver(measure);observer.observe(outer);observer.observe(inner);
     const mutations=new MutationObserver(measure);mutations.observe(inner,{childList:true,subtree:true,characterData:true});
     document.fonts.ready.then(measure);
     return()=>{observer.disconnect();mutations.disconnect();};
   },[]);
-  const contentWidth=Math.max(compact?0:width,minimumWidth,naturalWidth),scale=width&&contentWidth?Math.min(1,width/contentWidth):1;
+  const preferredWidth=widthFraction===undefined?(compact?0:width):width*widthFraction;
+  const contentWidth=Math.max(preferredWidth,minimumWidth,naturalWidth),scale=width&&contentWidth?Math.min(1,width/contentWidth):1;
   return <div ref={viewport} className={'table-fit-viewport '+className} data-table-scale={scale.toFixed(3)} style={{height:height?Math.ceil(height*scale):undefined}}>
+    {fullHeader&&headerHeight>0&&<div className="table-fit-header-band" aria-hidden="true" style={{height:headerHeight*scale}}/>}
     <div ref={surface} className="table-fit-content" style={{width:contentWidth||'max-content',transform:`scale(${scale})`,left:center?Math.max(0,(width-contentWidth*scale)/2):undefined,visibility:width?'visible':'hidden'}}>{children}</div>
   </div>;
 }

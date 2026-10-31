@@ -8,6 +8,7 @@ from rich import box
 from rich.cells import cell_len, set_cell_size
 from rich.console import Console, Group
 from rich.measure import Measurement
+from rich.padding import Padding
 from rich.segment import Segment
 from rich.table import Table
 from rich.text import Text
@@ -17,7 +18,8 @@ from .scheduling import user_zone
 from .scoring import NON_ATTEMPT_VERDICTS, UNRESOLVED_VERDICTS
 
 
-PRACTICE_ACCEPTED = "white on #0000ff"
+PRACTICE_ACCEPTED = "white on #8b5cf6"
+PENDING_STYLE = "white on #2563eb"
 SCORE_BOX = box.Box("    \n    \n ── \n    \n ── \n ── \n    \n    \n")
 
 
@@ -223,7 +225,7 @@ class Dashboard:
             if c.solved:
                 cells.append(Text(tries + detail, style=PRACTICE_ACCEPTED if blue else "black on #60e760"))
             elif c.pending:
-                cells.append(Text(tries, style="white on #6666ff"))
+                cells.append(Text(tries, style=PENDING_STYLE))
             elif not self.practice and c.score:
                 cells.append(Text(tries + detail, style="black on #f1db71"))
             elif c.tries:
@@ -282,12 +284,22 @@ class Dashboard:
         desired = [max([minimum] + [max((cell_len(line) for line in row[index].plain.splitlines()), default=0)
                                     for row in rows]) for index, minimum in enumerate((7, 10, 19, 6))]
         minimum = [7, 10, 10, 6]
-        padding = 1 if width >= sum(minimum) + 8 else 0
-        available = max(4, width - 8 * padding)
+        padding = 1 if width >= sum(desired) + 8 else 0
+        gaps = [0, 0, 0, 0] if padding else [1, 1, 1, 0]
+        # Use the left half on wide panes. A narrow pane may need more than
+        # half to keep complete IDs, timestamps and verdicts readable.
+        target = min(width, max(width // 2, sum(desired) + 8 * padding + sum(gaps)))
+        available = max(4, target - 8 * padding - sum(gaps))
         for index in (3, 1, 0, 2):
             excess = max(0, sum(desired)-available)
             desired[index] -= min(excess, desired[index]-minimum[index])
+        extra = max(0, available - sum(desired))
+        total = sum(desired)
+        additions = [extra * size // total for size in desired]
+        additions[-1] += extra - sum(additions)
+        desired = [size + addition + gap for size, addition, gap in zip(desired, additions, gaps)]
         results = Table.grid(expand=False, padding=(0, padding))
+        results.width = target
         for index, size in enumerate(desired):
             results.add_column(width=size, justify='left',
                                no_wrap=False, overflow='fold')
@@ -299,7 +311,8 @@ class Dashboard:
             return Text('problem · submission · time · result', style='bold black on #eeeeee', overflow='fold')
         table = Dashboard._record_table(width, rows)
         table.add_row('problem', 'submission', 'time', 'result', style='bold black on #eeeeee')
-        return table
+        return Padding(table, (0, max(0, width - table.width), 0, 0),
+                       style='bold black on #eeeeee', expand=False)
 
     def records(self):
         return SubmissionRecords(self)
@@ -309,7 +322,7 @@ class Dashboard:
         rows = []
         for item in view.submissions:
             v = item["verdict"]
-            color = "#008000" if v == "CORRECT" else "#b8860b" if v == "PRETESTS-PASSED" else "#808080" if v in UNRESOLVED_VERDICTS | NON_ATTEMPT_VERDICTS | {"PENDING", "TOO-LATE"} else "#ff0000"
+            color = "#008000" if v == "CORRECT" else "#b8860b" if v == "PRETESTS-PASSED" else "#2563eb" if v in {"PENDING", "FROZEN"} else "#808080" if v in UNRESOLVED_VERDICTS | NON_ATTEMPT_VERDICTS | {"TOO-LATE"} else "#ff0000"
             text = "RESULT UNAVAILABLE" if v == "UNAVAILABLE" else v
             if item.get('practice'):
                 text += ' · practice'
@@ -411,7 +424,7 @@ class LiveDashboard:
                 original = replace(original, tries=max(original.tries, attempts), solved=bool(accepted))
                 c, blue = practice_cell(original, corrections[label], original_attempts[label])
                 color = PRACTICE_ACCEPTED if blue else 'black on #60e760' if c.solved else (
-                    'white on #6666ff' if c.pending else 'black on #e87272' if c.tries else 'default')
+                    PENDING_STYLE if c.pending else 'black on #e87272' if c.tries else 'default')
                 cells.append(Text(attempt_text(c, practice=True), style=color))
                 continue
             if index >= len(results) and original_cells[label].solved:
@@ -435,7 +448,8 @@ class LiveDashboard:
             when = result.get("bestSubmissionTimeSeconds")
             if when is not None:
                 value += "\n" + clock(when)
-            color = "#b8860b" if preliminary and points else "#008000" if points else "#ff0000" if rejected else "default"
+            pending = preliminary or result.get('pending') or result.get('frozen') or original_cells[label].pending
+            color = "#b8860b" if preliminary and points else "#008000" if points else PENDING_STYLE if pending else "#ff0000" if rejected else "default"
             cells.append(Text(value, style=color))
         name = (own["party"].get("teamName") or ";".join(m["handle"] for m in own["party"]["members"])) if own else self.handle
         name = self.participant_label or name

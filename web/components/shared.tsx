@@ -13,7 +13,7 @@ export function Loading(){return <div className="loading" role="status"><LoaderC
 export function Empty({title,description,action}:{title:string;description?:string;action?:React.ReactNode}){return <div className="empty-state"><div className="empty-icon"><Inbox size={30}/></div><h3>{title}</h3>{description&&<p>{description}</p>}{action}</div>}
 export function ModeBadge({mode,english=false}:{mode:string;english?:boolean}){return <span className={`badge badge-${mode.toLowerCase()}`}>{english?mode.toUpperCase():({vp:'虚拟参赛',live:'实时比赛',bt:'补题'} as Record<string,string>)[mode.toLowerCase()]||mode}</span>}
 export function ParticipationBadge({type,english=false}:{type?:string;english?:boolean}){return <span className={'badge '+(type==='team'?'badge-team':'badge-neutral')}>{english?(type==='team'?'Team':'Individual'):type==='team'?'队伍':'个人'}</span>}
-export function Legend(){return <div className="legend"><span><i className="legend-green"/>Solved</span><span><i className="legend-red"/>Tried, incorrect</span><span><i className="legend-purple"/>Pending / frozen</span><span><i className="legend-blue"/>Upsolved</span></div>}
+export function Legend(){return <div className="legend"><span><i className="legend-green"/>Solved</span><span><i className="legend-red"/>Tried, incorrect</span><span><i className="legend-blue"/>Pending / frozen</span><span><i className="legend-purple"/>Upsolved</span></div>}
 export function ProblemCell({cell,label}:{cell?:Cell;label?:string}){
   const tries=cell?.tries||0,pending=cell?.pending||0;
   const status=cell?.solved?'accepted':cell?.practiceSolved?'upsolved':pending>0?'pending':tries>0?'rejected':'';

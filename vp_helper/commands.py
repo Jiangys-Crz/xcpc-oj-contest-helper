@@ -46,7 +46,7 @@ HELP = """XCPC 比赛终端助手
 
 手动结束本地 VP
   xcpc end             优先结束当前目录对应的本地 VP，不操作原站
-  xcpc end 轮次ID      结束指定轮次；保留代码，后续提交计为补题，新 AC 方格变蓝
+  xcpc end 轮次ID      结束指定轮次；保留代码，后续提交计为补题，新 AC 方格变紫
 
 路径设置
   xcpc path              显示当前目录并输入新目录
@@ -74,7 +74,7 @@ Codeforces API 设置
 目录按比赛名称命名；BT/live 不下载题面。
 新建 VP 按平台选择原站支持的赛制；CF/Gym 为 ICPC、CCPC，QOJ 另支持 OI、IOI。
 ICPC/CCPC 优先读取原站封榜时间；未知时手动输入距离结束的分钟数，默认 0 不封榜。
-比赛结束后仍可补题；原 AC 绿色，补题新 AC 方格蓝色，记录沿用 VP 判定颜色。
+比赛结束后仍可补题；原 AC 绿色，补题新 AC 方格紫色，记录沿用 VP 判定颜色。
 新建目录默认保存在桌面，可用 xcpc path 修改。
 修改保存目录后，已有轮次保留在原位置，可从历史记录恢复。"""
 
@@ -140,7 +140,7 @@ def main() -> None:
             from .sessions import end_attempt
             _, state = end_attempt(args[1] if len(args) == 2 else None)
             print("本地 VP 已结束：" + state.get("attempt_id", "") + " · " + state["directory"])
-            print("代码与历史记录已保留；已开始轮次的后续提交计为补题，新 AC 方格显示蓝色，记录保留判定颜色。")
+            print("代码与历史记录已保留；已开始轮次的后续提交计为补题，新 AC 方格显示紫色，记录保留判定颜色。")
         elif args in (["update"], ["update", "--gitee"]):
             from .updater import main as update
             sys.argv = [sys.argv[0], *args[1:]]

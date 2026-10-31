@@ -357,7 +357,8 @@ def _verify(platform: str, candidate: BrowserCookies, expected: str, *, errors: 
         if candidate.user_agent:
             credentials['user_agent'] = candidate.user_agent
     if candidate.source in ('chrome', 'edge'):
-        credentials.update(cookie_source=candidate.source, user_agent=candidate.user_agent)
+        credentials.update(cookie_source=candidate.source, user_agent=candidate.user_agent,
+                           browser_profile=str(candidate.profile), browser_host=host, handle=expected)
     web = WebSession(origin, credentials, auto_refresh=False)
     try:
         from .platform_clock import tick
@@ -387,6 +388,9 @@ def _verify(platform: str, candidate: BrowserCookies, expected: str, *, errors: 
             fields['browser_host'] = candidate.host
         return {**identity, "cookie": _header(values), **fields}
     except Exception as exc:
+        from .browser_rpc import BrowserRPCUnavailable
+        if isinstance(exc, BrowserRPCUnavailable):
+            raise  # An old extension is not an expired website login.
         # Do not replace a configured session on network failure or another login.
         if errors is not None:
             from .models import VPError

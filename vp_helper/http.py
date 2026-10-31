@@ -121,6 +121,9 @@ class WebSession:
                 "user_agent", "Mozilla/5.0 (X11; Linux x86_64) VP/0.1"
             )
         self._set_cookies(account.get("cookie", ""))
+        if canonical == 'codeforces.com' and account.get('cookie_source') in ('chrome', 'edge'):
+            from .browser_session import BrowserRoutingSession
+            self.session = BrowserRoutingSession(self.session, account)
 
     def _set_cookies(self, value: str) -> None:
         from .session_cookies import import_cookie_header
@@ -152,11 +155,17 @@ class WebSession:
         timeout = kwargs.pop('timeout', (10, 40))
         host = urlsplit(url).hostname or ''
         first_party = canonical_host(host) == canonical_host(urlsplit(self.origin).hostname or '')
-        if not self._browser_checked and first_party:
+        # A browser request already uses the current ordinary-profile state.
+        # Cookie refresh through another HTTP client must not gate it or retry it.
+        from .browser_session import BrowserRoutingSession, browser_target
+        browser_bound = isinstance(self.session, BrowserRoutingSession)
+        in_browser = browser_bound and browser_target('GET', url)
+        browser_api = browser_bound and first_party and urlsplit(url).path.startswith('/api/')
+        if not self._browser_checked and first_party and not (in_browser or browser_api):
             self._browser_checked = True
             self._refresh_browser()
         refreshed = False
-        retries = _RETRY_TOTAL if retry else 0
+        retries = _RETRY_TOTAL if retry and not in_browser else 0
         for attempt in range(retries + 1):
             if attempt:
                 # 1s then 2s -- the backoff the replaced urllib3 Retry used.
@@ -181,7 +190,7 @@ class WebSession:
                     request_options['http_version'] = CurlHttpVersion.V1_1
                     sent_at = tick()
                     r = self.session.get(url, timeout=timeout, **request_options)
-                if (not refreshed and first_party
+                if (not (in_browser or browser_api) and not refreshed and first_party
                         and canonical_host(urlsplit(r.url).hostname or '') == canonical_host(urlsplit(self.origin).hostname or '')
                         and (r.status_code == 200 and urlsplit(r.url).path in ("/login", "/user/login", "/enter")
                              or browser_challenge(r))):

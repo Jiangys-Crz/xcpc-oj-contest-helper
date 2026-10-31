@@ -262,7 +262,7 @@ class SubmissionDisplayTests(unittest.TestCase):
             with self.subTest(width=width):
                 view=Dashboard(contest,19000,me,'3','Unknown',None,practice)
                 console=Console(width=width,color_system='truecolor',legacy_windows=False)
-                colors={(96,231,96),(232,114,114),(102,102,255),(0,0,255)}
+                colors={(96,231,96),(232,114,114),(37,99,235),(139,92,246)}
                 coordinates={color:set() for color in colors}
                 for y,line in enumerate(console.render_lines(view.fixed(width),console.options)):
                     x=0
@@ -287,6 +287,43 @@ class SubmissionDisplayTests(unittest.TestCase):
                         dimensions.append(size)
                 self.assertEqual(len(dimensions),5)
                 self.assertEqual(len(set(dimensions)),1)
+
+    def test_practice_cells_are_purple_and_pending_cells_blue_without_recoloring_original_ac(self):
+        contest=self.contest()
+        records=[{'id':'1','problem':'A','time':10,'verdict':'CORRECT','practice':False},
+                 {'id':'2','problem':'D','time':20,'verdict':'PENDING','practice':False},
+                 {'id':'3','problem':'B','time':19000,'verdict':'CORRECT','practice':True}]
+        events=[Submission(item['id'],'me',item['problem'],item['time'],item['verdict'])
+                for item in records if not item['practice']]
+        me=score_submissions(events,list(contest.problems),contest.rules,18000,name='tester')
+        own={'party':{'members':[{'handle':'tester'}]},'rank':1,'points':1,'penalty':0,
+             'problemResults':[{'points':1,'accepted':True},{'points':0},{'points':0},
+                               {'points':0,'type':'PRELIMINARY'}]}
+        views=[Dashboard(contest,19001,me,'1','',None,records),
+               PracticeDashboard(contest,19001,records,handle='tester',restored=True),
+               LiveDashboard(contest,19001,{'own':own},records,practice=True)]
+        for view in views:
+            with self.subTest(view=type(view).__name__):
+                console=Console(width=160,color_system='truecolor',legacy_windows=False)
+                backgrounds={tuple(segment.style.bgcolor.get_truecolor())
+                             for line in console.render_lines(view.fixed(160),console.options)
+                             for segment in line if segment.style and segment.style.bgcolor
+                             and segment.style.bgcolor.type.name!='DEFAULT'}
+                self.assertIn((96,231,96),backgrounds,'Original contest AC remains green')
+                self.assertIn((139,92,246),backgrounds,'Practice AC uses purple')
+                self.assertIn((37,99,235),backgrounds,'Pending or sealed results use blue')
+        live=LiveDashboard(contest,19001,{'own':own},records)
+        console=Console(width=160,color_system='truecolor',legacy_windows=False)
+        backgrounds={tuple(segment.style.bgcolor.get_truecolor())
+                     for line in console.render_lines(live.fixed(160),console.options)
+                     for segment in line if segment.style and segment.style.bgcolor
+                     and segment.style.bgcolor.type.name!='DEFAULT'}
+        self.assertIn((37,99,235),backgrounds,'A native live pending cell also uses blue')
+        rows=Dashboard.record_rows(LiveDashboard(contest,120,{},[
+            {'id':str(i),'problem':'A','time':i,'verdict':value,'practice':True}
+            for i,value in enumerate(('CORRECT','WRONG-ANSWER','PENDING','FROZEN'))]))
+        colors=[tuple(console.get_style(row[3].style).color.get_truecolor()) for row in rows]
+        self.assertEqual(colors,[(0,128,0),(255,0,0),(37,99,235),(37,99,235)])
 
     def test_monitor_reload_callback_can_stop_without_reading_keyboard(self):
         callback=Mock(return_value=False)
@@ -368,21 +405,56 @@ class SubmissionDisplayTests(unittest.TestCase):
                     for name in ('problem','submission','time','result'):
                         self.assertIn(name,header)
 
-    def test_submission_columns_stay_compact_and_left_aligned_at_wide_widths(self):
+    def test_submission_columns_use_left_half_with_a_full_width_header_band(self):
         view=LiveDashboard(self.contest(),120,{},
                            [{'id':'396538368','problem':'A','time':65,'verdict':'WRONG-ANSWER'}])
-        positions=[]
-        for width in (80,100,160,240):
-            with self.subTest(width=width):
-                rows=Dashboard.record_rows(view)
-                header=self.render(Dashboard.record_heading(width,rows),width).splitlines()[0]
-                record=self.render(view.records(),width).splitlines()[0]
-                self.assertLessEqual(max(cell_len(header.rstrip()),cell_len(record.rstrip())),60)
-                starts=[header.index(name) for name in ('problem','submission','time','result')]
-                values=('A','#396538368','2025-01-01','WRONG-ANSWER')
-                self.assertEqual([record.index(value) for value in values],starts)
-                positions.append(starts)
-        self.assertTrue(all(item==positions[0] for item in positions))
+        with patch.dict(os.environ,{'TZ':'Asia/Shanghai'}):
+            for platform in ('darwin','linux','win32'):
+                with patch('sys.platform',platform):
+                    for width,target in ((80,56),(100,56),(160,80),(240,120)):
+                        for engine in ('rich','curses'):
+                            with self.subTest(platform=platform,width=width,engine=engine):
+                                rows=Dashboard.record_rows(view)
+                                heading=Dashboard.record_heading(width,rows)
+                                console=Console(width=width,legacy_windows=False)
+                                renderer=TerminalDashboard()
+                                header_lines=(console.render_lines(heading,console.options,pad=False) if engine=='rich'
+                                              else renderer._lines(heading,width))
+                                record_lines=(console.render_lines(view.records(),console.options,pad=False) if engine=='rich'
+                                              else renderer._lines(view.records(),width))
+                                self.assertEqual(len(header_lines),1)
+                                self.assertEqual(len(record_lines),1)
+                                header=''.join(segment.text for segment in header_lines[0])
+                                record=''.join(segment.text for segment in record_lines[0])
+                                self.assertEqual(cell_len(header),width)
+                                self.assertEqual(cell_len(record),target)
+                                self.assertTrue(header[target:].isspace())
+                                starts=[header.index(name) for name in ('problem','submission','time','result')]
+                                values=('A','#396538368','2025-01-01 08:01:05','WRONG-ANSWER')
+                                self.assertEqual([record.index(value) for value in values],starts)
+                                for segment in header_lines[0]:
+                                    if segment.cell_length:
+                                        self.assertIsNotNone(segment.style)
+                                        self.assertIsNotNone(segment.style.bgcolor)
+                                        self.assertEqual(tuple(segment.style.bgcolor.get_truecolor()),(238,238,238))
+
+    def test_long_submission_fields_expand_beyond_half_only_when_needed(self):
+        view=LiveDashboard(self.contest(),120,{},
+                           [{'id':'a'*24,'problem':'M','time':65,'verdict':'IDLENESS_LIMIT_EXCEEDED'}])
+        with patch.dict(os.environ,{'TZ':'Asia/Shanghai'}):
+            for width in (80,100,160,240):
+                with self.subTest(width=width):
+                    rows=Dashboard.record_rows(view)
+                    table=Dashboard._record_table(width,rows)
+                    self.assertGreaterEqual(table.width,width//2)
+                    self.assertLessEqual(table.width,width)
+                    if width==240:
+                        self.assertEqual(table.width,120)
+                    output=self.render(view.records(),width)
+                    self.assertIn('#'+'a'*24,output)
+                    self.assertIn('2025-01-01 08:01:05',output)
+                    self.assertIn('IDLENESS_LIMIT_EXCEEDED',output)
+                    self.assertNotIn('…',output)
 
     def test_small_terminal_scrolls_wrapped_fields_without_discarding_the_shared_header(self):
         contest=self.contest();contest.problems={chr(65+i):str(i) for i in range(20)}

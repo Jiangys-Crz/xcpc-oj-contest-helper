@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import shutil
 import tempfile
 import time
 import unittest
@@ -11,15 +12,24 @@ import unittest
 from vp_helper.storage import write_json
 
 
-ENTRY = Path(sys.prefix) / "bin/vp-submit"
+REPOSITORY = Path(__file__).resolve().parents[1]
 
 
-@unittest.skipUnless(ENTRY.is_file(), "requires the installed bundled Ubuntu submitters")
 class InstalledEntries(unittest.TestCase):
     def test_actual_qoj_practice_script_and_cf_absolute_path_parser(self):
         for platform in ("qoj", "gym"):
             with self.subTest(platform=platform), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
+                bundle = root / 'bundle'
+                for submitter in ('qoj', 'cf_submit'):
+                    shutil.copytree(REPOSITORY / 'third_party' / submitter, bundle / 'third_party' / submitter)
+                # Exercise this checkout's real dispatcher and bundled parsers,
+                # independently of an unrelated installed XCPC release.
+                entry = root / 'dispatcher.py'
+                entry.write_text('import sys\nfrom types import SimpleNamespace\n'
+                    'from vp_helper import submit\n'
+                    'submit.sys=SimpleNamespace(argv=sys.argv,prefix=' + repr(str(bundle / 'venv')) + ',executable=sys.executable,platform="darwin")\n'
+                    'submit.main()\n')
                 source = root/"A.cpp"
                 source.write_text("int main() {}\n")
                 state_path = root/"state/vp/bt-test.json"
@@ -38,16 +48,18 @@ class InstalledEntries(unittest.TestCase):
                 (root/"sitecustomize.py").write_text('''
 import os, sys
 from pathlib import Path
+from types import SimpleNamespace
 if os.environ["VP_FIXTURE_PLATFORM"] == "gym":
-    sys.path.insert(0,str(Path(sys.prefix).parent/"third_party/cf_submit"))
+    sys.path.insert(0,os.environ["VP_FIXTURE_CF_DIR"])
     import cf_login, cf_submit
     cf_login.get_secret=lambda password: ("tester","synthetic") if password else "tester"
-    cf_login.login=lambda: object()
+    cf_login.login=lambda: SimpleNamespace()
     def submit_files(browser,handle,contest,problem,ext,lang,sources,show,guru):
         print("OFFLINE_CF_PARSER",contest,problem,sources[0])
     cf_submit.submit_files=submit_files
 else:
     from curl_cffi import requests
+    from requests.cookies import RequestsCookieJar
     class Response:
         status_code=200
         headers={}
@@ -55,8 +67,9 @@ else:
         def __init__(self,url): self.url=url
         def raise_for_status(self): pass
     class Session:
-        def __init__(self,**kwargs): self.headers={}
+        def __init__(self,**kwargs): self.headers={}; self.cookies=RequestsCookieJar()
         def get(self,url,**kwargs): return Response(url)
+        def close(self): pass
         def post(self,url,**kwargs):
             response=Response(url)
             response.status_code=302
@@ -64,17 +77,17 @@ else:
             return response
     requests.Session=Session
 ''')
-                env = {**os.environ,"PYTHONPATH":str(root),"XDG_STATE_HOME":str(root/"state"),"XDG_CONFIG_HOME":str(root/"config"),
-                       "VP_FIXTURE_PLATFORM":platform}
+                env = {**os.environ,"PYTHONPATH":str(root)+os.pathsep+str(REPOSITORY),"XDG_STATE_HOME":str(root/"state"),"XDG_CONFIG_HOME":str(root/"config"),
+                       "VP_FIXTURE_PLATFORM":platform,"VP_FIXTURE_CF_DIR":str(bundle/'third_party/cf_submit')}
                 if platform=='qoj':
-                    declined=subprocess.run([str(ENTRY),str(source)],input='n\n',cwd=root,env=env,
+                    declined=subprocess.run([sys.executable,str(entry),str(source)],input='n\n',cwd=root,env=env,
                                             capture_output=True,text=True,timeout=30)
                     self.assertEqual(declined.returncode,0,declined.stdout+declined.stderr)
                     self.assertIn('Do you want to continue?',declined.stdout)
                     self.assertIn('Aborted.',declined.stdout)
                     self.assertNotIn('Check judging results here:',declined.stdout)
                     self.assertFalse(state_path.with_suffix('.receipts').exists())
-                result = subprocess.run([str(ENTRY),str(source)],input='y\n',
+                result = subprocess.run([sys.executable,str(entry),str(source)],input='y\n',
                                         cwd=root,env=env,capture_output=True,text=True,timeout=30)
                 self.assertEqual(result.returncode,0,result.stdout+result.stderr)
                 if platform=="qoj":

@@ -149,6 +149,7 @@ export default function Install(){
         <ol className="install-steps">{quick.browserSteps.map(step=><li key={step}>{step}</li>)}</ol>
         {guide.extensionPath&&<div className="install-path"><code>{guide.extensionPath}</code><CopyButton value={guide.extensionPath} label="复制路径"/></div>}
         <Picture kind="browser" platform={platform}/>
+        {platform!=='ubuntu'&&<p>CF / Gym 提交时保持普通浏览器的 Codeforces 页面打开。更新 XCPC 后，在扩展管理页重新加载扩展并同步登录状态。</p>}
         <h3 className={styles.subheading}>登录本系统</h3>
         <p>运行下面的命令，输入协会官网账号和密码，用于保存云端历史和参加组队房间。</p>
         <Command command="xcpc login"/>

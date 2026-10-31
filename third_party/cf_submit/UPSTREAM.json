@@ -39,7 +39,8 @@
     "Match supported Firefox TLS profiles and request User-Agent to verified browser profile metadata, including Ubuntu Firefox 154, without changing the profile",
     "Send native same-origin form navigation Fetch Metadata rather than the impersonation address-bar defaults",
     "Refresh verified browser state and retry only a challenged preflight GET once; never replay a POST or its uncertain redirect outcome",
-    "Support explicit -y/--yes after preview and authorization while keeping interactive confirmation as the default"
+    "Support explicit -y/--yes after preview and authorization while keeping interactive confirmation as the default",
+    "Route Chrome/Edge native Codeforces submission preflight and the single confirmed upload through the selected ordinary browser extension profile; preserve Linux Firefox transport and never fall back or replay a browser POST"
   ],
   "excluded_files": [
     "cf_test.py"

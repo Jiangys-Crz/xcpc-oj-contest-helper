@@ -181,3 +181,35 @@ class CFJudgementSyncTests(Isolated):
             self.assertEqual(feed.update(api, pending), pending)
         self.assertIn('verification unavailable', api.submission_message)
         api.web.session.post.assert_not_called()
+
+    def test_www_ordinary_browser_my_page_resolves_pending_with_same_contest_and_account(self):
+        for segment in ('contest', 'gym'):
+            with self.subTest(segment=segment):
+                url = f'https://codeforces.com/{segment}/1234'
+                feed = PendingJudgements()
+                api = Mock(url=url, handle='tester', submission_message='')
+                api.web.get.return_value = Mock(url=url.replace('://codeforces.', '://www.codeforces.') + '/my?locale=en',
+                                               text=table(url, verdict='OK'))
+                pending = [{'id': '100', 'problem': 'A', 'verdict': 'PENDING'}]
+                with patch('vp_helper.cf_judgements.time.monotonic', return_value=0): feed.update(api, pending)
+                with patch('vp_helper.cf_judgements.time.monotonic', return_value=8):
+                    self.assertEqual(feed.update(api, pending)[0]['verdict'], 'CORRECT')
+                api.web.get.assert_called_once()
+                api.web.session.post.assert_not_called()
+
+    def test_www_fallback_still_rejects_foreign_login_wrong_contest_and_credentialed_urls(self):
+        suffix = '/contest/1234/my'
+        for target in ('https://other.example' + suffix, 'http://www.codeforces.com' + suffix,
+                       'https://www.codeforces.com/enter', 'https://www.codeforces.com/contest/999/my',
+                       'https://user@www.codeforces.com' + suffix, 'https://:secret@www.codeforces.com' + suffix,
+                       'https://www.codeforces.com:443' + suffix, 'https://www.codeforces.com:invalid' + suffix):
+            with self.subTest(target=target):
+                feed = PendingJudgements()
+                api = Mock(url=cf.URL, handle='tester', submission_message='')
+                api.web.get.return_value = Mock(url=target, text=table(cf.URL, verdict='OK'))
+                pending = [{'id': '100', 'problem': 'A', 'verdict': 'PENDING'}]
+                with patch('vp_helper.cf_judgements.time.monotonic', return_value=0): feed.update(api, pending)
+                with patch('vp_helper.cf_judgements.time.monotonic', return_value=8):
+                    self.assertEqual(feed.update(api, pending), pending)
+                self.assertIn('unexpected My submissions page', api.submission_message)
+                api.web.session.post.assert_not_called()

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 660" width="1000" height="660" role="img" aria-labelledby="title desc">
 <title id="title">终端面板与提交确认 — 操作示意（示例数据）</title>
-<desc id="desc">示例赛后补题面板保留原赛绿色 AC，补题后通过显示蓝色；下方提交结果按正常判定颜色显示，输入 y 后才会提交。</desc>
+<desc id="desc">示例赛后补题面板保留原赛绿色 AC，补题后通过显示紫色，待判或封榜显示蓝色；下方提交结果按正常判定颜色显示，输入 y 后才会提交。</desc>
 <style>
 text{font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif;fill:#24354d}
 .title{font-size:24px;font-weight:650}.h{font-size:20px;font-weight:600}.body{font-size:17px}.small{font-size:14px}.tiny{font-size:12px}.muted{fill:#64748b}.blue{fill:#2563eb}.white{fill:#f8fafc}.mono{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace}.bold{font-weight:600}
@@ -39,11 +39,11 @@ text{font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",Arial,sans-s
 <text x="393" y="241" class="tiny white" text-anchor="middle" font-size="12" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#f8fafc">Original AC</text>
 <rect x="470" y="201" width="142" height="49" rx="0" fill="#d32f2f" stroke="#d32f2f" />
 <text x="541" y="224" class="small mono white" text-anchor="middle" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#f8fafc">2 tries</text>
-<rect x="618" y="201" width="142" height="49" rx="0" fill="#60a5fa" stroke="#60a5fa" />
+<rect x="618" y="201" width="142" height="49" rx="0" fill="#8b5cf6" stroke="#8b5cf6" />
 <text x="689" y="224" class="small mono white" text-anchor="middle" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#f8fafc">3 tries</text>
 <text x="689" y="241" class="tiny white" text-anchor="middle" font-size="12" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#f8fafc">Practice AC</text>
-<rect x="766" y="201" width="142" height="49" rx="0" fill="#111827" stroke="#111827" />
-<text x="837" y="224" class="small mono white" text-anchor="middle" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#f8fafc">—</text>
+<rect x="766" y="201" width="142" height="49" rx="0" fill="#2563eb" stroke="#2563eb" />
+<text x="837" y="224" class="small mono white" text-anchor="middle" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#f8fafc">1 pending</text>
 <text x="51" y="277" class="small mono" fill="#cbd5e1" style="fill:#cbd5e1" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace">problem</text>
 <text x="159" y="277" class="small mono" fill="#cbd5e1" style="fill:#cbd5e1" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace">submission</text>
 <text x="337" y="277" class="small mono" fill="#cbd5e1" style="fill:#cbd5e1" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace">time</text>
@@ -66,5 +66,5 @@ text{font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",Arial,sans-s
 <text x="51" y="542" class="small mono white" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace" fill="#f8fafc">Submission #123456: PENDING</text>
 <text x="51" y="568" class="small mono" fill="#93c5fd" style="fill:#93c5fd" font-size="14" font-family="SFMono-Regular,Consolas,Liberation Mono,monospace">Check https://qoj.ac/submission/123456 for the result.</text>
 <text x="51" y="593" class="small" fill="#94a3b8" style="fill:#94a3b8" font-size="14" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif">随后面板会同步原站判题结果；提交编号与链接以实际返回为准。</text>
-<text x="29" y="640" class="body muted" font-size="17" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#64748b">先将代码保存到比赛文件夹，再在下方输入命令。蓝色只表示补题通过方格。</text>
+<text x="29" y="640" class="body muted" font-size="17" font-family="PingFang SC,Microsoft YaHei,Noto Sans CJK SC,Arial,sans-serif" fill="#64748b">先将代码保存到比赛文件夹，再在下方输入命令。紫色表示补题通过，蓝色表示待判或封榜。</text>
 </svg>

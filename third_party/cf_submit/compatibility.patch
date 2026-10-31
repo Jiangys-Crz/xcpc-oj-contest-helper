@@ -63,7 +63,7 @@
 +	browser.open("https://codeforces.com/gyms")
 --- upstream/cf_login.py
 +++ installed/cf_login.py
-@@ -4,0 +5,112 @@
+@@ -4,0 +5,118 @@
 +import json
 +from pathlib import Path
 +from http.cookies import SimpleCookie
@@ -165,6 +165,12 @@
 +
 +def make_session(user_agent=None, cookie_source=None, *, account=None):
 +    """A browser session that can pass Cloudflare and accept RoboBrowser's forms."""
++    selected = account or {'cookie_source': cookie_source, 'user_agent': user_agent}
++    if selected.get('cookie_source') in ('chrome', 'edge'):
++        from vp_helper.browser_session import BrowserSession
++        session = BrowserSession(selected)
++        session.require_available()
++        return session
 +    if _IMPERSONATE:
 +        profile, actual_user_agent = transport_identity(account or {'cookie_source': cookie_source, 'user_agent': user_agent})
 +        if not actual_user_agent:
@@ -176,7 +182,7 @@
 +    if user_agent:
 +        session.headers['User-Agent'] = user_agent
 +    return session
-@@ -9,13 +121,13 @@
+@@ -9,13 +127,13 @@
 -	global root
 -	res = ""
 -	length = len(s)
@@ -203,7 +209,7 @@
 +        res += str(chr(temp))
 +        i += rng + 2
 +    return res
-@@ -24,15 +136,15 @@
+@@ -24,15 +142,15 @@
 -	global root
 -	res = ""
 -	length = len(s)
@@ -234,7 +240,7 @@
 +            curr -= temp
 +        res += str(chr(curr + ord(root) + jump))
 +    return res
-@@ -41,14 +153,19 @@
+@@ -41,14 +159,19 @@
 -	handle = None
 -	password = None
 -	secret_loc = os.path.join(os.path.dirname(__file__), "secret")
@@ -268,7 +274,7 @@
 +        return handle, password
 +    else:
 +        return handle
-@@ -58,22 +175,22 @@
+@@ -58,22 +181,22 @@
 -	if handle is None:
 -		handle = input("Handle: ")
 -	password = getpass.getpass("Password: ")
@@ -313,7 +319,7 @@
 +        secretfile.write(encode(handle) + " " + encode(password))
 +        secretfile.close()
 +        print("Successfully logged in as " + handle)
-@@ -83,16 +200,48 @@
+@@ -83,16 +206,49 @@
 -	handle, password = get_secret(True)
 -
 -	browser = RoboBrowser(parser = "lxml")
@@ -352,7 +358,8 @@
 +                set_current_cookies()
 +                return True
 +            set_current_cookies()
-+            session._xcpc_refresh = refresh_current_login
++            if account.get('cookie_source') not in ('chrome', 'edge'):
++                session._xcpc_refresh = refresh_current_login
 +            browser = RoboBrowser(parser='lxml', session=session)
 +            browser.open('https://codeforces.com/')
 +            if browser_challenge(browser.response):
@@ -421,11 +428,12 @@
 @@ -0,0 +1,2 @@
 +from vp_helper.platform_clock import platform_now
 +from vp_helper.submission_results import print_judging_link
-@@ -5,0 +8,14 @@
+@@ -5,0 +8,15 @@
 +from urllib.parse import urlsplit
 +
 +from vp_helper.cf_forms import form_secrets, safe_url, sign_form, submission_error, submission_target, submission_headers
 +from vp_helper.models import VPError
++from vp_helper.browser_rpc import BrowserRPCError
 +
 +# cf_login.make_session may hand RoboBrowser a curl_cffi session instead of a
 +# requests one, so the session's own exception type must be caught too.
@@ -434,12 +442,12 @@
 +except ImportError:  # pragma: no cover - curl_cffi not installed
 +    _CurlCffiError = requests.RequestException
 +
-+_SESSION_ERRORS = (requests.RequestException, _CurlCffiError)
++_SESSION_ERRORS = (requests.RequestException, _CurlCffiError, BrowserRPCError)
 +
-@@ -10 +26 @@
+@@ -10 +27 @@
 -    req = requests.get("http://codeforces.com/api/user.status?handle={}&from=1&count=1".format(handle))
 +    req = requests.get("https://codeforces.com/api/user.status?handle={}&from=1&count=1".format(handle))
-@@ -58 +74,13 @@
+@@ -58 +75,13 @@
 -def submit_problem(browser, contest, lang, source, guru):
 +def submit_problem(browser, contest, lang, source, guru, expected_problem=None):
 +    prefix = 'gym' if len(contest) >= 6 else 'contest'
@@ -454,15 +462,15 @@
 +        csrf = native_form.select_one('[name="csrf_token"]')
 +        if csrf is None or not csrf.get('value'):
 +            raise VPError('Codeforces did not provide its submission CSRF token. No code was submitted.')
-@@ -62,2 +90,3 @@
+@@ -62,2 +91,3 @@
 -        print("Cannot find problem")
 -        return False
 +        if guru == -1:
 +            print_judging_link(base_url)
 +        raise VPError(submission_error(browser.parsed, getattr(browser.response, 'status_code', None), browser.url))
-@@ -66 +94,0 @@
+@@ -66 +95,0 @@
 -    submission["sourceFile"] = source
-@@ -117,0 +146,9 @@
+@@ -117,0 +147,9 @@
 +    field = submission["programTypeId"]
 +    available = {str(value): str(label) for value, label in zip(field.options, field.labels)}
 +    preferred = ("GNU G++20", "GNU G++23", "GNU G++17") if lang == "cpp" else ("PyPy 3", "Python 3") if lang == "py" else ()
@@ -472,7 +480,7 @@
 +    if langcode is None:
 +        print("No compatible compiler is offered by this contest")
 +        return False
-@@ -123,2 +160,37 @@
+@@ -123,2 +161,39 @@
 -
 -    browser.submit_form(submission)
 +    elif expected_problem is not None:
@@ -508,11 +516,13 @@
 +            browser.submit_form(submission, timeout=(10, 40), headers=submission_headers(page_url, target))
 +        else:
 +            raise VPError('Codeforces did not offer a source field. No code was submitted.')
-+    except _SESSION_ERRORS:
++    except _SESSION_ERRORS as exc:
 +        if guru == -1:
 +            print_judging_link(base_url)
++        if isinstance(exc, BrowserRPCError) and not exc.outcome_unknown:
++            raise VPError(str(exc)) from None
 +        raise VPError('Submission outcome unknown. Check My submissions before retrying; the request was not repeated.') from None
-@@ -127,4 +199,9 @@
+@@ -127,4 +202,9 @@
 -    if (guru != -1 and browser.url[-7:] != "/status") or (guru == -1 and browser.url[-3:] != "/my"):
 -        print("Failed to submit code")
 -        print(" @ " + str(browser.url))
@@ -526,7 +536,7 @@
 +            print_judging_link(base_url)
 +        raise VPError(submission_error(browser.parsed, status, browser.url, secrets,
 +                                      headers=getattr(browser.response, 'headers', None), attempted=True))
-@@ -142,0 +220,13 @@
+@@ -142,0 +223,13 @@
 +    from pathlib import Path
 +    import json
 +    from vp_helper.receipts import cf_submission_id, cf_submission_ids, record_receipt
@@ -540,16 +550,16 @@
 +                previous = cf_submission_ids(response.text)
 +        except _SESSION_ERRORS:
 +            pass
-@@ -150 +240 @@
+@@ -150 +243 @@
 -        browser.open("http://codeforces.com/problemsets/acmsguru/submit")
 +        browser.open("https://codeforces.com/problemsets/acmsguru/submit")
-@@ -153 +243 @@
+@@ -153 +246 @@
 -        browser.open("http://codeforces.com/gym/" + contest + "/submit/" + problem.upper())
 +        browser.open("https://codeforces.com/gym/" + contest + "/submit/" + problem.upper())
-@@ -155 +245 @@
+@@ -155 +248 @@
 -        browser.open("http://codeforces.com/contest/" + contest + "/submit/" + problem.upper())
 +        browser.open("https://codeforces.com/contest/" + contest + "/submit/" + problem.upper())
-@@ -158,2 +248,18 @@
+@@ -158,2 +251,18 @@
 -    if submit_problem(browser, contest, lang, source, pid) and show:
 -        watch(handle)
 +    submitted_at = platform_now(browser.url)
@@ -570,13 +580,13 @@
 +            print_judging_link('https://codeforces.com/' + prefix + '/' + contest, sid)
 +        if show:
 +            watch(handle)
-@@ -189 +295 @@
+@@ -189 +298 @@
 -                splitted = re.split('(\D+)', defaultprob)
 +                splitted = re.split(r'(\D+)', defaultprob)
-@@ -211 +317 @@
+@@ -211 +320 @@
 -                    splitted = re.split('(\D+)', info[0])
 +                    splitted = re.split(r'(\D+)', info[0])
-@@ -220 +325,0 @@
+@@ -220 +328,0 @@
 -
 --- upstream/colours.py
 +++ installed/colours.py

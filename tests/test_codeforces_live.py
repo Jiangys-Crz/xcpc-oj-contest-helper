@@ -499,6 +499,14 @@ class SubmitTests(IsolatedState):
         self.assertIn('Check judging results here: ' + URL + '/my', output.getvalue())
         self.api.web.session.post.assert_called_once()
 
+    def test_browser_post_unknown_outcome_prints_judging_link_without_replaying(self):
+        from vp_helper.browser_rpc import BrowserRPCError
+        self.api.web.session.post.side_effect = BrowserRPCError('Browser result lost', outcome_unknown=True)
+        with patch('sys.stdout', io.StringIO()) as output, self.assertRaisesRegex(VPError, 'outcome unknown.*not repeated'):
+            live_submit.submit(self.source)
+        self.assertIn('Check judging results here: ' + URL + '/my', output.getvalue())
+        self.api.web.session.post.assert_called_once()
+
     def test_wrong_login_and_insecure_form_target_block_post(self):
         for form in (str(html(self.form, handle="other")), str(html(self.form.replace('action="/contest', 'action="http://codeforces.com/contest')))):
             self.api.web.soup.side_effect = [html(), BeautifulSoup(form, "html.parser")]

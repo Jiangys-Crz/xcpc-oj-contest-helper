@@ -103,6 +103,12 @@ class _FormSession(_requests.Session):
 
 def make_session(user_agent=None, cookie_source=None, *, account=None):
     """A browser session that can pass Cloudflare and accept RoboBrowser's forms."""
+    selected = account or {'cookie_source': cookie_source, 'user_agent': user_agent}
+    if selected.get('cookie_source') in ('chrome', 'edge'):
+        from vp_helper.browser_session import BrowserSession
+        session = BrowserSession(selected)
+        session.require_available()
+        return session
     if _IMPERSONATE:
         profile, actual_user_agent = transport_identity(account or {'cookie_source': cookie_source, 'user_agent': user_agent})
         if not actual_user_agent:
@@ -219,7 +225,8 @@ def login():
                 set_current_cookies()
                 return True
             set_current_cookies()
-            session._xcpc_refresh = refresh_current_login
+            if account.get('cookie_source') not in ('chrome', 'edge'):
+                session._xcpc_refresh = refresh_current_login
             browser = RoboBrowser(parser='lxml', session=session)
             browser.open('https://codeforces.com/')
             if browser_challenge(browser.response):

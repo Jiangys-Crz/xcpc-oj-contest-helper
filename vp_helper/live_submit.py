@@ -15,6 +15,7 @@ from .codeforces_live import CodeforcesLive, verify_login, verify_practice
 from .http import _RequestException, form_values
 from .platform_clock import platform_now
 from .models import VPError
+from .browser_rpc import BrowserRPCError
 from .receipts import cf_submission_id, cf_submission_ids, record_receipt
 from .storage import read_json, state_directory
 from .submit_context import submission_configuration
@@ -112,8 +113,10 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     try:
         # A POST is sent once. A timeout can mean the server accepted it.
         response = api.web.session.post(target, data=payload, headers=submission_headers(api.url + '/submit', target), timeout=(10, 40))
-    except _RequestException:
+    except (_RequestException, BrowserRPCError) as exc:
         print_judging_link(api.url)
+        if isinstance(exc, BrowserRPCError) and not exc.outcome_unknown:
+            raise VPError(str(exc)) from None
         raise VPError("Submission outcome unknown. Check Codeforces My submissions before retrying; the request was not repeated.") from None
     honor_response_cookies(api.web.session, response)
     if (response.status_code != 200 or urlsplit(response.url).hostname not in ('codeforces.com','www.codeforces.com')

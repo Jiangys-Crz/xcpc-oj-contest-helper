@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 
 from vp_helper.cf_forms import form_secrets, safe_url, sign_form, submission_error, submission_target, submission_headers
 from vp_helper.models import VPError
+from vp_helper.browser_rpc import BrowserRPCError
 
 # cf_login.make_session may hand RoboBrowser a curl_cffi session instead of a
 # requests one, so the session's own exception type must be caught too.
@@ -17,7 +18,7 @@ try:
 except ImportError:  # pragma: no cover - curl_cffi not installed
     _CurlCffiError = requests.RequestException
 
-_SESSION_ERRORS = (requests.RequestException, _CurlCffiError)
+_SESSION_ERRORS = (requests.RequestException, _CurlCffiError, BrowserRPCError)
 
 import colours
 
@@ -190,9 +191,11 @@ def submit_problem(browser, contest, lang, source, guru, expected_problem=None):
             browser.submit_form(submission, timeout=(10, 40), headers=submission_headers(page_url, target))
         else:
             raise VPError('Codeforces did not offer a source field. No code was submitted.')
-    except _SESSION_ERRORS:
+    except _SESSION_ERRORS as exc:
         if guru == -1:
             print_judging_link(base_url)
+        if isinstance(exc, BrowserRPCError) and not exc.outcome_unknown:
+            raise VPError(str(exc)) from None
         raise VPError('Submission outcome unknown. Check My submissions before retrying; the request was not repeated.') from None
 
     """ check if good """

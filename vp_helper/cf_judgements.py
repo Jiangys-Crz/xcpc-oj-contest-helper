@@ -78,8 +78,15 @@ class PendingJudgements:
         try:
             response = api.web.get(api.url + '/my', params={'locale': 'en'},
                                    headers={'Cache-Control': 'no-cache'}, timeout=(5, 8), retry=False)
-            parts = urlsplit(response.url)
-            if parts.scheme != 'https' or parts.netloc != 'codeforces.com' or parts.path.rstrip('/') != urlsplit(api.url).path + '/my':
+            try:
+                parts = urlsplit(response.url)
+                valid = (parts.scheme == 'https' and parts.hostname in ('codeforces.com', 'www.codeforces.com')
+                         and parts.username is None and parts.password is None and parts.port is None
+                         and not parts.fragment
+                         and parts.path.rstrip('/') == urlsplit(api.url).path.rstrip('/') + '/my')
+            except ValueError:
+                valid = False
+            if not valid:
                 raise VPError('Codeforces returned an unexpected My submissions page.')
             confirmed = web_verdicts(response.text, api.url, api.handle, due)
         except VPError as exc:
