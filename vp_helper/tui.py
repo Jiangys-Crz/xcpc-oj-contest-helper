@@ -56,7 +56,7 @@ class ProblemBox:
             yield Segment.line()
 
 
-def score_table(columns, problems, rows, width, *, separate_summary=False):
+def score_table(columns, problems, rows, width, *, separate_summary=False, _allow_split=True):
     problems = list(problems)
 
     def content_width(value):
@@ -70,7 +70,7 @@ def score_table(columns, problems, rows, width, *, separate_summary=False):
         index = columns.index("team")
         sizes[index] = min(sizes[index], max(minimum[index], 24))
     count = len(columns) + len(problems)
-    # Headers stay together in one row. Problem bodies can use compact counts
+    # Within each block, headers stay together in one row. Bodies can use compact counts
     # and wrap vertically; a long attempt label must not move the headers.
     problem_minimum = max((content_width(label) for label in problems), default=1)
     problem_space = len(problems) * problem_minimum
@@ -78,6 +78,27 @@ def score_table(columns, problems, rows, width, *, separate_summary=False):
     active = any((cell.plain if isinstance(cell, Text) else str(cell)).strip() not in ("", "—")
                  for cell in first_cells)
     preferred_problem_width = max(problem_minimum, len("tries") if active else 1)
+    readable_width = sum(sizes) + len(problems) * preferred_problem_width + max(0, count - 1)
+    if _allow_split and columns and problems and rows and readable_width > width:
+        # Stack only the presentation. The first block retains every native
+        # summary value; the second gets the full pane for the problem cells.
+        metadata = score_table(columns, [], [rows[0][:len(columns)]], width, _allow_split=False)
+        if isinstance(metadata, Table):
+            metadata.expand = True
+            if "team" in columns:
+                team = metadata.columns[columns.index("team")]
+                team.width = None
+                team.ratio = 1
+                team.min_width = minimum[columns.index("team")]
+        summaries = rows[1:]
+        problem_rows = [[*([""] if summaries else []), *first_cells]]
+        for row in summaries:
+            labels = [(cell.plain if isinstance(cell, Text) else str(cell)).strip()
+                      for cell in row[:len(columns)]]
+            problem_rows.append([" ".join(label for label in labels if label), *row[len(columns):]])
+        problem_table = score_table([""] if summaries else [], problems, problem_rows, width,
+                                    separate_summary=separate_summary, _allow_split=False)
+        return Group(metadata, Text(""), problem_table)
     padding = 1 if sum(sizes) + len(problems) * preferred_problem_width + 2 * count <= width else 0
     available = width - problem_space - (2 * count if padding else max(0, count - 1))
     if available < sum(minimum):
@@ -267,10 +288,12 @@ class Dashboard:
             hidden.sort(key=lambda p: tuple(self.stats[key][p] for key in
                                             ("accepted", "attempted", "submitted")), reverse=True)
         columns = ordered + hidden
-        table = Table(box=None, expand=True, padding=(0, 1), style="default", header_style="bold")
-        table.add_column("public", justify="left")
+        table = Table(box=None, expand=True, padding=(0, 1), collapse_padding=True,
+                      style="default", header_style="bold")
+        table.add_column("public", justify="left", no_wrap=False, overflow="fold")
         for problem in columns:
-            table.add_column(problem if problem in visible else "?", justify="center", ratio=1)
+            table.add_column(problem if problem in visible else "?", justify="center", ratio=1,
+                             min_width=1, no_wrap=False, overflow="fold")
         for key in ("submitted", "attempted", "accepted"):
             table.add_row(key, *(str(self.stats[key][p]) if self.stats else "—" for p in columns))
         caption = f"CCPC · revealed {len(ordered)}/{len(self.contest.problems)} · {self.contest.rules.problem_reveal_count} teams incl. starred"

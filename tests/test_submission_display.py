@@ -23,6 +23,12 @@ class SubmissionDisplayTests(unittest.TestCase):
         position=line.index(value,start)
         return cell_len(line[:position])+cell_len(value)/2,position+len(value)
 
+    def problem_header(self, lines, problems):
+        headers=[line for line in lines if all(re.search(r'(?:^|\s)'+re.escape(label)+r'(?:\s|$)',line)
+                                                for label in problems)]
+        self.assertTrue(headers,'Every problem must remain together in one header row')
+        return headers[0]
+
     def fixed_lines(self, view, width, engine):
         if engine=='rich':
             return self.render(view.fixed(width),width).splitlines()
@@ -85,6 +91,151 @@ class SubmissionDisplayTests(unittest.TestCase):
                        {chr(65+i): str(10+i) for i in range(13)}, Rules(18000), original_start=1735689600,
                        extra={'scoring': 'ICPC', 'phase': 'CODING'})
 
+    def active_team_views(self, count=13):
+        contest=self.contest()
+        contest.problems={chr(65+i):str(i) for i in range(count)}
+        events=[Submission('1','me','A',120,'CORRECT'),
+                Submission('2','me','B',180,'WRONG-ANSWER'),
+                Submission('3','me','C',240,'PENDING')]
+        score=score_submissions(events,list(contest.problems),contest.rules,600,name='native-handle')
+        records=[{'id':event.id,'problem':event.problem,'time':event.time,'verdict':event.verdict,'practice':False}
+                 for event in events]
+        records.append({'id':'4','problem':'D','time':19000,'verdict':'CORRECT','practice':True})
+        stats={kind:{label:base+i for i,label in enumerate(contest.problems)}
+               for kind,base in (('submitted',200),('attempted',100),('accepted',50))}
+        own={'party':{'members':[{'handle':'native-handle'}]},'rank':127,'points':1,'penalty':2,
+             'problemResults':[{'points':1,'display':'1 try\n2','accepted':True},
+                               {'points':0,'display':'1 try','rejectedAttemptCount':1},
+                               {'points':0,'display':'1 pending','type':'PRELIMINARY'}]}
+        views=[Dashboard(contest,600,score,'127','',stats,records),
+               LiveDashboard(contest,600,{'own':own,'stats':stats},records),
+               PracticeDashboard(contest,19001,records,handle='native-handle',restored=True)]
+        for view in views:
+            view.participant_title='Example Team'
+            view.participant_subtitle='Alice Alpha、Bob Beta、Carol'
+        return views
+
+    def test_active_narrow_layout_stacks_metadata_problems_and_logs_without_mutation(self):
+        for count in (13,20):
+            views=self.active_team_views(count)
+            for platform in ('darwin','linux','win32'):
+                with patch('sys.platform',platform):
+                    for view in views:
+                        for engine in ('rich','curses'):
+                            for width in (80,100,120,160,240):
+                                with self.subTest(count=count,platform=platform,view=type(view).__name__,engine=engine,width=width):
+                                    before=copy.deepcopy(vars(view))
+                                    lines=self.fixed_lines(view,width,engine)
+                                    metadata=next(line for line in lines if 'rank' in line and 'team' in line)
+                                    problems=self.problem_header(lines,view.contest.problems)
+                                    if view.practice:
+                                        split=width<(107 if count==13 else 149)
+                                    else:
+                                        split=width<(122 if count==13 else 164)
+                                    self.assertEqual(lines.index(problems)>lines.index(metadata),split)
+                                    if not view.practice:
+                                        for field in ('solved','penalty'):
+                                            self.assertIn(field,metadata)
+                                        for field in ('submitted','attempted','accepted'):
+                                            self.assertIn(field,'\n'.join(lines))
+                                    else:
+                                        for field in ('submitted','attempted','accepted'):
+                                            self.assertNotRegex('\n'.join(lines),r'\b'+field+r'\b')
+                                    for text in ('Example Team','Alice','Alpha','Bob','Beta','Carol','127') if not view.practice else ('Example Team','Alice','Alpha','Bob','Beta','Carol'):
+                                        self.assertIn(text,'\n'.join(lines))
+                                    if split:
+                                        self.assertIn(view.participant_subtitle,'\n'.join(lines))
+                                    log=next(i for i,line in enumerate(lines) if 'problem' in line and 'submission' in line and 'result' in line)
+                                    self.assertGreater(log,lines.index(problems))
+                                    self.render(view.records(),width)
+                                    self.assertEqual(vars(view),before)
+                                    self.assertNotIn('…','\n'.join(lines))
+                                    self.assertTrue(all(cell_len(line)<=width for line in lines))
+
+    def test_readable_fit_decides_layout_instead_of_a_fixed_window_cutoff(self):
+        for view in self.active_team_views(20)[:2]:
+            for engine in ('rich','curses'):
+                view.participant_title='Example Team';view.participant_subtitle='Alice Alpha、Bob Beta、Carol'
+                lines=self.fixed_lines(view,160,engine)
+                metadata=next(line for line in lines if 'rank' in line and 'team' in line)
+                self.assertNotEqual(metadata,self.problem_header(lines,view.contest.problems))
+                view.participant_title='Team';view.participant_subtitle='A、B、C'
+                lines=self.fixed_lines(view,160,engine)
+                metadata=next(line for line in lines if 'rank' in line and 'team' in line)
+                self.assertEqual(metadata,self.problem_header(lines,view.contest.problems))
+
+    def test_stacked_public_statistics_keep_problem_alignment_and_ccpc_hidden_labels(self):
+        view=self.active_team_views()[0]
+        lines=self.fixed_lines(view,80,'rich')
+        header=self.problem_header(lines,view.contest.problems)
+        for kind in ('submitted','attempted','accepted'):
+            row=next(line for line in lines if kind in line)
+            position=0
+            for label in view.contest.problems:
+                center,position=self.cell_center(row,str(view.stats[kind][label]),position)
+                self.assertLessEqual(abs(center-self.cell_center(header,label)[0]),0.5)
+        view.contest.rules=Rules(18000,freeze_at=14400,problem_reveal_count=50)
+        view.revealed=frozenset({'A','C'})
+        for width in (80,100,120,160,240):
+            for engine in ('rich','curses'):
+                with self.subTest(width=width,engine=engine):
+                    before=copy.deepcopy(vars(view))
+                    full='\n'.join(self.fixed_lines(view,width,engine))
+                    public=self.render(view.public_statistics(),width).rstrip()
+                    self.assertIn(public,full)
+                    header=next(line for line in public.splitlines() if re.search(r'\bpublic\b',line))
+                    self.assertEqual(header.count('?'),11)
+                    for label in ('A','C'):
+                        self.assertRegex(header,r'(?:^|\s)'+label+r'(?:\s|$)')
+                    self.assertNotRegex(header,r'(?:^|\s)B(?:\s|$)')
+                    self.assertEqual(vars(view),before)
+
+    def test_actual_terminal_gutters_use_the_same_stacked_layout_on_resize(self):
+        view=self.active_team_views()[0]
+        for screen_width in (80,100,120):
+            renderer=TerminalDashboard();renderer.screen=Mock();renderer.curses=Mock()
+            renderer.screen.getmaxyx.return_value=(60,screen_width)
+            drawn=[]
+            renderer._draw=lambda row,segments,width,left=0:drawn.append((row,''.join(segment.text for segment in segments),width,left))
+            before=copy.deepcopy(vars(view));renderer.update(view)
+            lines=[line for row,line,width,left in drawn if row<58]
+            metadata=next(line for line in lines if 'rank' in line and 'team' in line)
+            problems=self.problem_header(lines,view.contest.problems)
+            self.assertGreater(lines.index(problems),lines.index(metadata))
+            self.assertTrue(all(width==screen_width-4 and left==2 for row,line,width,left in drawn))
+            self.assertEqual(vars(view),before)
+
+    def test_ccpc_public_counts_fold_without_losing_digits_or_revealing_hidden_labels(self):
+        view=self.active_team_views(20)[0]
+        view.contest.rules=Rules(18000,freeze_at=14400,problem_reveal_count=50)
+        view.stats={kind:{label:base+i for i,label in enumerate(view.contest.problems)}
+                    for kind,base in (('submitted',3000),('attempted',2000),('accepted',1000))}
+        view.revealed=frozenset({'A'})
+        for elapsed,anonymous in ((12000,19),(15000,0)):
+            view.elapsed=elapsed
+            for width in (76,80):
+                for engine in ('rich','curses'):
+                    with self.subTest(elapsed=elapsed,width=width,engine=engine):
+                        before=copy.deepcopy(vars(view))
+                        public=view.public_statistics()
+                        if engine=='rich':
+                            lines=self.render(public,width).splitlines()
+                        else:
+                            lines=[''.join(s.text for s in line) for line in TerminalDashboard()._lines(public,width)]
+                        header=next(i for i,line in enumerate(lines) if re.search(r'\bpublic\b',line))
+                        self.assertEqual(lines[header].count('?'),anonymous)
+                        self.assertNotIn('…','\n'.join(lines))
+                        expected=Counter(''.join(str(view.stats[kind][label]) for kind in view.stats for label in view.contest.problems))
+                        actual=Counter(re.findall(r'\d',''.join(lines[header+1:])))
+                        self.assertEqual(actual,expected)
+                        self.assertTrue(all(cell_len(line)<=width for line in lines))
+                        if anonymous:
+                            self.assertNotRegex(lines[header],r'(?:^|\s)B(?:\s|$)')
+                            table=public.renderables[-1]
+                            self.assertEqual([column._cells[0] for column in table.columns[1:]],
+                                             [str(view.stats['submitted'][label]) for label in ['A',*reversed(list(view.contest.problems)[1:])]])
+                        self.assertEqual(vars(view),before)
+
     def test_submitted_problems_keep_complete_words_and_equal_column_spacing(self):
         contest = self.contest()
         score = score_submissions([], list(contest.problems), contest.rules, 120)
@@ -145,8 +296,6 @@ class SubmissionDisplayTests(unittest.TestCase):
             for width in (50,52,72,80,100):
                 for engine in ('rich','curses'):
                     for view in views:
-                        if width==50 and view.contest.platform=='cf':
-                            continue  # The points/hacks headers require two more cells.
                         with self.subTest(name=name,width=width,engine=engine,view=type(view).__name__):
                             lines=self.fixed_lines(view,width,engine)
                             rendered='\n'.join(lines)
@@ -156,8 +305,7 @@ class SubmissionDisplayTests(unittest.TestCase):
                                 self.assertRegex(rendered,r'(?m)(?:^|\s)'+label+r'(?:\s|$)')
                             self.assertTrue(any('rank' in line and 'team' in line for line in lines))
                             header=next(line for line in lines if 'rank' in line and 'team' in line)
-                            for label in contest.problems:
-                                self.assertRegex(header,r'(?:^|\s)'+label+r'(?:\s|$)')
+                            self.problem_header(lines,contest.problems)
                             if isinstance(view,LiveDashboard):
                                 # The long native value may wrap vertically in
                                 # its column, without dropping any digit.
@@ -219,8 +367,7 @@ class SubmissionDisplayTests(unittest.TestCase):
                         self.assertNotIn('…',rendered)
                         self.assertTrue(all(cell_len(line)<=width for line in lines))
                         header=next(line for line in lines if 'rank' in line and 'team' in line)
-                        for label in contest.problems:
-                            self.assertRegex(header,r'(?:^|\s)'+label+r'(?:\s|$)')
+                        self.problem_header(lines,contest.problems)
                         self.assertEqual(sum('rank' in line and 'team' in line for line in lines),1)
                         self.assertNotIn('public',header)
                         if width>=160:
@@ -339,7 +486,7 @@ class SubmissionDisplayTests(unittest.TestCase):
         self.assertTrue(view.input())
         callback.assert_called_once_with()
 
-    def test_impossible_header_width_explains_minimum_without_separating_headers(self):
+    def test_previously_cramped_headers_stack_metadata_above_complete_problems(self):
         contest=self.contest()
         me=score_submissions([],list(contest.problems),contest.rules,120,name='tester')
         own={'party':{'members':[{'handle':'tester'}]},'rank':1,'points':0,'penalty':0,
@@ -348,9 +495,10 @@ class SubmissionDisplayTests(unittest.TestCase):
             for engine in ('rich','curses'):
                 lines=self.fixed_lines(view,45,engine)
                 rendered='\n'.join(lines)
-                self.assertIn('Enlarge the score pane to at least 50 columns',rendered)
-                self.assertIn('all headers on one row',rendered)
-                self.assertFalse(any('rank' in line and 'team' in line for line in lines))
+                self.assertNotIn('Enlarge the score pane',rendered)
+                header=next(line for line in lines if 'rank' in line and 'team' in line)
+                problems=self.problem_header(lines,contest.problems)
+                self.assertGreater(lines.index(problems),lines.index(header))
                 self.assertTrue(all(cell_len(line)<=45 for line in lines))
 
     def test_absolute_time_matches_vp_live_bt_and_history_even_after_rebase(self):

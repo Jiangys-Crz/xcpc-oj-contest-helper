@@ -2,7 +2,7 @@
 
 线上组队、多队虚拟赛、训练历史与队内虚拟打印，配合原有终端完成原站参赛和提交。网站使用 Next.js 全栈，终端继续支持 Ubuntu、macOS 和 Windows。
 
-当前版本：**0.9.12**。线上地址：[CWNU XCPC Vp System](https://vp.cwnupaa.com)。
+当前版本：**0.9.13**。线上地址：[CWNU XCPC Vp System](https://vp.cwnupaa.com)。
 
 一键安装教程：[网站安装教程](https://vp.cwnupaa.com/install)。Ubuntu / macOS 在终端运行：
 
@@ -378,7 +378,7 @@ vp history --live
 - Ubuntu / macOS：`Ctrl+B` 后按 `D` 脱离 tmux，面板继续同步；重新执行原命令可恢复。
 - Windows：保留比赛终端可继续同步；关闭后在原比赛目录执行 `xcpc dashboard` 恢复。
 - `q` 关闭详情面板，不代表结束原站 VP；结束本地 VP 使用 `xcpc end`。
-- 窗口太小时请放大终端或上方面板。成绩表的 rank、team、solved、penalty 列按内容收紧，剩余宽度由题目列均分，所有表头和值居中。
+- 宽窗口中，Rank、Team、Solved、Penalty 和全部题号在同一张成绩表显示。窗口缩小时，排名和队伍等信息单独显示在上方，下一块完整显示题号、尝试次数和通过情况，下方继续显示提交记录；放大窗口会自动恢复原来的排布。
 
 ## 10. 更新
 
