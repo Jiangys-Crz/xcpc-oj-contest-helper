@@ -249,7 +249,8 @@ class Dashboard:
         timer = "Starts in " + clock(-self.elapsed) if self.elapsed < 0 else f"{clock(min(self.elapsed, self.contest.rules.duration))} / {clock(self.contest.rules.duration)}"
         if self.practice:
             timer = ""
-        label = self.contest.name + (f" · VP #{self.contest.extra['attempt']}" if self.contest.extra.get("attempt") else "")
+        from .workspaces import display_name
+        label = display_name(self.contest) + (f" · VP #{self.contest.extra['attempt']}" if self.contest.extra.get("attempt") else "")
         if self.practice:
             label += " · BT"
         if self.contest.extra.get("local_attempt") and not self.practice:
@@ -453,7 +454,8 @@ class LiveDashboard:
     def fixed(self, width: int):
         phase = self.snapshot.get("phase", self.contest.extra["phase"])
         frozen = self.snapshot.get("frozen", False) or self.contest.rules.frozen(self.elapsed)
-        title = Text(self.contest.name + (" · BT" if self.practice else " · LIVE"), style="bold")
+        from .workspaces import display_name
+        title = Text(display_name(self.contest) + (" · BT" if self.practice else " · LIVE"), style="bold")
         timing = ("Starts in " + clock(-self.elapsed) if self.elapsed < 0 else
                   clock(min(self.elapsed, self.contest.rules.duration)) + " / " + clock(self.contest.rules.duration))
         phase_text = {"BEFORE": "Waiting for start", "CODING": "Coding",

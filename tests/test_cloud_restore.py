@@ -78,6 +78,42 @@ class CloudRestoreTests(unittest.TestCase):
         self.assertEqual(len(list(cli.state_directory().glob('bt-*.json'))),1)
         self.assertEqual(source.read_text(),'keep my local program')
 
+    def test_new_member_restore_uses_room_folder_but_keeps_native_metadata_and_repeat_path(self):
+        self.snapshot['roomName']='CCPC Weekend / Team Practice'
+        path,state=cloud_restore.restore_snapshot(self.snapshot,self.account,self.config)
+        directory=Path(state['directory']);self.assertEqual(directory.name,'CCPC Weekend Team Practice')
+        self.assertEqual(state['contest']['name'],'Original contest');self.assertEqual(state['handle'],'MyOwnJudge')
+        self.assertEqual(state['contest']['extra']['room_name'],'CCPC Weekend / Team Practice')
+        source=directory/'a.cpp';source.write_bytes(b'preserved local code')
+        self.snapshot['roomName']='Renamed room'
+        restored,current=cloud_restore.restore_snapshot(self.snapshot,self.account,self.config)
+        self.assertEqual(restored,path);self.assertEqual(current['directory'],str(directory))
+        self.assertEqual(source.read_bytes(),b'preserved local code');self.assertEqual(current['contest']['name'],'Original contest')
+        self.assertEqual(current['contest']['extra']['room_name'],'Renamed room')
+        self.assertEqual(cloud.sync_payload(path,current)['contest']['name'],'Original contest')
+
+    def test_legacy_member_restore_keeps_existing_folder_and_native_name_without_backfill(self):
+        path=cli.state_directory()/'bt-qoj-3617-old.json';previous=self.state(path)
+        previous['cloud_restore']={'serverUrl':self.account['serverUrl'],'userId':'member','roomId':'room'}
+        write_json(path,previous);directory=Path(previous['directory']);source=directory/'a.cpp';source.write_bytes(b'legacy program')
+        self.snapshot['roomName']='New room title'
+        restored,current=cloud_restore.restore_snapshot(self.snapshot,self.account,self.config)
+        self.assertEqual(restored,path);self.assertEqual(current['directory'],str(directory))
+        self.assertEqual(source.read_bytes(),b'legacy program');self.assertEqual(current['contest']['name'],'Original contest')
+        self.assertNotIn('room_name',current['contest']['extra'])
+
+    def test_member_restore_adopts_proven_old_rename_without_recreating_an_empty_old_folder(self):
+        path=cli.state_directory()/'bt-qoj-3617-old.json';previous=self.state(path)
+        source=Path(previous['directory']);target=source.parent/'Already moved training folder'
+        previous['cloud_restore']={'serverUrl':self.account['serverUrl'],'userId':'member','roomId':'room'}
+        write_json(source/'contest.json',{'vp_context':{'state_path':str(path),'url':self.url,'handle':'MyOwnJudge'}})
+        (source/'a.cpp').write_bytes(b'moved source stays here');source.rename(target)
+        previous['workspace_target']=str(target);write_json(path,previous)
+        _,current=cloud_restore.restore_snapshot(self.snapshot,self.account,self.config)
+        self.assertEqual(current['directory'],str(target));self.assertFalse(source.exists())
+        self.assertEqual((target/'a.cpp').read_bytes(),b'moved source stays here')
+        self.assertEqual(current['contest']['name'],'Original contest')
+
     def test_imported_team_records_are_never_uploaded_as_personal_bt_or_room_updates(self):
         path,state=cloud_restore.restore_snapshot(self.snapshot,self.account,self.config)
         state['submissions']=[*state['restored_submissions'],{'id':'202','team':'me','problem':'B','time':4000,'verdict':'CORRECT','practice':True}]

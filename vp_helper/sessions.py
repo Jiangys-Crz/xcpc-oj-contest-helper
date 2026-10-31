@@ -164,7 +164,11 @@ def save_state(path: Path, state: dict) -> None:
                 state.pop("workspace_target", None)
         if previous.get('workspace_name'):
             state['workspace_name'] = previous['workspace_name']
-            state['contest'].update(name=state['workspace_name'], directory_name=state['workspace_name'])
+            from .workspaces import cloud_workspace
+            if not cloud_workspace(previous) and not cloud_workspace(state):
+                state['contest'].update(name=state['workspace_name'], directory_name=state['workspace_name'])
+            elif previous.get('contest', {}).get('extra', {}).get('room_name'):
+                state['contest'].setdefault('extra', {})['room_name'] = previous['contest']['extra']['room_name']
             if state.get('mode', 'vp') == 'vp':
                 from .parsing import ccpc_reveal_count
                 selected = previous.get('contest', {}).get('extra', {}).get('contest_format') or state['contest'].get('extra', {}).get('contest_format')

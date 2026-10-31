@@ -15,6 +15,7 @@ from .scoring import score_submissions, submission_history
 from .sessions import attempts, boundary, merge_records, apply_submission_sync, reserve_submission_sync
 from .storage import config_directory, read_json
 from .tui import Dashboard
+from .workspaces import display_name
 
 
 def refresh(path: Path, state: dict) -> str:
@@ -78,7 +79,7 @@ def history(args: list[str]) -> None:
                                           problem_max_scores=contest.extra.get('problem_max_scores', {}),
                                           oi_time_tiebreak=bool(contest.extra.get('oi_time_tiebreak')))
                 points = str(score.solved if score.scoring == 'ICPC' else score.points if score.points is not None else '—')
-            table.add_row(state.get("attempt_id", path.stem), state.get("mode", "vp"), contest.name,
+            table.add_row(state.get("attempt_id", path.stem), state.get("mode", "vp"), display_name(contest),
                           datetime.fromtimestamp(state["start_time"]).strftime("%Y-%m-%d %H:%M:%S"),
                           points, str(sum(bool(e.get("practice")) for e in events)),
                           "archived" if boundary(path) is not None and platform_now(state) >= boundary(path) else state.get("status", ""))
@@ -102,7 +103,7 @@ def history(args: list[str]) -> None:
                if state.get("mode") in ("live", "practice") else
                submission_history([Submission(**e) for e in events], list(contest.problems), contest.rules,
                                   platform_now(state)-state["start_time"]))
-    console.print(contest.name + " · " + state.get("attempt_id", path.stem), markup=False)
+    console.print(display_name(contest) + " · " + state.get("attempt_id", path.stem), markup=False)
     console.print("Directory: " + state["directory"], markup=False)
     if state.get("summary"):
         console.print(" · ".join(f"{k}: {v}" for k, v in state["summary"].items()), markup=False)

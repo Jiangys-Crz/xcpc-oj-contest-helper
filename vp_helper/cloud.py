@@ -191,6 +191,11 @@ def ensure_access(state, *, fresh=False):
         raise VPError('当前云端账号与本场 VP 不符，请运行 xcpc login 切回原队长或参赛账号。')
     result, saved = authorize(context['roomId'], fresh=fresh)
     _check_room_context(state, result['room'], result['participant'])
+    if state.get('contest', {}).get('extra', {}).get('room_name'):
+        title = result['room'].get('name')
+        if isinstance(title, str) and title.strip():
+            context['roomName'] = title.strip()
+            state['contest']['extra']['room_name'] = title.strip()
     from .identity import participant_identity
     title, subtitle = participant_identity(result['participant'])
     context.update(participantTitle=title, participantSubtitle=subtitle)
@@ -267,6 +272,8 @@ def start_room(value):
                 raise VPError('此原站比赛已有不同开始时间的本地 VP，不能作为本场房间重新 VP。')
             state['cloud'] = context
             contest = Contest.from_dict(state['contest'])
+            if contest.extra.get('room_name'):
+                contest.extra['room_name'] = room['name']
             from .freeze import configure, configure_format
             configure_format(contest, room_format=context['scoringSystem'])
             configure(contest, room_minutes=context['freezeMinutes'])

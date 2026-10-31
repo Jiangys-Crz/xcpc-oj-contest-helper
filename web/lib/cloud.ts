@@ -310,7 +310,7 @@ export class CloudService {
   }
   private historyView(row:Row, details=false, viewer?:User, publicBoard=false) {
     const participantType=row.participant_id?this.store.one('SELECT type FROM participants WHERE id=?',row.participant_id)?.type||'individual':'individual';
-    const room=row.room_id?this.room(row.room_id):undefined,timing=room?roomTiming(room):undefined;
+    const room=row.room_id?this.store.one('SELECT r.*,rules.duration_seconds,rules.freeze_minutes,rules.scoring_system FROM rooms r LEFT JOIN room_rules rules ON rules.room_id=r.id WHERE r.id=?',row.room_id):undefined,timing=room?roomTiming(room):undefined;
     const frozen=Boolean(timing?.frozen && (publicBoard || (viewer && !this.historyVisible(row,viewer))));
     const at=Date.now(), submissions:Row[]=JSON.parse(row.submissions_json);
     const hidePractice=Boolean(publicBoard && timing && at<Date.parse(timing.endsAt));
@@ -318,7 +318,7 @@ export class CloudService {
     const rules=JSON.parse(row.rules_json||'{}');
     if(frozen && rules.score_policy!=='subtasks' && filtered?.points!==undefined && row.freeze_points!==null && row.freeze_points!==undefined && row.freeze_event_points!==null && row.freeze_event_points!==undefined)filtered.points+=row.freeze_points-row.freeze_event_points;
     else if(frozen && filtered && (filtered.points===undefined || row.freeze_event_points===null) && row.freeze_points!==null && row.freeze_points!==undefined)filtered.points=row.freeze_points;
-    const value={id:row.id,participantType,...this.historyIdentity(row),contestName:row.contest_name,contestUrl:row.contest_url,platform:row.platform,mode:row.mode,rank:historyRank(row,room,frozen),rankSource:row.mode==='bt'?'unavailable':frozen?(row.freeze_rank_source==='original'?'original':'unavailable'):row.rank_source||'legacy',solved:filtered?.solved??row.solved,penalty:row.mode==='bt'?0:filtered?.penalty??row.penalty,points:row.mode==='bt'?null:filtered?filtered.points??null:row.points??null,scoring:rules.scoring||'ICPC',problems:JSON.parse(row.problems_json),cells:filtered?.cells??JSON.parse(row.cells_json),startedAt:row.mode==='bt'?null:row.started_at,endedAt:row.mode==='bt'?null:row.ended_at,participantLabel:row.participant_label,roomId:row.room_id,status:row.status,createdAt:row.created_at,updatedAt:row.updated_at,rules,...(timing?{...timing,freezeActive:timing.frozen,frozen}: {frozen:false})};
+    const value={id:row.id,participantType,...this.historyIdentity(row),contestName:room?.name||row.contest_name,contestUrl:row.contest_url,platform:row.platform,mode:row.mode,rank:historyRank(row,room,frozen),rankSource:row.mode==='bt'?'unavailable':frozen?(row.freeze_rank_source==='original'?'original':'unavailable'):row.rank_source||'legacy',solved:filtered?.solved??row.solved,penalty:row.mode==='bt'?0:filtered?.penalty??row.penalty,points:row.mode==='bt'?null:filtered?filtered.points??null:row.points??null,scoring:rules.scoring||'ICPC',problems:JSON.parse(row.problems_json),cells:filtered?.cells??JSON.parse(row.cells_json),startedAt:row.mode==='bt'?null:row.started_at,endedAt:row.mode==='bt'?null:row.ended_at,participantLabel:row.participant_label,roomId:row.room_id,status:row.status,createdAt:row.created_at,updatedAt:row.updated_at,rules,...(timing?{...timing,freezeActive:timing.frozen,frozen}: {frozen:false})};
     const statistics=row.mode!=='bt' || row.statistics_json?this.statisticsView(room||{starts_at:row.started_at||now(),duration_seconds:rules.duration,freeze_minutes:rules.freeze_minutes,scoring_system:rules.contest_format},[row],JSON.parse(row.problems_json),at):{};
     return details?{...value,...statistics,submissions:filtered?.submissions??submissions.filter(s=>Date.parse(s.submittedAt)<=at)}:value;
   }
@@ -346,7 +346,7 @@ export class CloudService {
     // Explicit outbound allowlist: no judge credentials, local paths, source
     // files, association passwords, or other teams' records can be restored.
     const submissions=recordView(row),personal=this.store.one("SELECT * FROM histories WHERE owner_id=? AND contest_url=? AND mode='bt' AND room_id IS NULL AND id<>? ORDER BY created_at DESC,id DESC LIMIT 1",user.id,row.contest_url,row.id);
-    return {historyId:row.id,localId:row.local_id,isOwner:row.owner_id===user.id,roomId:row.room_id,participantId:row.participant_id,
+    return {historyId:row.id,localId:row.local_id,isOwner:row.owner_id===user.id,roomId:row.room_id,roomName:room?.name??null,participantId:row.participant_id,
       participantType:row.participant_id?this.store.one('SELECT type FROM participants WHERE id=?',row.participant_id)?.type||'individual':'individual',
       ...this.historyIdentity(row),mode:row.mode,startedAt:row.started_at,endedAt:room?roomTiming(room).endsAt:row.ended_at,
       rank:historyRank(row,room,false),revision:row.revision,updatedAt:row.updated_at,
@@ -620,7 +620,7 @@ export class CloudService {
     }
     if(path==='history' && method==='GET') {
       const query=new URL(request.url).searchParams,search=(query.get('search')||'').slice(0,200).toLowerCase(),type=query.get('type');
-      return {data:this.store.all("SELECT h.* FROM histories h WHERE h.owner_id=? OR EXISTS(SELECT 1 FROM participants p,json_each(p.members_json) m WHERE p.id=h.participant_id AND json_extract(m.value,'$.id')=?) ORDER BY h.created_at DESC,h.id DESC",user.id,user.id).filter(h=>(!search||h.contest_name.toLowerCase().includes(search))&&(!type||type===h.mode)).map(h=>this.historyView(h,false,user))};
+      return {data:this.store.all("SELECT h.* FROM histories h WHERE h.owner_id=? OR EXISTS(SELECT 1 FROM participants p,json_each(p.members_json) m WHERE p.id=h.participant_id AND json_extract(m.value,'$.id')=?) ORDER BY h.created_at DESC,h.id DESC",user.id,user.id).filter(h=>!type||type===h.mode).map(h=>({nativeName:h.contest_name,view:this.historyView(h,false,user)})).filter(({nativeName,view})=>!search||view.contestName.toLowerCase().includes(search)||nativeName.toLowerCase().includes(search)).map(({view})=>view)};
     }
     if(segments[0]==='history' && segments.length===2 && method==='GET') {const h=this.store.one('SELECT * FROM histories WHERE id=?',segments[1]);if(!h||!this.historyVisible(h,user,true))return fail(404,'比赛记录不存在或无权查看');return {data:this.historyView(h,true,user)};}
     if(segments[0]==='client') {

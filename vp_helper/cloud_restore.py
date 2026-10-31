@@ -121,7 +121,7 @@ def restore_snapshot(snapshot: dict, account: dict, config: dict) -> tuple[Path,
     from .live import account_for
     from .practice import Practice, saved_rank
     from .sessions import attempts
-    from .workspaces import allocate, promote
+    from .workspaces import allocate, promote, cloud_workspace, _pinned_directory
     c = snapshot.get('contest')
     if not isinstance(c, dict) or not isinstance(snapshot.get('historyId'), str):
         raise VPError('云端补题资料不完整，原本地记录未修改。')
@@ -159,6 +159,9 @@ def restore_snapshot(snapshot: dict, account: dict, config: dict) -> tuple[Path,
                 state['practice_view'] = True
                 state.setdefault('practice_rank', saved_rank(state) if saved_rank(state) != '—' else str(snapshot.get('rank') or '—'))
                 state['restored_from'] = origin
+                if state['contest'].get('extra', {}).get('room_name') and isinstance(snapshot.get('roomName'), str):
+                    state['contest']['extra']['room_name'] = snapshot['roomName']
+                    origin['roomName'] = snapshot['roomName']
                 write_json(path, state)
             path, state = cli.restore_contest(path, state, config)
             state['_reload_monitor'] = True
@@ -179,7 +182,11 @@ def restore_snapshot(snapshot: dict, account: dict, config: dict) -> tuple[Path,
         if prior:
             path, _ = prior
             state = read_json(path)
-            directory = Path(state['directory'])
+            room_name = state.get('contest', {}).get('extra', {}).get('room_name')
+            if room_name:
+                contest.extra['room_name'] = snapshot.get('roomName') or room_name
+                origin['roomName'] = contest.extra['room_name']
+            directory = _pinned_directory(path, state) if cloud_workspace(state) else Path(state['directory'])
             directory.mkdir(parents=True, exist_ok=True)
             if platform == 'qoj':
                 contest.original_start = state['start_time']
@@ -187,6 +194,9 @@ def restore_snapshot(snapshot: dict, account: dict, config: dict) -> tuple[Path,
                 from .sessions import _rebase_start
                 _rebase_start(state, contest.original_start)
         else:
+            if isinstance(snapshot.get('roomName'), str) and snapshot['roomName'].strip():
+                contest.extra['room_name'] = snapshot['roomName'].strip()
+                origin['roomName'] = contest.extra['room_name']
             attempt_id = uuid4().hex[:10]
             path = root / f'bt-{platform}-{contest_id}-{attempt_id}.json'
             personal_id = personal.get('localId') if personal else None
@@ -217,6 +227,9 @@ def restore_snapshot(snapshot: dict, account: dict, config: dict) -> tuple[Path,
                     # fetched; importing the baseline must not erase that poll.
                     state = {**state, **fresh, 'start_time': state['start_time']}
                 state.update(contest=contest.to_dict(), cloud_restore=origin, restored_submissions=incoming)
+                if prior and str(directory) != state['directory']:
+                    state['directory'] = str(directory)
+                    state.pop('workspace_target', None)
                 if personal:
                     state['submissions'] = _merge(state.get('submissions', []), [{**r, 'practice': True} for r in _records(personal, state['start_time'], contest.problems)])
                 state.setdefault('practice_rank', str(snapshot.get('rank') or '—'))

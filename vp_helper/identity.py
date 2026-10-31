@@ -32,6 +32,9 @@ def persist_display_identity(path: Path, state: dict) -> None:
     context = state.get('cloud') or {}
     values = {key: context[key] for key in ('participantTitle', 'participantSubtitle')
               if isinstance(context.get(key), str)}
+    opted = bool(state.get('contest', {}).get('extra', {}).get('room_name'))
+    if opted and isinstance(context.get('roomName'), str):
+        values['roomName'] = context['roomName']
     if not values:
         return
     with file_lock(path.with_suffix('.save.lock')):
@@ -40,10 +43,18 @@ def persist_display_identity(path: Path, state: dict) -> None:
         if not previous or any(previous.get(key) != context.get(key) for key in
                                ('serverUrl', 'roomId', 'userId', 'participantId')):
             return
-        if any(previous.get(key) != value for key, value in values.items()):
+        if not saved.get('contest', {}).get('extra', {}).get('room_name'):
+            values.pop('roomName', None)
+        changed = any(previous.get(key) != value for key, value in values.items())
+        if 'roomName' in values and saved['contest']['extra']['room_name'] != values['roomName']:
+            saved['contest']['extra']['room_name'] = values['roomName']
+            changed = True
+        if changed:
             saved['cloud'] = {**previous, **values}
             write_json(path, saved)
         state['cloud'] = saved['cloud']
+        if opted and saved.get('contest', {}).get('extra', {}).get('room_name'):
+            state['contest']['extra']['room_name'] = saved['contest']['extra']['room_name']
 
 
 def dashboard_identity(state: dict, path: Path | None = None) -> tuple[str, str]:

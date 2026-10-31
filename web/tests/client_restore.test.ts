@@ -16,7 +16,7 @@ function fixture(t:any) {
   }});
   t.after(()=>{service.close();rmSync(root,{recursive:true,force:true});});
   const api=async(method:string,path:string,user?:Data,body?:Data,status=200)=>{
-    const response=await handleRequest(new Request('https://vp.example.test/api/'+path,{method,headers:{...(user?{Authorization:'Bearer '+user.token}:{}),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),path.split('/'),service);
+    const response=await handleRequest(new Request('https://vp.example.test/api/'+path,{method,headers:{...(user?{Authorization:'Bearer '+user.token}:{}),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),path.split('?')[0].split('/'),service);
     const result=await response.json();assert.equal(response.status,status,JSON.stringify(result));return result.data;
   };
   const login=(account:string)=>api('POST','auth/login',undefined,{account,password:'fixture-password'});
@@ -97,4 +97,30 @@ test('restore includes the caller own later personal practice without reading an
     assert.deepEqual(restored.personalPractice.submissions.map((s:Data)=>s.id),['501']);
     assert(!JSON.stringify(restored).includes('"999"'));
   }
+});
+
+test('history projects current room title without changing legacy native identity or stored snapshots',async(t)=>{
+  const {api,setup,service}=fixture(t),{owner,captain,member,room,payload,hid}=await setup();
+  const stored=service.store.one('SELECT contest_name,contest_url,problems_json,rules_json,submissions_json FROM histories WHERE id=?',hid)!;
+  assert.equal(stored.contest_name,'Native contest');
+  for(const viewer of [captain,member]) {
+    assert.equal((await api('GET',`history/${hid}`,viewer)).contestName,'Restore room');
+    assert.equal((await api('GET',`rooms/${room.id}/mysubmit`,viewer)).history.contestName,'Restore room');
+    assert.equal((await api('GET','history?search=restore',viewer))[0].id,hid);
+    assert.equal((await api('GET','history?search=Native%20contest',viewer))[0].id,hid);
+  }
+  await api('PATCH',`rooms/${room.id}`,owner,{name:'CCPC Friday / Association Training'});
+  assert.equal((await api('GET',`history/${hid}`,member)).contestName,'CCPC Friday / Association Training');
+  assert.equal((await api('GET','history?search=association',member))[0].id,hid);
+  await api('POST','client/sync',captain,{...payload,revision:2});
+  assert.deepEqual(service.store.one('SELECT contest_name,contest_url,problems_json,rules_json,submissions_json FROM histories WHERE id=?',hid),stored);
+  t.mock.timers.setTime(CLOCK+10820e3);
+  const restored=await api('POST',`client/rooms/${room.id}/restore`,member,{});
+  assert.equal(restored.roomName,'CCPC Friday / Association Training');assert.equal(restored.contest.name,'Native contest');
+  assert.equal(restored.contest.url,URL);assert.equal(restored.participantId,payload.participantId);
+  const legacy=service.store.one('SELECT * FROM histories WHERE id=?',hid)!;
+  assert.equal((service as any).historyView({...legacy,room_id:'missing-legacy-room'},false,captain.user).contestName,'Native contest');
+  const individual={...payload,localId:'standalone-native',roomId:undefined,participantId:undefined,roomStartsAt:undefined};
+  const nativeId=(await api('POST','client/sync',captain,individual)).id;
+  assert.equal((await api('GET',`history/${nativeId}`,captain)).contestName,'Native contest');
 });

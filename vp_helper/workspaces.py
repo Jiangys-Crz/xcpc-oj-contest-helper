@@ -9,6 +9,16 @@ from .models import Contest, VPError
 from .storage import file_lock, read_json, write_json
 
 
+def display_name(contest: Contest) -> str:
+    title = contest.extra.get('room_name')
+    return title.strip() if isinstance(title, str) and title.strip() else contest.name
+
+
+def cloud_workspace(state: dict) -> bool:
+    return any(isinstance(state.get(key), dict) and state[key].get('roomId')
+               for key in ('cloud', 'cloud_restore', 'restored_from')) or bool(state.get('contest', {}).get('extra', {}).get('room_name'))
+
+
 def refresh_name(api, contest: Contest) -> None:
     if not callable(getattr(type(api), 'contest_name', None)):
         return
@@ -27,9 +37,10 @@ def refresh_name(api, contest: Contest) -> None:
 
 
 def name(contest: Contest) -> str:
-    if not isinstance(contest.name, str) or not contest.name.strip():
+    title = display_name(contest)
+    if not isinstance(title, str) or not title.strip():
         raise VPError('原站未提供实际比赛名称，未建立编号或站点名称目录。')
-    value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', ' ', contest.name)
+    value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', ' ', title)
     value = ' '.join(value.split()).strip(' .')
     if not value:
         raise VPError("原站未提供可用的比赛名称。")
@@ -60,9 +71,9 @@ def allocate(base: Path, contest: Contest, root: Path, handle: str) -> tuple[Pat
     from .sessions import attempts
     previous = [s for _, s in attempts(root) if s['url'] == contest.url
                 and s['handle'].casefold() == handle.casefold() and s.get('directory')
-                and Path(s['directory']).is_dir() and s.get('status') not in ('failed', 'cancelled')]
+                and (Path(s['directory']).is_dir() or contest.extra.get('room_name')) and s.get('status') not in ('failed', 'cancelled')]
     source = Path(previous[-1]['directory']) if previous else base / name(contest)
-    target = source.parent / name(contest)
+    target = source if previous and contest.extra.get('room_name') else source.parent / name(contest)
     _check(root, source, contest.url, handle)
     if source.resolve() != target.resolve() and target.exists():
         raise VPError("比赛名称目录已经存在，原代码目录保留：" + str(target))
@@ -70,10 +81,27 @@ def allocate(base: Path, contest: Contest, root: Path, handle: str) -> tuple[Pat
     return source, target
 
 
+def _pinned_directory(path: Path, state: dict) -> Path:
+    source = Path(state['directory'])
+    target = Path(state.get('workspace_target', source))
+    if source.exists() or source.resolve() == target.resolve() or not target.is_dir():
+        return source
+    # Adopt an already completed old rename only when the target is actually
+    # bound to this record (or an existing shared record). Never move files.
+    context = read_json(target / 'contest.json').get('vp_context', {})
+    bound = (context.get('state_path') and Path(context['state_path']).resolve() == path.resolve()
+             and context.get('url', state['url']) == state['url']
+             and str(context.get('handle', state['handle'])).casefold() == state['handle'].casefold())
+    shared = any(other['url'] == state['url'] and other['handle'].casefold() == state['handle'].casefold()
+                 for _, other in _owners(path.parent, target))
+    return target if bound or shared else source
+
+
 def promote(path: Path, state: dict) -> None:
     with file_lock(path.parent / 'workspaces.lock'):
-        source = Path(state['directory'])
-        target = Path(state.get('workspace_target', source))
+        pinned = cloud_workspace(state) or cloud_workspace(read_json(path))
+        source = _pinned_directory(path, state) if pinned else Path(state['directory'])
+        target = source if pinned else Path(state.get('workspace_target', source))
         owners = _owners(path.parent, source)
         missing = not source.exists()
         if source.is_symlink() and not source.is_dir():
@@ -116,8 +144,14 @@ def promote(path: Path, state: dict) -> None:
 
 def rename_existing(path: Path, state: dict, contest: Contest) -> None:
     source = Path(state['directory'])
-    target = source.parent / name(contest)
+    pinned = cloud_workspace(state)
+    target = source if pinned else source.parent / name(contest)
     state['contest'] = contest.to_dict()
+    if pinned:
+        # An existing saved path is authoritative. promote may only adopt a
+        # previously moved, proven target when the original path is absent.
+        promote(path, state)
+        return
     if source.resolve() != target.resolve():
         state['workspace_target'] = str(target)
     promote(path, state)
