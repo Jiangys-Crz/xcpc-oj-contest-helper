@@ -3,7 +3,7 @@ import {FormEvent,useMemo,useState} from 'react';
 import Link from 'next/link';
 import {ArrowUpRight,ChevronRight,Search} from 'lucide-react';
 import {useResource} from './api';
-import {BackLink,Empty,ErrorBox,Legend,Loading,ModeBadge,PageHeader,ProblemCell,ParticipationBadge} from './shared';
+import {Empty,ErrorBox,Legend,Loading,ModeBadge,PageHeader,ProblemCell,ParticipationBadge} from './shared';
 import {ContestDetailView,ParticipantIdentity} from './ContestDetail';
 import {TableFit} from './TableFit';
 import type {History} from './types';
@@ -15,5 +15,5 @@ export function HistoryDetail({id}:{id:string}){
   if(result.error&&!result.data)return <ErrorBox englishMessage="Unable to load this contest. Refresh or check your access." message={result.error} onRetry={result.reload}/>;
   const history=result.data;
   if(!history)return null;
-  return <><BackLink href="/history" label="History"/><ContestDetailView history={history} error={result.error} onRetry={result.reload}/></>;
+  return <ContestDetailView history={history} error={result.error} onRetry={result.reload}/>;
 }
