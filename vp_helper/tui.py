@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime
-import re
 
 from rich import box
 from rich.cells import cell_len, set_cell_size
@@ -40,11 +39,12 @@ class ProblemBox:
     def __rich_console__(self, console, options):
         lines = self.value.wrap(console, self.width, overflow="fold", no_wrap=False)
         content = []
+        margin = max(0, options.max_width - self.width)
         for line in lines:
             remaining = self.width - cell_len(line.plain)
-            content.append(" " * (remaining // 2) + line.plain + " " * (remaining - remaining // 2))
+            left = (remaining + margin % 2) // 2
+            content.append(" " * left + line.plain + " " * (remaining - left))
         content.extend([" " * self.width] * (self.height - len(content)))
-        margin = max(0, options.max_width - self.width)
         style = console.get_style(self.value.style)
         for line in content:
             # Text's automatic justification extends its background into the
@@ -56,7 +56,8 @@ class ProblemBox:
             yield Segment.line()
 
 
-def score_table(columns, problems, rows, width, *, separate_summary=False, _allow_split=True):
+def score_table(columns, problems, rows, width, *, separate_summary=False, _allow_split=True,
+                _allow_groups=True, _minimum_problem_width=1, _minimum_box_height=0):
     problems = list(problems)
 
     def content_width(value):
@@ -70,15 +71,17 @@ def score_table(columns, problems, rows, width, *, separate_summary=False, _allo
         index = columns.index("team")
         sizes[index] = min(sizes[index], max(minimum[index], 24))
     count = len(columns) + len(problems)
-    # Within each block, headers stay together in one row. Bodies can use compact counts
-    # and wrap vertically; a long attempt label must not move the headers.
-    problem_minimum = max((content_width(label) for label in problems), default=1)
-    problem_space = len(problems) * problem_minimum
+    # Keep complete attempt labels and native per-problem values on their
+    # original lines. Narrow panes get consecutive groups, never abbreviated
+    # counts or "tries" split across lines.
     first_cells = rows[0][len(columns):] if rows else []
-    active = any((cell.plain if isinstance(cell, Text) else str(cell)).strip() not in ("", "—")
-                 for cell in first_cells)
-    preferred_problem_width = max(problem_minimum, len("tries") if active else 1)
-    readable_width = sum(sizes) + len(problems) * preferred_problem_width + max(0, count - 1)
+    problem_minimum = max([_minimum_problem_width, *[content_width(label) for label in problems],
+                           *[content_width(cell) for row in rows for cell in row[len(columns):]]])
+    problem_space = len(problems) * problem_minimum
+    active = _minimum_box_height > 0 or any(
+        (cell.plain if isinstance(cell, Text) else str(cell)).strip() not in ("", "—")
+        for cell in first_cells)
+    readable_width = sum(sizes) + problem_space + max(0, count - 1)
     if _allow_split and columns and problems and rows and readable_width > width:
         # Stack only the presentation. The first block retains every native
         # summary value; the second gets the full pane for the problem cells.
@@ -99,7 +102,10 @@ def score_table(columns, problems, rows, width, *, separate_summary=False, _allo
         problem_table = score_table([""] if summaries else [], problems, problem_rows, width,
                                     separate_summary=separate_summary, _allow_split=False)
         return Group(metadata, Text(""), problem_table)
-    padding = 1 if sum(sizes) + len(problems) * preferred_problem_width + 2 * count <= width else 0
+    if _allow_groups and problems and rows and readable_width > width:
+        return score_groups(columns, problems, rows, width, problem_minimum,
+                            separate_summary=separate_summary)
+    padding = 1 if sum(sizes) + problem_space + 2 * count <= width else 0
     available = width - problem_space - (2 * count if padding else max(0, count - 1))
     if available < sum(minimum):
         required = sum(minimum) + problem_space + max(0, count - 1)
@@ -127,21 +133,47 @@ def score_table(columns, problems, rows, width, *, separate_summary=False, _allo
         widths = table._calculate_column_widths(layout, layout.options.update_width(width - table._extra_width))
         problem_width = min(widths[index] - table._get_padding_width(index)
                             for index in range(len(columns), count))
-        values = []
-        for cell in first_cells:
-            value = cell if isinstance(cell, Text) else Text(str(cell))
-            if problem_width < len("tries"):
-                lines = value.plain.split("\n")
-                lines[0] = re.sub(r"\s+tr(?:y|ies)\b", "", lines[0]).replace(" ", "")
-                value = Text("\n".join(lines), style=value.style)
-            values.append(value)
-        height = max(len(value.wrap(layout, problem_width, overflow="fold", no_wrap=False))
-                     for value in values)
+        values = [cell if isinstance(cell, Text) else Text(str(cell)) for cell in first_cells]
+        height = max(_minimum_box_height, max(
+            len(value.wrap(layout, problem_width, overflow="fold", no_wrap=False)) for value in values))
         rows = [[*rows[0][:len(columns)], *(ProblemBox(value, problem_width, height) for value in values)],
                 *rows[1:]]
     for index, row in enumerate(rows):
         table.add_row(*row, end_section=separate_summary and index == 0)
     return table
+
+
+def score_groups(columns, problems, rows, width, problem_width, *, separate_summary=False):
+    """Keep whole problem labels, attempt lines and statistics in aligned groups."""
+    def content_width(value):
+        text = value.plain if isinstance(value, Text) else str(value)
+        return max((cell_len(line) for line in text.splitlines()), default=0)
+
+    label_width = sum(max([content_width(label)] + [content_width(row[index]) for row in rows])
+                      for index, label in enumerate(columns))
+    capacity = (width - label_width - max(0, len(columns) - 1)) // (problem_width + 1)
+    if not columns:
+        capacity = (width + 1) // (problem_width + 1)
+    capacity = min(capacity, len(problems))
+    if capacity < 1:
+        required = label_width + problem_width + len(columns)
+        return Text(f"Enlarge the score pane to at least {required} columns to show a complete problem cell.",
+                    style="#555555", overflow="fold")
+    # The final group reserves the same slots as earlier groups, so every
+    # colored rectangle keeps the same width and height after resizing.
+    box_height = max((len((cell.plain if isinstance(cell, Text) else str(cell)).split("\n"))
+                      for cell in rows[0][len(columns):]), default=1)
+    groups = []
+    for start in range(0, len(problems), capacity):
+        selected = problems[start:start + capacity]
+        empty = capacity - len(selected)
+        labels = [*selected, *([""] * empty)]
+        grouped_rows = [[*row[:len(columns)], *row[len(columns) + start:len(columns) + start + len(selected)],
+                         *([Text("")] * empty)] for row in rows]
+        groups.append(score_table(columns, labels, grouped_rows, width, separate_summary=separate_summary,
+                                  _allow_split=False, _allow_groups=False,
+                                  _minimum_problem_width=problem_width, _minimum_box_height=box_height))
+    return Group(*groups)
 
 
 def participant_text(title: str, subtitle: str, fallback: str) -> Text:

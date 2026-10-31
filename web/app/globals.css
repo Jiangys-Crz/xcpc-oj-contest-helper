@@ -233,3 +233,57 @@ input,select,textarea,label,.button,.filter-form select,.detail-grid dd,.team-me
 /* Only contest names wrap in the history list; identities remain two explicit lines. */
 .table-fit-content>.history-table .contest-link{width:max-content;max-width:clamp(250px,25vw,350px);white-space:normal;overflow-wrap:break-word;word-break:normal}
 .judge-freeze{color:var(--pending)}
+
+/* DOMjudge presentation is limited to history details and My submissions. */
+.judge-contest-detail .judge-score-section{padding:26px 0 38px}
+.judge-contest-detail .judge-scoreboard th{padding:6px 7px;background:#fff;border-bottom:2px solid #202020;border-right:1px solid #d7d7d7;font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif;font-size:12px;font-weight:700;text-transform:uppercase}
+.judge-contest-detail .judge-scoreboard tbody td{height:48px;padding:5px 7px;border-bottom:1px solid #303030;border-right:1px solid #dedede;font-size:14px}
+.judge-contest-detail .judge-scoreboard .judge-team-name{padding-inline:9px}
+.judge-contest-detail .judge-scoreboard .participant-identity{gap:2px;line-height:1.25}
+.judge-contest-detail .judge-scoreboard .participant-identity strong{font-size:14px;line-height:1.25}
+.judge-contest-detail .judge-scoreboard .participant-identity small{font-size:12px!important;line-height:1.3}
+.judge-contest-detail .judge-scoreboard .judge-problem-heading{padding:5px 7px}
+.judge-contest-detail .judge-problem-badge{display:inline-flex;align-items:center;justify-content:center;min-width:32px;width:auto;height:30px;padding:0 6px;border:1px solid #00000030;border-radius:5px;font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif;font-size:16px;font-weight:700;line-height:1;vertical-align:middle}
+.judge-contest-detail .judge-scoreboard .judge-problem-heading>.judge-problem-badge{width:auto;min-width:32px;max-width:none;height:30px;font-size:16px}
+.judge-contest-detail .judge-scoreboard .problem-cell{padding:4px 2px;border-left:1px solid #fff;border-right:1px solid #fff}
+.judge-contest-detail .judge-detail-cell-content{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:38px;line-height:1.2}
+.judge-contest-detail .judge-scoreboard .judge-detail-cell-content>small{order:0;margin:0;font-size:16px;font-weight:400;line-height:1.15}
+.judge-contest-detail .judge-scoreboard .judge-detail-cell-content>span{order:1;font-size:12px;font-weight:400;line-height:1.2}
+.judge-contest-detail .judge-scoreboard .upsolved .judge-detail-cell-content>small{font-size:12px}
+.judge-contest-detail .judge-scoreboard .problem-cell.upsolved,.judge-contest-detail .judge-legend-upsolved{color:#000}
+.judge-contest-detail .judge-scoreboard .judge-summary th,.judge-contest-detail .judge-scoreboard .judge-summary td{padding:4px 3px;border-bottom:1px solid #d4d7db;border-right:1px solid #e4e5e7;font-size:13px;font-weight:400;line-height:1.25;text-transform:none}
+.judge-contest-detail .judge-detail-columns{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px;align-items:start}
+.judge-contest-detail .domjudge-submissions{grid-column:1;min-width:0;width:100%;max-width:100%;margin:0 0 30px}
+.judge-contest-detail .domjudge-submissions>.judge-section-heading{position:relative;display:block;min-height:27px;margin:0 0 8px;padding:0 34px;border:1px solid #b9c6dd;border-radius:0;background:#c5d8fc;text-align:center}
+.judge-contest-detail .domjudge-submissions>.judge-section-heading h2{margin:0;padding:0;font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif;font-size:20px;font-weight:400;line-height:1.25;color:#111827}
+.judge-contest-detail .domjudge-submissions .judge-table-actions{position:absolute;top:0;right:3px;display:flex;align-items:center;height:100%;gap:0}
+.judge-contest-detail .domjudge-submissions .judge-table-actions .button{width:25px;height:24px;min-height:24px;padding:0;border:0;border-radius:2px;background:transparent;color:#526985}
+.judge-contest-detail .domjudge-submissions .judge-table-actions .button:hover,.judge-contest-detail .domjudge-submissions .judge-table-actions .button.is-active{background:#ffffff80;color:#1d4ed8}
+.judge-contest-detail .domjudge-submissions .judge-submissions-table.fit-table{border-top:0}
+.judge-contest-detail .domjudge-submissions .judge-submissions-table.fit-table th{width:auto;padding:6px 7px;border-bottom:1px solid #bfc4cc;background:#fff;font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;font-weight:700;color:#111827}
+.judge-contest-detail .domjudge-submissions .judge-submissions-table.fit-table td{height:42px;padding:5px 7px;border-bottom:1px solid #d1d5db;background:#fff;font-size:14px}
+.judge-contest-detail .domjudge-submissions .judge-submissions-table.fit-table tbody tr:hover td{background:#f7faff}
+.judge-contest-detail .domjudge-submissions .judge-submissions-table.fit-table .time-value{text-align:left;font-size:13px;white-space:nowrap}
+.judge-contest-detail .domjudge-submissions .judge-submissions-table.fit-table th:first-child{text-align:left}
+.judge-contest-detail .domjudge-submissions .judge-submissions-table.fit-table .judge-verdict{font-size:13px;font-weight:700;letter-spacing:0}
+.judge-contest-detail .domjudge-submissions .judge-submission-record{display:inline-flex;align-items:center;justify-content:center;gap:5px;color:#111827;font-size:13px;white-space:nowrap}
+.judge-contest-detail .domjudge-submissions .judge-submission-record:hover{color:#1d4ed8}
+.judge-contest-detail .domjudge-submissions .judge-submission-record svg{flex-shrink:0}
+.judge-contest-detail .domjudge-submissions .judge-table-footer{padding:7px 3px;border-top:0;gap:10px;flex-wrap:wrap;font-size:12px}
+.judge-contest-detail .domjudge-submissions .judge-filters{gap:10px;margin:0 0 8px;padding:10px}
+@media(max-width:900px){.judge-contest-detail .judge-detail-columns{grid-template-columns:minmax(0,1fr)}}
+.judge-contest-detail .judge-score-scroll{padding:0}
+
+/* Contest context occupies the right-hand panel beside the submission log. */
+.judge-contest-detail .judge-detail-information{grid-column:2;min-width:0;align-self:start}
+.judge-contest-detail .judge-detail-information>h2{min-height:27px;margin:0 0 8px;padding:0 8px;border:1px solid #b9c6dd;background:#c5d8fc;font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif;font-size:20px;font-weight:400;line-height:1.25;text-align:center;color:#111827}
+.judge-contest-detail .judge-detail-information .judge-metadata{display:flex;flex-direction:column;align-items:stretch;gap:14px;margin:0;padding:10px 3px;border:0;border-radius:0;background:transparent}
+.judge-contest-detail .judge-detail-information .judge-identities{justify-content:flex-start}
+.judge-contest-detail .judge-detail-information .judge-contest-times{display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:10px;margin:0;padding:0;text-align:left;font-size:14px}
+.judge-contest-detail .judge-detail-information .judge-contest-times>span{white-space:normal;overflow-wrap:anywhere}
+.judge-contest-detail .judge-detail-information .judge-updated{font-size:13px}
+.judge-contest-detail .judge-detail-information .judge-original-contest{font-size:14px}
+.judge-contest-detail .judge-detail-information .judge-legend{display:flex;align-items:stretch;justify-content:flex-start;flex-wrap:wrap;gap:4px;margin:0;width:100%;max-width:100%;font-size:12px}
+.judge-contest-detail .judge-detail-information .judge-legend h3{width:100%;justify-content:flex-start;margin:0 0 3px;padding:0;font-size:14px}
+.judge-contest-detail .judge-detail-information .judge-legend>div{padding:5px 7px}
+@media(max-width:900px){.judge-contest-detail .judge-detail-information{grid-column:1}}
