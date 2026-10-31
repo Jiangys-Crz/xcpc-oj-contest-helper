@@ -47,6 +47,8 @@ def main():
             if answer == 'y':
                 break
         result = cloud._request('POST','/api/client/prints',{'roomId':context['roomId'],
+                                'participantId':context['participantId'],
+                                'roomStartsAt':context['startsAt'],
                                 'filename':source.name,'language':language,'code':code})
         print('Virtual print #' + str(result['id']) + ' created.')
         print('View your team print here: ' + (result.get('url') or context['serverUrl'] + '/vp/' + context['roomId'] + '/prints'))

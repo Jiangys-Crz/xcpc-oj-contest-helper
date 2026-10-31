@@ -23,6 +23,13 @@ _WAKE = threading.Event()
 _WORKER = None
 
 
+class CloudRequestError(VPError):
+    """A server rejection, distinct from a temporary transport failure."""
+    def __init__(self, message, status_code):
+        super().__init__(message)
+        self.status_code = status_code
+
+
 def configuration_path():
     return config_directory() / 'cloud-account.json'
 
@@ -84,7 +91,10 @@ def _request(method, endpoint, payload=None, *, account=None, authenticated=True
         for secret in (saved.get('password'), saved.get('token'), (payload or {}).get('password')):
             if secret:
                 message = message.replace(str(secret), '[redacted]')
-        raise VPError(message[:300] or f'VP 云端请求失败（HTTP {response.status_code}）。')
+        error = message[:300] or f'VP 云端请求失败（HTTP {response.status_code}）。'
+        if response.status_code >= 400:
+            raise CloudRequestError(error, response.status_code)
+        raise VPError(error)
     return data['data']
 
 
@@ -180,10 +190,26 @@ def ensure_access(state, *, fresh=False):
     if str(saved.get('user', {}).get('id')) != str(context.get('userId')) or saved.get('serverUrl') != context.get('serverUrl'):
         raise VPError('当前云端账号与本场 VP 不符，请运行 xcpc login 切回原队长或参赛账号。')
     result, saved = authorize(context['roomId'], fresh=fresh)
-    if str(result['participant']['id']) != str(context.get('participantId')):
+    _check_room_context(state, result['room'], result['participant'])
+
+
+def _check_room_context(state, room, participant):
+    """An invitation refresh must never silently rebind a native VP."""
+    context = state['cloud']
+    if str(participant['id']) != str(context.get('participantId')):
         raise VPError('本场 VP 的参赛身份已变化，请联系房间创建者。')
-    if result['room']['contestUrl'].rstrip('/') != state['url'].rstrip('/'):
+    if room['contestUrl'].rstrip('/') != state['url'].rstrip('/'):
         raise VPError('房间原站比赛链接已修改，不能使用旧的本地 VP 提交。')
+    try:
+        original = datetime.fromisoformat(context['startsAt'].replace('Z', '+00:00')).timestamp()
+        current = datetime.fromisoformat(room['startsAt'].replace('Z', '+00:00')).timestamp()
+    except (KeyError, TypeError, ValueError, AttributeError):
+        raise VPError('房间开始时间无效，请联系房间管理员。') from None
+    if abs(original-current) > 0.001:
+        raise VPError('房间时间已修改，现有原站 VP 预约不能自动重置，请联系房间管理员。')
+    if (context.get('freezeMinutes', 0) != room.get('freezeMinutes', 0)
+            or context.get('scoringSystem', 'ICPC') != room.get('scoringSystem', 'ICPC')):
+        raise VPError('房间赛制或封榜设置已修改，不能使用旧的本地 VP，请联系房间管理员。')
 
 
 def start_room(value):
@@ -216,20 +242,25 @@ def start_room(value):
                'captainId':str(participant['captainId']), 'type':participant['type']}
     if previous:
         path, state = previous
-        old = state.get('cloud', {})
-        if old and (old.get('roomId') != room_id or str(old.get('userId')) != str(saved['user']['id'])):
-            raise VPError('原站比赛已有其他云端房间的 VP；不能重复创建或混用记录。')
-        if not old and (state.get('mode','vp') != 'vp' or abs(state['start_time'] - scheduled) > 60):
-            raise VPError('此原站比赛已有不同开始时间的本地 VP，不能作为本场房间重新 VP。')
-        if old and abs(datetime.fromisoformat(old['startsAt'].replace('Z','+00:00')).timestamp()-scheduled) > 1:
-            raise VPError('房间时间已修改，现有原站 VP 预约不能自动重置，请联系房间管理员。')
-        state['cloud'] = context
-        contest = Contest.from_dict(state['contest'])
-        from .freeze import configure, configure_format
-        configure_format(contest, room_format=context['scoringSystem'])
-        configure(contest, room_minutes=context['freezeMinutes'])
-        state['contest'] = contest.to_dict()
-        write_json(path, state)
+        # Native activation uses the same locks. Re-read before rebinding so a
+        # resumed invite cannot overwrite an in-flight start or fresh verdicts.
+        with file_lock(path.parent / 'start.lock'), file_lock(path.with_suffix('.activate.lock')), file_lock(path.with_suffix('.save.lock')):
+            state = read_json(path)
+            old = state.get('cloud', {})
+            if old and (old.get('roomId') != room_id or str(old.get('userId')) != str(saved['user']['id'])
+                        or old.get('serverUrl') != base):
+                raise VPError('原站比赛已有其他云端房间的 VP；不能重复创建或混用记录。')
+            if old:
+                _check_room_context(state, room, participant)
+            elif state.get('mode','vp') != 'vp' or abs(state['start_time'] - scheduled) > 60:
+                raise VPError('此原站比赛已有不同开始时间的本地 VP，不能作为本场房间重新 VP。')
+            state['cloud'] = context
+            contest = Contest.from_dict(state['contest'])
+            from .freeze import configure, configure_format
+            configure_format(contest, room_format=context['scoringSystem'])
+            configure(contest, room_minutes=context['freezeMinutes'])
+            state['contest'] = contest.to_dict()
+            write_json(path, state)
         cli.bind_submit_context(Path(state['directory']), path, state)
         queue_state(path, state)
         cli.reopen_saved(path, state, config)
@@ -350,6 +381,8 @@ def sync_payload(path, state):
             payload['endedAt'] = _iso(state.get('ended_at', natural_end))
     if state.get('cloud'):
         payload['roomId'] = state['cloud']['roomId']
+        payload['participantId'] = state['cloud']['participantId']
+        payload['roomStartsAt'] = state['cloud']['startsAt']
     return payload
 
 
@@ -407,6 +440,7 @@ def flush_once(*, deadline=None):
     saved = read_json(configuration_path())
     if not saved.get('token'):
         return
+    blocked_error = ''
     for path in sorted(_outbox().glob('*.json')):
         if deadline is not None and time.monotonic() >= deadline:
             return
@@ -419,9 +453,15 @@ def flush_once(*, deadline=None):
             with file_lock(path.with_suffix('.lock')):
                 if read_json(path).get('payload', {}).get('revision') == pending['payload']['revision']:
                     path.unlink(missing_ok=True)
-            write_json(state_directory()/'cloud-sync-status.json',{'lastSuccess':time.time(),'error':''})
+            write_json(state_directory()/'cloud-sync-status.json',{'lastSuccess':time.time(),'error':blocked_error})
         except VPError as exc:
-            write_json(state_directory()/'cloud-sync-status.json',{'error':str(exc),'at':time.time()})
+            status = read_json(state_directory()/'cloud-sync-status.json')
+            write_json(state_directory()/'cloud-sync-status.json',{**status,'error':str(exc),'at':time.time()})
+            if isinstance(exc, CloudRequestError) and exc.status_code in (403, 409) and pending.get('payload', {}).get('roomId'):
+                # A withdrawn room remains durable for a later re-invitation,
+                # while independent contests can still upload their results.
+                blocked_error = blocked_error or str(exc)
+                continue
             return
 
 

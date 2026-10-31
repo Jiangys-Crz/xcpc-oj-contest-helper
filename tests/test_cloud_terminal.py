@@ -211,6 +211,54 @@ class CloudTerminalTests(unittest.TestCase):
         self.assertTrue(list(cloud._outbox().glob('*.json')))
         self.assertEqual(read_json(cloud.state_directory()/'cloud-sync-status.json')['error'],'offline')
 
+    def test_room_payload_binds_the_accepted_identity_and_original_schedule(self):
+        self.state['cloud']=self.context
+        payload=cloud.sync_payload(self.path,self.state)
+        self.assertEqual(payload['roomId'],'room-1')
+        self.assertEqual(payload['participantId'],'part-1')
+        self.assertEqual(payload['roomStartsAt'],self.context['startsAt'])
+        # The native start can be calibrated independently of the room's schedule.
+        self.assertNotEqual(payload['startedAt'],payload['roomStartsAt'])
+        self.state.pop('cloud')
+        standalone=cloud.sync_payload(self.path,self.state)
+        for key in ('roomId','participantId','roomStartsAt'):self.assertNotIn(key,standalone)
+
+    def test_withdrawn_room_does_not_block_unrelated_uploads_and_is_retained_for_rejoin(self):
+        self.state['cloud']=self.context
+        cloud.queue_state(self.path,self.state)
+        other_path=self.path.with_name('vp-qoj-456-fixture.json')
+        other=deepcopy(self.state);other.pop('cloud')
+        write_json(other_path,other);cloud.queue_state(other_path,other)
+        for status in (403,409):
+            with self.subTest(status=status):
+                # The successful item is requeued for each rejection type.
+                for item in cloud._outbox().glob('*.json'):
+                    if read_json(item)['payload'].get('roomId'):
+                        withdrawn=item
+                other['submissions'][0]['verdict']='PENDING' if status==403 else 'CORRECT'
+                cloud.queue_state(other_path,other)
+                def upload(method,endpoint,payload,**kwargs):
+                    if payload.get('roomId'):
+                        raise cloud.CloudRequestError('Registration withdrawn',status)
+                    return {'id':'independent-history'}
+                with patch.object(cloud,'_request',side_effect=upload) as request:cloud.flush_once()
+                self.assertEqual(request.call_count,2)
+                remaining=list(cloud._outbox().glob('*.json'))
+                self.assertEqual(remaining,[withdrawn])
+                self.assertEqual(read_json(withdrawn)['payload']['participantId'],'part-1')
+                self.assertEqual(read_json(cloud.state_directory()/'cloud-sync-status.json')['error'],'Registration withdrawn')
+        with patch.object(cloud,'_request',return_value={'id':'original-room-history'}):cloud.flush_once()
+        self.assertFalse(list(cloud._outbox().glob('*.json')))
+
+    def test_http_rejections_keep_status_and_redact_secrets(self):
+        response=Mock(status_code=403)
+        response.json.return_value={'error':'Revoked '+self.saved['token']+' '+self.saved['password']}
+        with patch.object(cloud.requests,'request',return_value=response),self.assertRaises(cloud.CloudRequestError) as rejected:
+            cloud._request('POST','/api/client/sync',{'roomId':'room-1'})
+        self.assertEqual(rejected.exception.status_code,403)
+        self.assertNotIn(self.saved['token'],str(rejected.exception))
+        self.assertNotIn(self.saved['password'],str(rejected.exception))
+
     def test_member_cannot_authorize_local_vp_and_account_change_cannot_submit(self):
         with patch.object(cloud,'_request',return_value={'canSubmit':False}):
             with self.assertRaisesRegex(VPError,'队长'):cloud.authorize('room-1')
@@ -234,6 +282,69 @@ class CloudTerminalTests(unittest.TestCase):
         self.assertEqual(prepare.call_args.args,('https://qoj.ac/contest/123',1793361600.0))
         self.assertEqual(prepare.call_args.kwargs['cloud']['label'],'队伍-甲、乙')
         panel.assert_called_once()
+
+    def room_reply(self):
+        return {'room':{'id':'room-1','name':'Team VP','contestUrl':self.state['url'],
+                        'startsAt':self.context['startsAt'],'freezeMinutes':0,'scoringSystem':'ICPC'},
+                'participant':{'id':'part-1','captainId':'user-1','label':'队伍-甲、乙','type':'team','members':[]},
+                'canSubmit':True,'serverNow':'2026-10-30T11:00:00Z'}
+
+    def test_same_identity_rejoin_resumes_original_session_without_another_native_vp(self):
+        from vp_helper import cli,vp,sessions
+        self.state['cloud']=self.context;write_json(self.path,self.state)
+        folder=Path(self.state['directory']);folder.mkdir()
+        source=folder/'a.cpp';source.write_text('int main() {}\n')
+        with patch.object(cloud,'authorize',return_value=(self.room_reply(),self.saved)), \
+                patch.object(cli,'load_account',return_value={'qoj':{'handle':self.state['handle']}}), \
+                patch.object(sessions,'latest_session',return_value=(self.path,self.state)), \
+                patch.object(vp,'prepare') as prepare,patch.object(cli,'bind_submit_context') as bind, \
+                patch.object(cli,'reopen_saved') as resume:
+            cloud.start_room('vp.cwnupaa.com/vp/room-1')
+        prepare.assert_not_called();resume.assert_called_once();bind.assert_called_once()
+        saved=read_json(self.path)
+        self.assertEqual(saved['cloud']['participantId'],'part-1')
+        self.assertEqual(saved['submissions'],self.state['submissions'])
+        self.assertEqual(saved['directory'],self.state['directory'])
+        self.assertEqual(source.read_text(),'int main() {}\n')
+
+    def test_rejoin_never_rebinds_a_previous_vp_to_another_identity_or_changed_settings(self):
+        from vp_helper import cli,vp,sessions
+        self.state['cloud']=self.context;write_json(self.path,self.state)
+        before=self.path.read_bytes()
+        for change,message in (({'participant':{'id':'part-2'}},'身份'),
+                               ({'room':{'startsAt':'2026-10-30T12:05:00Z'}},'时间'),
+                               ({'room':{'freezeMinutes':30}},'封榜'),
+                               ({'room':{'scoringSystem':'CCPC'}},'赛制')):
+            reply=self.room_reply()
+            for key,fields in change.items():reply[key].update(fields)
+            with self.subTest(change=change),patch.object(cloud,'authorize',return_value=(reply,self.saved)), \
+                    patch.object(cli,'load_account',return_value={'qoj':{'handle':self.state['handle']}}), \
+                    patch.object(sessions,'latest_session',return_value=(self.path,self.state)), \
+                    patch.object(vp,'prepare') as prepare,patch.object(cli,'reopen_saved') as resume, \
+                    self.assertRaisesRegex(VPError,message):
+                cloud.start_room('vp.cwnupaa.com/vp/room-1')
+            prepare.assert_not_called();resume.assert_not_called()
+            self.assertEqual(self.path.read_bytes(),before)
+
+    def test_context_checks_accept_equivalent_timezone_but_reject_stale_room_configuration(self):
+        self.state['cloud']=self.context
+        equivalent=self.room_reply();equivalent['room']['startsAt']='2026-10-30T20:00:00+08:00'
+        with patch.object(cloud,'authorize',return_value=(equivalent,self.saved)):
+            cloud.ensure_access(self.state)
+        reply=self.room_reply();reply['room']['startsAt']='2026-10-30T12:00:02Z'
+        with patch.object(cloud,'authorize',return_value=(reply,self.saved)),self.assertRaisesRegex(VPError,'时间'):
+            cloud.ensure_access(self.state)
+
+    def test_revoked_registration_blocks_submission_and_pending_native_activation(self):
+        from vp_helper import cli,vp
+        self.state.update(cloud=self.context,status='scheduled',requested_start=self.state['start_time'])
+        write_json(self.path,self.state);before=self.path.read_bytes()
+        with patch.object(cloud,'authorize',side_effect=cloud.CloudRequestError('Registration withdrawn',403)), \
+                patch.object(cli,'adapter') as adapter:
+            with self.assertRaisesRegex(VPError,'withdrawn'):cloud.check_submission({'vp_context':{'state_path':str(self.path)}})
+            with self.assertRaisesRegex(VPError,'withdrawn'):vp._activate(self.path)
+        adapter.assert_not_called()
+        self.assertEqual(self.path.read_bytes(),before)
 
     def test_transport_requires_https_and_never_follows_redirects(self):
         for url in ('http://example.com','https://user:pass@vp.cwnupaa.com','https://vp.cwnupaa.com/foreign','https://vp.cwnupaa.com?x=1'):
@@ -266,4 +377,5 @@ class CloudTerminalTests(unittest.TestCase):
                 patch.object(cloud,'ensure_access'),patch.object(cloud,'_request',return_value={'id':'job-1'}) as upload, \
                 patch('sys.stdout',new=io.StringIO()),patch('builtins.input',return_value='y'):
             printfile.main()
-        self.assertEqual(upload.call_args.args[2],{'roomId':'room-1','filename':'a.cpp','language':'C++','code':'int main() {}\n'})
+        self.assertEqual(upload.call_args.args[2],{'roomId':'room-1','participantId':'part-1','roomStartsAt':self.context['startsAt'],
+                                                'filename':'a.cpp','language':'C++','code':'int main() {}\n'})

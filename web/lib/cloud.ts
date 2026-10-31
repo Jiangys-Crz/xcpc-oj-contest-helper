@@ -166,12 +166,48 @@ export class CloudService {
   private team(teamId:string):Row { const row=this.store.one('SELECT * FROM teams WHERE id=? AND deleted_at IS NULL',teamId); if(!row)return fail(404,'队伍不存在'); return row; }
   private teamView(team:Row) { return {id:team.id,nameZh:team.name_zh,nameEn:team.name_en,captainId:team.captain_id,createdAt:team.created_at,members:this.store.all('SELECT u.* FROM users u JOIN team_members m ON m.user_id=u.id WHERE m.team_id=? ORDER BY CASE WHEN u.id=? THEN 0 ELSE 1 END,u.created_at',team.id,team.captain_id).map(u=>profile(u))}; }
   private captain(teamId:string,user:User) {const team=this.team(teamId);if(team.captain_id!==user.id)return fail(403,'只有队长可以管理队伍');return team;}
-  private participant(roomId:string,uid:string):Row|undefined { return this.store.one('SELECT p.* FROM participants p JOIN participant_members m ON p.id=m.participant_id WHERE m.room_id=? AND m.user_id=?',roomId,uid); }
+  private participant(roomId:string,uid:string):Row|undefined { return this.store.one('SELECT p.* FROM participants p JOIN participant_members m ON p.id=m.participant_id WHERE m.room_id=? AND m.user_id=? AND NOT EXISTS(SELECT 1 FROM participant_departures d WHERE d.participant_id=p.id)',roomId,uid); }
+  private roomRegistrationConfig(room:Row) {return JSON.stringify({contestUrl:room.contest_url,startsAt:room.starts_at,freezeMinutes:room.freeze_minutes??0,scoringSystem:room.scoring_system||'ICPC'});}
+  private snapshotMember(participantId:string,userId:string) {return Boolean(this.store.one("SELECT 1 FROM participants p,json_each(p.members_json) m WHERE p.id=? AND json_extract(m.value,'$.id')=?",participantId,userId));}
+  private checkParticipantContext(body:Row,participant:Row,room:Row,operatorId?:string) {
+    // A legacy first-sync snapshot has no server history to bind it to its old
+    // identity. After changing a roster or schedule, require explicit context
+    // so old queued submissions/prints cannot become a new team's private data.
+    if(operatorId && (body.participantId===undefined || body.roomStartsAt===undefined) && this.store.one("SELECT 1 FROM participant_departures d JOIN participants p ON p.id=d.participant_id WHERE p.room_id=? AND p.id<>? AND (p.captain_id=? OR EXISTS(SELECT 1 FROM json_each(p.members_json) m WHERE json_extract(m.value,'$.id')=?))",room.id,participant.id,operatorId,operatorId))return fail(409,'参赛身份或比赛设置已改变，请先运行 xcpc update，再重新运行房间 VP 命令');
+    if(body.participantId!==undefined && text(body.participantId,'参赛身份',80)!==participant.id)return fail(409,'参赛身份已改变，请重新运行房间 VP 命令');
+    if(body.roomStartsAt!==undefined && iso(body.roomStartsAt,'房间开始时间')!==room.starts_at)return fail(409,'VP 房间开始时间已改变，请重新运行房间 VP 命令');
+  }
   private participantView(row:Row) { return {id:row.id,type:row.type,userId:row.user_id,teamId:row.team_id,captainId:row.captain_id,label:row.label,members:JSON.parse(row.members_json)}; }
   private room(roomId:string):Row { const row=this.store.one('SELECT r.*,rules.duration_seconds,rules.freeze_minutes,rules.scoring_system FROM rooms r LEFT JOIN room_rules rules ON rules.room_id=r.id WHERE r.id=?',roomId);if(!row)return fail(404,'VP 房间不存在');return row; }
   private visibleRoom(roomId:string,user:User):Row {const room=this.room(roomId);if(room.creator_id!==user.id && !this.participant(roomId,user.id))return fail(403,'你尚未接受此 VP 房间的邀请');return room;}
   private manager(roomId:string,user:User):Row {const room=this.room(roomId);if(room.creator_id!==user.id)return fail(403,'只有创建者可以管理 VP 房间');return room;}
-  private roomView(room:Row,user:User) {const p=this.participant(room.id,user.id),rules=this.store.one('SELECT duration_seconds,freeze_minutes,scoring_system FROM room_rules WHERE room_id=?',room.id);return {id:room.id,name:room.name,contestUrl:room.contest_url,startsAt:room.starts_at,...roomTiming({...room,...rules}),scoringSystem:rules?.scoring_system||'ICPC',createdBy:room.creator_id,createdAt:room.created_at,canManage:room.creator_id===user.id,participants:this.store.all('SELECT * FROM participants WHERE room_id=? ORDER BY created_at',room.id).map(p=>this.participantView(p)),participation:p?this.participantView(p):null,serverNow:now()};}
+  private roomView(room:Row,user:User) {const p=this.participant(room.id,user.id),rules=this.store.one('SELECT duration_seconds,freeze_minutes,scoring_system FROM room_rules WHERE room_id=?',room.id);return {id:room.id,name:room.name,contestUrl:room.contest_url,startsAt:room.starts_at,...roomTiming({...room,...rules}),scoringSystem:rules?.scoring_system||'ICPC',createdBy:room.creator_id,createdAt:room.created_at,canManage:room.creator_id===user.id,participants:this.store.all('SELECT p.* FROM participants p WHERE room_id=? AND NOT EXISTS(SELECT 1 FROM participant_departures d WHERE d.participant_id=p.id) ORDER BY created_at',room.id).map(p=>this.participantView(p)),participation:p?this.participantView(p):null,serverNow:now()};}
+  private withdrawRoom(roomId:string,user:User,body:Row,participantId?:string) {
+    return this.store.transaction(()=>{
+      const room=participantId?this.manager(roomId,user):this.room(roomId);
+      if(Date.parse(room.starts_at)<=Date.now())return fail(409,'VP 已开始，不能取消报名或移除参赛者');
+      const participant=participantId?this.store.one('SELECT p.* FROM participants p WHERE p.id=? AND p.room_id=? AND NOT EXISTS(SELECT 1 FROM participant_departures d WHERE d.participant_id=p.id)',participantId,roomId):this.participant(roomId,user.id);
+      if(!participant)return fail(404,'参赛报名不存在或已经取消');
+      if(!participantId && participant.captain_id!==user.id)return fail(403,'只有队长可以取消整支队伍的报名');
+      this.checkParticipantContext(body,participant,room);
+      const members:User[]=JSON.parse(participant.members_json),memberIds=new Set(members.map(member=>member.id));
+      const stamp=now(),reason=participantId?'removed':'withdrawn';
+      // Active membership is released; the original immutable roster, history
+      // and print rows remain available to their original owners and members.
+      this.store.run('INSERT INTO participant_departures VALUES(?,?,?,?,?,?)',participant.id,roomId,user.id,reason,stamp,this.roomRegistrationConfig(room));
+      this.store.run('DELETE FROM participant_members WHERE participant_id=?',participant.id);
+      for(const invitation of this.store.all("SELECT * FROM notifications WHERE room_id=? AND kind='room_invite' AND status='pending'",roomId)) {
+        const payload=JSON.parse(invitation.payload);
+        const targets=payload.type==='team'?this.store.all('SELECT user_id FROM team_members WHERE team_id=?',invitation.team_id).map(row=>row.user_id):[invitation.recipient_id];
+        if(!targets.some(uid=>memberIds.has(uid)))continue;
+        this.store.run("UPDATE notifications SET status='cancelled',responded_at=? WHERE id=?",stamp,invitation.id);
+        if(!memberIds.has(invitation.recipient_id) && invitation.recipient_id!==room.creator_id)this.notify(user,invitation.recipient_id,'info','VP 邀请已撤销',`${room.name} 的参赛人员已调整，请等待新的邀请`,{roomId});
+      }
+      for(const recipient of new Set([...memberIds,room.creator_id]))this.notify(user,recipient,'info',participantId?'VP 参赛者已移除':'VP 报名已取消',`${participant.label} ${participantId?'已被房主移出':'已取消报名'} ${room.name}。重新参赛需要房主再次邀请。`,{roomId,teamId:participant.team_id||undefined});
+      this.audit(user,'room.participant.'+reason,participant.id);
+      return {withdrawn:true,roomId,participantId:participant.id};
+    });
+  }
   private notificationView(row:Row) {return {id:row.id,kind:row.kind,title:row.title,message:row.message,status:row.status,createdAt:row.created_at,respondedAt:row.responded_at,teamId:row.team_id,roomId:row.room_id,canRespond:row.status==='pending'};}
   private inviteTeam(teamId:string,user:User,body:Row) {
     const team=this.captain(teamId,user), uid=text(body.userId,'用户ID',80);this.user(uid);
@@ -217,7 +253,11 @@ export class CloudService {
             label=`${team.name_zh}-${members.map(u=>u.realname||u.username||u.useraccount).join('、')}`;
           } else {members=[profile(user)];captainId=user.id;label=labelUser(user);}
           for(const member of members)if(this.participant(room.id,member.id))return fail(409,`${member.username} 已参与此 VP，不能重复报名`);
-          const pid=id();this.store.run('INSERT INTO participants VALUES(?,?,?,?,?,?,?,?,?)',pid,room.id,type,type==='team'?null:user.id,type==='team'?n.team_id:null,captainId,label,JSON.stringify(members),now());
+          const roster=members.map(member=>member.id).sort().join('\n');
+          const previous=this.store.all('SELECT p.*,d.config_json FROM participants p JOIN participant_departures d ON d.participant_id=p.id WHERE p.room_id=? AND p.type=? AND p.captain_id=? ORDER BY d.departed_at DESC,p.id',room.id,type,captainId).find(p=>p.team_id===(type==='team'?n.team_id:null) && p.user_id===(type==='individual'?user.id:null) && p.config_json===this.roomRegistrationConfig(room) && JSON.parse(p.members_json).map((member:User)=>member.id).sort().join('\n')===roster);
+          const pid=previous?.id||id();
+          if(previous)this.store.run('DELETE FROM participant_departures WHERE participant_id=?',pid);
+          else this.store.run('INSERT INTO participants VALUES(?,?,?,?,?,?,?,?,?)',pid,room.id,type,type==='team'?null:user.id,type==='team'?n.team_id:null,captainId,label,JSON.stringify(members),now());
           for(const member of members)this.store.run('INSERT INTO participant_members VALUES(?,?,?)',room.id,pid,member.id);
         } else return fail(400,'此通知不需要处理');
       }
@@ -229,7 +269,7 @@ export class CloudService {
   }
   private historyVisible(row:Row,user:User,details=false) {
     if(row.owner_id===user.id)return true;
-    if(row.participant_id && this.store.one('SELECT 1 FROM participant_members WHERE participant_id=? AND user_id=?',row.participant_id,user.id))return true;
+    if(row.participant_id && this.snapshotMember(row.participant_id,user.id))return true;
     if(!details || !row.room_id)return false;
     const room=this.room(row.room_id);
     if(Date.now()<Date.parse(roomTiming(room).endsAt))return false;
@@ -339,6 +379,7 @@ export class CloudService {
       if(body.roomId) {
         room=this.room(text(body.roomId,'房间ID',80)); participant=this.participant(room.id,user.id);
         if(!participant || participant.captain_id!==user.id)return fail(403,'只有已报名的个人或队长可以同步此 VP');
+        this.checkParticipantContext(body,participant,room,user.id);
         if(room.contest_url!==data.url)return fail(409,'同步比赛链接与 VP 房间不一致');
       }
       const localHistory=this.store.one('SELECT * FROM histories WHERE owner_id=? AND local_id=?',user.id,data.localId);
@@ -485,6 +526,8 @@ export class CloudService {
         }
       }
       if(segments.length===3 && segments[2]==='invitations' && method==='POST')return {data:this.inviteRoom(rid,user,body)};
+      if(segments.length===3 && segments[2]==='participation' && method==='DELETE')return {data:this.withdrawRoom(rid,user,body)};
+      if(segments.length===4 && segments[2]==='participants' && method==='DELETE')return {data:this.withdrawRoom(rid,user,body,text(segments[3],'参赛身份',80))};
       if(segments.length===3 && segments[2]==='mysubmit' && method==='GET') {
         const room=this.visibleRoom(rid,user),part=this.participant(rid,user.id);
         if(!part)return fail(403,'请先接受 VP 参赛邀请后查看我的提交');
@@ -493,7 +536,7 @@ export class CloudService {
         return {data:{room:this.roomView(room,user),participation:this.participantView(part),history,submissions:history && 'submissions' in history?history.submissions:[],serverNow:now()}};
       }
       if(segments.length===3 && segments[2]==='leaderboard' && method==='GET') {
-        const room=this.visibleRoom(rid,user), histories=this.store.all('SELECT h.*,p.id participant_key,p.label participant_name FROM participants p LEFT JOIN histories h ON h.participant_id=p.id WHERE p.room_id=? ORDER BY p.created_at,p.id',rid);
+        const room=this.visibleRoom(rid,user), histories=this.store.all('SELECT h.*,p.id participant_key,p.label participant_name FROM participants p LEFT JOIN histories h ON h.participant_id=p.id WHERE p.room_id=? AND NOT EXISTS(SELECT 1 FROM participant_departures d WHERE d.participant_id=p.id) ORDER BY p.created_at,p.id',rid);
         const problems=[...new Set<string>(histories.flatMap(r=>r.problems_json?JSON.parse(r.problems_json):[]))];
         const timing=roomTiming(room),statistics=this.statisticsView(room,histories,problems);
         const rows=histories.map(r=>{
@@ -507,11 +550,11 @@ export class CloudService {
       }
     }
     if(segments[0]==='prints' && segments.length===2 && method==='GET') {
-      const job=this.store.one('SELECT j.*,p.label FROM prints j JOIN participants p ON p.id=j.participant_id JOIN participant_members m ON m.participant_id=p.id WHERE j.id=? AND m.user_id=?',segments[1],user.id);if(!job)return fail(404,'打印记录不存在或无权查看');return {data:this.printView(job,true)};
+      const job=this.store.one("SELECT j.*,p.label FROM prints j JOIN participants p ON p.id=j.participant_id WHERE j.id=? AND EXISTS(SELECT 1 FROM json_each(p.members_json) m WHERE json_extract(m.value,'$.id')=?)",segments[1],user.id);if(!job)return fail(404,'打印记录不存在或无权查看');return {data:this.printView(job,true)};
     }
     if(path==='history' && method==='GET') {
       const query=new URL(request.url).searchParams,search=(query.get('search')||'').slice(0,200).toLowerCase(),type=query.get('type');
-      return {data:this.store.all('SELECT DISTINCT h.* FROM histories h LEFT JOIN participant_members m ON m.participant_id=h.participant_id WHERE h.owner_id=? OR m.user_id=? ORDER BY h.created_at DESC,h.id DESC',user.id,user.id).filter(h=>(!search||h.contest_name.toLowerCase().includes(search))&&(!type||type===h.mode)).map(h=>this.historyView(h,false,user))};
+      return {data:this.store.all("SELECT h.* FROM histories h WHERE h.owner_id=? OR EXISTS(SELECT 1 FROM participants p,json_each(p.members_json) m WHERE p.id=h.participant_id AND json_extract(m.value,'$.id')=?) ORDER BY h.created_at DESC,h.id DESC",user.id,user.id).filter(h=>(!search||h.contest_name.toLowerCase().includes(search))&&(!type||type===h.mode)).map(h=>this.historyView(h,false,user))};
     }
     if(segments[0]==='history' && segments.length===2 && method==='GET') {const h=this.store.one('SELECT * FROM histories WHERE id=?',segments[1]);if(!h||!this.historyVisible(h,user,true))return fail(404,'比赛记录不存在或无权查看');return {data:this.historyView(h,true,user)};}
     if(segments[0]==='client') {
@@ -519,6 +562,7 @@ export class CloudService {
       if(path==='client/sync' && method==='POST')return {data:this.sync(user,body)};
       if(path==='client/prints' && method==='POST') {
         const rid=text(body.roomId,'VP房间ID',80),p=this.participant(rid,user.id);if(!p)return fail(403,'你未报名此 VP，不能打印');
+        this.checkParticipantContext(body,p,this.room(rid),user.id);
         if(typeof body.code!=='string'||!body.code.length||Buffer.byteLength(body.code,'utf8')>512*1024)return fail(400,'打印代码必须为非空文本且不超过512KiB');
         const raw=text(body.filename,'文件名',255),filename=raw.replaceAll('\\','/').split('/').pop()!;
         if(!filename || filename==='.' || filename==='..' || /[\x00-\x1f\x7f]/.test(filename))return fail(400,'文件名无效');
