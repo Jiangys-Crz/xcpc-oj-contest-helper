@@ -465,7 +465,7 @@ class SubmitTests(IsolatedState):
                 live_submit.submit(self.source)
         self.api.web.session.post.assert_not_called()
 
-    def test_after_end_can_submit_practice_and_receipt_is_blue_classified(self):
+    def test_after_end_can_submit_practice_and_receipt_is_practice_classified(self):
         self.api.api.return_value = standings(phase="FINISHED")
         with patch("vp_helper.live_submit.time.time", return_value=9000):
             self.assertEqual(live_submit.submit(self.source), "77")

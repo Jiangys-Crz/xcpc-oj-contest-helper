@@ -156,7 +156,7 @@ class CloudRestoreTests(unittest.TestCase):
             cli.start(self.url)
         restore.assert_called_once();open_state.assert_called_once_with(*returned);prepare.assert_not_called()
 
-    def test_restored_original_green_personal_practice_blue_and_no_timer(self):
+    def test_restored_original_green_personal_practice_purple_and_no_timer(self):
         baseline={'id':'101','problem':'A','time':60,'verdict':'CORRECT','practice':False}
         personal={'id':'202','problem':'B','time':70,'verdict':'CORRECT','practice':True}
         records=cloud_restore.display_records({'restored_submissions':[baseline]},[personal,{**baseline,'verdict':'PENDING','practice':True}])
@@ -165,7 +165,7 @@ class CloudRestoreTests(unittest.TestCase):
         console=Console(file=io.StringIO(),width=180,color_system='truecolor')
         rendered=list(console.render(view.fixed(180)))
         colors=[s.style.bgcolor.get_truecolor() for s in rendered if s.style and s.style.bgcolor and s.style.bgcolor.type.name!='DEFAULT']
-        self.assertIn((96,231,96),colors);self.assertIn((0,0,255),colors)
+        self.assertIn((96,231,96),colors);self.assertIn((139,92,246),colors)
         self.assertNotIn(' / 01:00:00',''.join(s.text for s in rendered));self.assertTrue(view.practice)
 
 
