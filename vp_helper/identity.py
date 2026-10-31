@@ -66,6 +66,13 @@ def dashboard_identity(state: dict, path: Path | None = None) -> tuple[str, str]
                     or owner.get('serverUrl') != account.get('serverUrl')):
                 return fallback, ''
         if account.get('token') and user.get('id'):
+            restored = state.get('cloud_restore')
+            if (isinstance(restored, dict)
+                    and str(restored.get('userId')) == str(user['id'])
+                    and restored.get('serverUrl') == account.get('serverUrl')):
+                title, subtitle = participant_identity(restored)
+                if title:
+                    return title, subtitle
             return user.get('username') or user.get('useraccount') or fallback, user.get('realname') or ''
     except (VPError, OSError, ValueError, TypeError):
         pass

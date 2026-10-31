@@ -10,11 +10,12 @@ from .submit_context import submission_configuration
 def main():
     args = sys.argv[1:]
     if args in ([], ['--help'], ['-h']):
-        print('Usage: printfile SOURCE\nPrint source code to your online VP team only.')
+        print('Usage: printfile SOURCE [-y]\nPrint source code to your online VP team only.')
         return
     try:
-        if len(args) != 1:
-            raise VPError('Usage: printfile SOURCE')
+        assume_yes = len(args) == 2 and args[1] in ('-y', '--yes')
+        if len(args) != 1 and not assume_yes:
+            raise VPError('Usage: printfile SOURCE [-y]')
         source = Path(args[0]).expanduser().resolve()
         if not source.is_file() or source.stat().st_size > 512*1024:
             raise VPError('Choose a UTF-8 source file no larger than 512 KiB.')
@@ -36,7 +37,9 @@ def main():
         print('  room:        ' + context['roomName'])
         print('  participant: ' + context['label'])
         print('  size:        ' + str(len(code.encode('utf8'))) + ' bytes')
-        while True:
+        if assume_yes:
+            print('Do you really want to print this file? (y/n) y [-y]')
+        while not assume_yes:
             try:
                 answer = input('Do you really want to print this file? (y/n) ').strip().lower()
             except (EOFError, KeyboardInterrupt):

@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 def confirm_submission(source: Path, config: dict, problem: str, language: str, url: str,
-                       config_path: Path | None = None) -> bool:
+                       config_path: Path | None = None, *, assume_yes: bool = False) -> bool:
     from .cloud import check_submission
     check_submission(config)
     print('Submission information:')
@@ -14,6 +14,9 @@ def confirm_submission(source: Path, config: dict, problem: str, language: str, 
     print(f'  problem:     {problem}')
     print(f'  language:    {language}')
     print(f'  url:         {url}')
+    if assume_yes:
+        print('Do you want to continue? (y/n) y [-y]')
+        return True
     while True:
         try:
             answer = input('Do you want to continue? (y/n) ').strip().lower()

@@ -5,9 +5,13 @@ from robobrowser import RoboBrowser
 import json
 from pathlib import Path
 from http.cookies import SimpleCookie
+from urllib.parse import urlsplit
 import requests
 from vp_helper.browser_login import refresh_submission_login
 from vp_helper.cf_forms import honor_response_cookies
+from vp_helper.http import browser_challenge
+from vp_helper.browser_transport import transport_identity, DEFAULT_PROFILE, DEFAULT_USER_AGENT
+from vp_helper.models import VPError
 
 # codeforces.com sits behind Cloudflare, which fingerprints the TLS handshake:
 # a plain requests session is answered with "HTTP 403 / Just a moment...".
@@ -86,16 +90,25 @@ class _FormSession(_requests.Session):
                 kwargs['multipart'] = _mime_from(kwargs.pop('data', None), files)
         response = super().request(method, url, *args, **kwargs)
         honor_response_cookies(self, response)
+        refresh = getattr(self, '_xcpc_refresh', None)
+        if (str(method).upper() == 'GET' and urlsplit(url).hostname in ('codeforces.com', 'www.codeforces.com')
+                and urlsplit(str(getattr(response, 'url', ''))).hostname in ('codeforces.com', 'www.codeforces.com')
+                and browser_challenge(response) and callable(refresh) and refresh()):
+            # Refresh only a preflight GET; a POST may already have succeeded
+            # before its following GET encounters verification.
+            response = super().request(method, url, *args, **kwargs)
+            honor_response_cookies(self, response)
         return response
 
 
-def make_session(user_agent=None, cookie_source=None):
+def make_session(user_agent=None, cookie_source=None, *, account=None):
     """A browser session that can pass Cloudflare and accept RoboBrowser's forms."""
     if _IMPERSONATE:
-        chromium = cookie_source in ('chrome', 'edge')
-        session = _FormSession(impersonate='chrome' if chromium else _IMPERSONATE)
-        if chromium and user_agent:
-            session.headers['User-Agent'] = user_agent
+        profile, actual_user_agent = transport_identity(account or {'cookie_source': cookie_source, 'user_agent': user_agent})
+        if not actual_user_agent:
+            profile, actual_user_agent = DEFAULT_PROFILE, DEFAULT_USER_AGENT
+        session = _FormSession(impersonate=profile)
+        session.headers['User-Agent'] = actual_user_agent
         return session
     session = _FormSession()
     if user_agent:
@@ -189,13 +202,28 @@ def login():
         account = json.loads(context.read_text(encoding='utf8'))
         if account.get('platform') == 'gym':
             refresh_submission_login(context, account, 'gym')
-            session = make_session(account['user_agent'], account.get('cookie_source'))
-            jar = SimpleCookie()
-            jar.load(account['cookie'])
-            for item in jar.values():
-                session.cookies.set(item.key, item.value, domain='codeforces.com', path='/')
+            session = make_session(account['user_agent'], account.get('cookie_source'), account=account)
+            def set_current_cookies():
+                session.cookies.clear()
+                jar = SimpleCookie(); jar.load(account['cookie'])
+                for item in jar.values():
+                    session.cookies.set(item.key, item.value, domain='codeforces.com', path='/')
+            def refresh_current_login():
+                if not refresh_submission_login(context, account, 'gym', force=True):
+                    return False
+                profile, actual_user_agent = transport_identity(account)
+                if _IMPERSONATE:
+                    session.impersonate = profile
+                if actual_user_agent:
+                    session.headers['User-Agent'] = actual_user_agent
+                set_current_cookies()
+                return True
+            set_current_cookies()
+            session._xcpc_refresh = refresh_current_login
             browser = RoboBrowser(parser='lxml', session=session)
             browser.open('https://codeforces.com/')
+            if browser_challenge(browser.response):
+                raise VPError('Codeforces requests browser verification. Refresh it in your usual browser; no code was submitted.')
             logged_in = any(a.get('href', '').lower() == '/profile/' + account['handle'].lower()
                             for a in browser.select('#header a'))
             if not logged_in:

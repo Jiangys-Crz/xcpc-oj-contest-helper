@@ -394,6 +394,21 @@ def start(url: str, *, live: bool = False, practice: bool = False, resume: bool 
     # Release the cross-shell preparation lock before entering an attached TUI.
     if restart:
         raise VPError('已取消重复 VP；每场比赛只支持一次 VP，再次运行原命令会恢复已有会话。')
+    from .cloud import configuration_path
+    if read_json(configuration_path()).get('token'):
+        from .cloud_restore import restore_native
+        from .sessions import latest_session
+        from .live import account_for
+        check_terminal()
+        platform, _, url = contest_url(url)
+        # Restore before a new native registration. A teammate's downloaded
+        # records never provide a native login or permission to start a VP.
+        config = load_account(platform, live=True)
+        previous = latest_session(url, account_for(config, platform).get('handle', ''), include_practice=True)
+        restored = restore_native(url, config, previous)
+        if restored:
+            open_state(restored[0], restored[1])
+            return
     if not practice and not resume:
         from .sessions import latest_session
         check_terminal()

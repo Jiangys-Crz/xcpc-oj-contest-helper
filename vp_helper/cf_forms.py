@@ -112,7 +112,8 @@ def honor_response_cookies(session, response) -> None:
 
 def _tta(value: str) -> int:
     # The public Codeforces.signForms()/tta() protocol, as published in
-    # codeforces.org/s/78055/js/codeforces.js. JS charCodeAt uses UTF-16 units.
+    # codeforces.org/s/90440/js/codeforces.js (also checked against 78055).
+    # JS charCodeAt uses UTF-16 units.
     value = re.sub(r'%u([0-9a-fA-F]{4})', lambda m: chr(int(m[1], 16)), value)
     value = unquote(value, encoding='latin-1')
     raw = value.encode('utf-16-le', errors='surrogatepass')
@@ -168,10 +169,36 @@ def submission_target(page_url: str, action: str, base_url: str, problem: str | 
     return target
 
 
-def submission_error(page, status: int | None, response_url: str, secrets=()) -> str:
+def submission_headers(page_url: str, target: str) -> dict[str, str]:
+    """Describe a native form navigation rather than a direct-address visit."""
+    try:
+        page, destination = urlsplit(page_url), urlsplit(target)
+        invalid = (page.scheme != 'https' or destination.scheme != 'https'
+                   or page.hostname not in ('codeforces.com', 'www.codeforces.com')
+                   or destination.hostname not in ('codeforces.com', 'www.codeforces.com')
+                   or page.username or page.password or page.port
+                   or destination.username or destination.password or destination.port)
+    except ValueError:
+        invalid = True
+    if invalid:
+        raise VPError('Codeforces returned an unexpected form origin. No code was submitted.')
+    # Profiles default to Sec-Fetch-Site:none for address-bar navigation. A
+    # contest-page form POST instead carries the real page/target relation.
+    return {'Origin': 'https://' + page.hostname, 'Referer': safe_url(page_url),
+            'Sec-Fetch-Site': 'same-origin' if page.hostname == destination.hostname else 'same-site',
+            'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document', 'Sec-Fetch-User': '?1',
+            'Upgrade-Insecure-Requests': '1'}
+
+
+def submission_error(page, status: int | None, response_url: str, secrets=(), *, headers=None, attempted=False) -> str:
     content = str(page)
-    if 'cf-chl-' in content or 'Just a moment...' in content or page.select_one('input[name="cf-turnstile-response"], .g-recaptcha'):
-        detail = 'The platform requests browser verification. Refresh Codeforces in your usual browser, then sync its login.'
+    mitigation = (headers or {}).get('cf-mitigated', '')
+    if (isinstance(mitigation, str) and mitigation.lower() == 'challenge'
+            or 'cf-chl-' in content or 'Just a moment...' in content
+            or page.select_one('input[name="cf-turnstile-response"], .g-recaptcha')):
+        detail = 'The platform requests browser verification. Refresh Codeforces in the usual browser for this account.'
+        if attempted:
+            detail += ' Submission outcome is unknown; this may be verification after a successful upload. Check My submissions before retrying; the POST was not repeated.'
     elif status == 401 or urlsplit(response_url).path.rstrip('/') in ('/enter', '/login'):
         detail = 'The browser login expired. Log in to the configured Codeforces account and sync its login again.'
     else:

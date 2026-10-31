@@ -155,8 +155,18 @@ class SubmissionDisplayTests(unittest.TestCase):
                             for label in contest.problems:
                                 self.assertRegex(rendered,r'(?m)(?:^|\s)'+label+r'(?:\s|$)')
                             self.assertTrue(any('rank' in line and 'team' in line for line in lines))
+                            header=next(line for line in lines if 'rank' in line and 'team' in line)
+                            for label in contest.problems:
+                                self.assertRegex(header,r'(?:^|\s)'+label+r'(?:\s|$)')
                             if isinstance(view,LiveDashboard):
-                                self.assertIn('123456789012345',rendered)
+                                # The long native value may wrap vertically in
+                                # its column, without dropping any digit.
+                                score_header=lines.index(header)
+                                body=lines[score_header+2:next(i for i,line in enumerate(lines)
+                                                            if 'scoreboard ·' in line or 'Official public standings' in line)]
+                                digits=Counter(re.findall(r'\d',''.join(body)))
+                                metadata='127000' if view.contest.platform=='cf' else '1270128'
+                                self.assertEqual(digits,Counter(metadata+'123456789012345'))
                             self.assertTrue(all(cell_len(line)<=width for line in lines))
 
     def test_structured_participant_names_keep_native_scoring_identity_unchanged(self):
@@ -208,7 +218,13 @@ class SubmissionDisplayTests(unittest.TestCase):
                             self.assertIn(value,rendered)
                         self.assertNotIn('…',rendered)
                         self.assertTrue(all(cell_len(line)<=width for line in lines))
-                        self.assertGreaterEqual(rendered.count('tries'),20)
+                        header=next(line for line in lines if 'rank' in line and 'team' in line)
+                        for label in contest.problems:
+                            self.assertRegex(header,r'(?:^|\s)'+label+r'(?:\s|$)')
+                        self.assertEqual(sum('rank' in line and 'team' in line for line in lines),1)
+                        self.assertNotIn('public',header)
+                        if width>=160:
+                            self.assertGreaterEqual(rendered.count('tries'),20)
 
     def test_unavailable_awards_never_show_unknown_or_a_false_no_prize(self):
         contest=self.contest()
@@ -286,7 +302,7 @@ class SubmissionDisplayTests(unittest.TestCase):
         self.assertTrue(view.input())
         callback.assert_called_once_with()
 
-    def test_very_narrow_score_pane_shows_metadata_and_all_problem_bands(self):
+    def test_impossible_header_width_explains_minimum_without_separating_headers(self):
         contest=self.contest()
         me=score_submissions([],list(contest.problems),contest.rules,120,name='tester')
         own={'party':{'members':[{'handle':'tester'}]},'rank':1,'points':0,'penalty':0,
@@ -295,9 +311,9 @@ class SubmissionDisplayTests(unittest.TestCase):
             for engine in ('rich','curses'):
                 lines=self.fixed_lines(view,45,engine)
                 rendered='\n'.join(lines)
-                self.assertNotIn('Enlarge the score pane',rendered)
-                for heading in ('rank','team','solved','penalty',*contest.problems):
-                    self.assertRegex(rendered,r'(?m)(?:^|\s)'+heading+r'(?:\s|$)')
+                self.assertIn('Enlarge the score pane to at least 50 columns',rendered)
+                self.assertIn('all headers on one row',rendered)
+                self.assertFalse(any('rank' in line and 'team' in line for line in lines))
                 self.assertTrue(all(cell_len(line)<=45 for line in lines))
 
     def test_absolute_time_matches_vp_live_bt_and_history_even_after_rebase(self):
@@ -352,14 +368,30 @@ class SubmissionDisplayTests(unittest.TestCase):
                     for name in ('problem','submission','time','result'):
                         self.assertIn(name,header)
 
-    def test_small_terminal_scrolls_all_problem_bands_instead_of_discarding_them(self):
+    def test_submission_columns_stay_compact_and_left_aligned_at_wide_widths(self):
+        view=LiveDashboard(self.contest(),120,{},
+                           [{'id':'396538368','problem':'A','time':65,'verdict':'WRONG-ANSWER'}])
+        positions=[]
+        for width in (80,100,160,240):
+            with self.subTest(width=width):
+                rows=Dashboard.record_rows(view)
+                header=self.render(Dashboard.record_heading(width,rows),width).splitlines()[0]
+                record=self.render(view.records(),width).splitlines()[0]
+                self.assertLessEqual(max(cell_len(header.rstrip()),cell_len(record.rstrip())),60)
+                starts=[header.index(name) for name in ('problem','submission','time','result')]
+                values=('A','#396538368','2025-01-01','WRONG-ANSWER')
+                self.assertEqual([record.index(value) for value in values],starts)
+                positions.append(starts)
+        self.assertTrue(all(item==positions[0] for item in positions))
+
+    def test_small_terminal_scrolls_wrapped_fields_without_discarding_the_shared_header(self):
         contest=self.contest();contest.problems={chr(65+i):str(i) for i in range(20)}
         records=[Submission(str(i),'me',label,120,'WRONG-ANSWER')
                  for i,label in enumerate(contest.problems)]
         me=score_submissions(records,list(contest.problems),contest.rules,600,name='NativeHandle')
         view=Dashboard(contest,600,me,'127','',None,
                        [{'id':'396538368','problem':'T','time':125,'verdict':'WRONG-ANSWER'}],
-                       participant_title='Example Team',participant_subtitle='Alice、Bob、Carol')
+                       participant_title='Example Team',participant_subtitle='Alice with a very long real name、Bob with a very long real name、Carol with a very long real name')
         for platform in ('darwin','linux','win32'):
             with patch('sys.platform',platform),self.subTest(platform=platform):
                 renderer=TerminalDashboard();renderer.screen=Mock();renderer.curses=Mock()

@@ -381,6 +381,21 @@ class SubmitTests(IsolatedState):
         self.stack.enter_context(patch("vp_helper.live_submit.refresh_submission_login"))
         self.stack.enter_context(patch("vp_helper.live_submit.time.time", return_value=1200))
 
+    def test_explicit_yes_keeps_verification_preview_and_one_native_post(self):
+        with patch('builtins.input',side_effect=AssertionError('explicit -y must skip prompting')),patch('sys.stdout',io.StringIO()) as output:
+            self.assertEqual(live_submit.submit(self.source,assume_yes=True),'77')
+        self.api.web.session.post.assert_called_once()
+        headers=self.api.web.session.post.call_args.kwargs['headers']
+        self.assertEqual(headers['Sec-Fetch-Site'],'same-origin')
+        self.assertEqual(headers['Sec-Fetch-Mode'],'navigate')
+        self.assertIn('Submission information:',output.getvalue());self.assertIn('y [-y]',output.getvalue())
+
+    def test_live_entry_yes_flag_is_forwarded_only_when_explicit(self):
+        for options,expected in [([],{}),(['-y'],{'assume_yes':True}),(['--yes'],{'assume_yes':True})]:
+            with patch('sys.argv',['vp-cf-submit',str(self.source),*options]),patch.object(live_submit,'submit',return_value='77') as submitted:
+                live_submit.main()
+            submitted.assert_called_once_with(self.source,None,None,**expected)
+
     def test_success_sends_once_uses_source_text_dynamic_compiler_and_receipt(self):
         with patch('sys.stdout', io.StringIO()) as output:
             self.assertEqual(live_submit.submit(self.source), "77")

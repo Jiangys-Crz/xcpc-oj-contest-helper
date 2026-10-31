@@ -366,6 +366,12 @@ class QojContinuousSubmissionTests(unittest.TestCase):
         self.assertNotIn('POST', [call[0] for call in backend.calls])
 
     def test_actual_script_entry_confirmation_multipart_and_session_close(self):
+        self._run_script_confirmation(False)
+
+    def test_actual_script_entry_explicit_yes_preserves_login_and_single_upload(self):
+        self._run_script_confirmation(True)
+
+    def _run_script_confirmation(self, assume_yes):
         source = self.root/'A.cpp'; source.write_text('// 中文\nint main(){}', encoding='utf8')
         self.config.update(problem_ids={'A': '10'})
         (self.root/'contest.json').write_text(json.dumps(self.config))
@@ -390,12 +396,15 @@ class QojContinuousSubmissionTests(unittest.TestCase):
         with patch('vp_helper.http._requests.Session', return_value=backend), patch('curl_cffi.CurlMime', Mime), \
              patch('vp_helper.submit_context.submission_configuration', return_value=(self.root/'contest.json', self.config)), \
              patch('vp_helper.browser_login.refresh_submission_login') as refresh, \
-             patch('vp_helper.receipts.record_receipt') as receipt, patch('sys.argv', [str(script), str(source)]), \
+             patch('vp_helper.receipts.record_receipt') as receipt, patch('sys.argv', [str(script), str(source)]+(['-y'] if assume_yes else [])), \
              patch('builtins.input', return_value='y') as decision, patch('sys.stdout', io.StringIO()) as output:
             runpy.run_path(str(script), run_name='__main__')
         refresh.assert_called_once(); receipt.assert_called_once()
         self.assertEqual(len(uploads), 1); self.assertTrue(uploads[0].closed); self.assertTrue(backend.closed)
-        self.assertIn('Do you want to continue?', decision.call_args.args[0])
+        if assume_yes:
+            decision.assert_not_called();self.assertIn('y [-y]',output.getvalue())
+        else:
+            self.assertIn('Do you want to continue?', decision.call_args.args[0])
         self.assertIn('Check judging results here: https://qoj.ac/submission/12345', output.getvalue())
         self.assertNotIn('fresh-token', output.getvalue())
 

@@ -16,7 +16,7 @@ from .submit_context import submission_configuration
 def main() -> None:
     args = sys.argv[1:]
     if args in ([], ["-h"], ["--help"]):
-        print("Usage: submit SOURCE [-p PROBLEM] [-l LANGUAGE]\nUses this source's contest and attempt; post-contest submissions are practice.")
+        print("Usage: submit SOURCE [-p PROBLEM] [-l LANGUAGE] [-y]\nUses this source's contest and attempt; post-contest submissions are practice.")
         return
     try:
         source = Path(args[0]).expanduser().resolve()

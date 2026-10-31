@@ -43,7 +43,7 @@
 +    sys.exit(0)
 +
 +if __name__ == '__main__' and (len(sys.argv) not in (2, 3)
-+                              or (len(sys.argv) == 3 and sys.argv[2] != '-y')):
++                              or (len(sys.argv) == 3 and sys.argv[2] not in ('-y', '--yes'))):
 +    print('Usage: submit code.cpp [-y]')
 +    sys.exit(2)
 +
@@ -196,14 +196,11 @@
 +    except (VPError, OSError) as exc:
 +        print('Submitted, but the monitor notification failed: ' + str(exc))
 +    print_judging_link(contest_base_url, sid)
-@@ -82,4 +200,4 @@
+@@ -82 +200 @@
 -    if len(sys.argv) not in [2, 3]:
--        print('Usage: submit code.cpp [-y]')
--        sys.exit(-1)
++    if len(sys.argv) not in (2, 3):
+@@ -85 +203 @@
 -    
-+    if len(sys.argv) != 2:
-+        print('Usage: submit code.cpp')
-+        sys.exit(-1)
 +
 @@ -87,3 +204,0 @@
 -    yes_by_default = False
@@ -218,7 +215,7 @@
 @@ -101 +216 @@
 -    problem = code_path.stem[0].capitalize()    
 +    problem = code_path.stem[0].capitalize()
-@@ -107,10 +222,5 @@
+@@ -107,10 +222,6 @@
 -    url = contest_base_url + '/problem/' + str(contest_offset + index)
 -    
 -    print('Submission information:')
@@ -233,8 +230,9 @@
 +    url = contest_base_url + '/problem/' + str(problem_id)
 +
 +    from vp_helper.submission_confirmation import confirm_submission
-+    if confirm_submission(code_path, contest, problem, lang, url, config_path):
-@@ -118,3 +228,4 @@
++    if confirm_submission(code_path, contest, problem, lang, url, config_path,
++                          **({'assume_yes': True} if len(sys.argv) == 3 else {})):
+@@ -118,3 +229,4 @@
 -        submit(url, lang, code)
 -    else:
 -        print('Aborted.')

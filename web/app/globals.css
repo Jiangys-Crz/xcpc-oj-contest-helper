@@ -186,3 +186,42 @@ body{background:#fff}.site-header{height:56px;position:sticky;top:0;z-index:40;b
 .judge-contest-detail>.page-heading{margin-top:5px}
 
 .table-fit-content>.fit-table .rank-value,.table-fit-content>.fit-table .metric-value{white-space:nowrap;overflow-wrap:normal}
+
+/* Keep each explicit identity and submission line complete, then fit as one unit. */
+.table-fit-content{position:relative}
+.table-fit-content>.fit-table{table-layout:auto}
+.table-fit-content>.fit-table th,.table-fit-content>.fit-table td,.table-fit-content>.fit-table .contest-link,.table-fit-content>.fit-table .participant-identity strong,.table-fit-content>.fit-table .participant-identity small,.table-fit-content>.fit-table .problem-cell span,.table-fit-content>.fit-table .problem-cell small{white-space:nowrap;overflow-wrap:normal;word-break:normal}
+.table-fit-content>.fit-table .problem-heading,.table-fit-content>.fit-table .judge-problem-heading,.table-fit-content>.fit-table .problem-cell{width:58px;min-width:58px}
+.table-fit-content>.fit-table .participant-identity{min-width:max-content}
+.judge-contest-title{margin:5px 0 20px}
+.judge-contest-title h1{font-family:Georgia,"Times New Roman",serif;font-size:29px;font-weight:700;line-height:1.4;white-space:nowrap;overflow-wrap:normal;color:#111827}
+.judge-submissions{width:100%;max-width:100%;margin-right:auto}
+.judge-submissions-fit .table-fit-content>.judge-submissions-table.fit-table{width:100%;min-width:0;max-width:none;table-layout:auto}
+.judge-submissions-fit .table-fit-content>.fit-table th,.judge-submissions-fit .table-fit-content>.fit-table td{padding:9px 14px;white-space:nowrap}
+.judge-submissions-fit .table-fit-content .submission-link,.judge-submissions-fit .table-fit-content .judge-verdict{white-space:nowrap;overflow-wrap:normal;word-break:normal;flex-wrap:nowrap}
+
+/* Comfortable reading sizes; dense contest tables scale only when necessary. */
+body{font-size:15px}
+input,select,textarea,label,.button,.filter-form select,.detail-grid dd,.team-members,.notification-body p,.install-body{font-size:14px}
+.small,.row-subtitle,.field-note,.form-hint,.information-banner,.privacy-label,.notification-meta,.install-note,.install-caption,.guide-index,.guide-command-label,.guide-path-grid dt,.guide-path-grid dd,.guide-table,.guide-table th,.guide-table code,.guide-system-notes h3{font-size:13px}
+.table-action,.text-button,.button-small,.table-footer,.legend,.board-description,.print-help p,.install-command pre,.install-path code{font-size:13px}
+.login-refined .login-card label,.login-refined .login-card input,.login-refined .login-card .button-block{font-size:14px}
+.login-form-heading p,.login-refined .login-switch button,.login-refined .login-switch a{font-size:13px}
+.page-shell:has(.judge-page),.page-shell:has(.leaderboard),.page-shell:has(.history-table){max-width:none}
+.data-table,.data-table td,.data-table th{font-size:14px}
+.table-fit-content>.fit-table,.table-fit-content>.fit-table th,.table-fit-content>.fit-table td,.table-fit-content>.fit-table .rank-value,.table-fit-content>.fit-table .metric-value{font-size:14px}
+.table-fit-content>.fit-table .contest-link,.table-fit-content .board-team a,.table-fit-content .judge-team-name strong,.table-fit-content>.fit-table .participant-identity strong{font-size:14px}
+.table-fit-content>.fit-table .participant-identity small,.history-table .participant-identity strong,.history-table .participant-identity small{font-size:12px!important}
+.table-fit-content>.fit-table .badge,.table-fit-content>.fit-table .table-action{font-size:12px}
+.table-fit-content>.fit-table .problem-cell,.table-fit-content>.fit-table .problem-cell span,.table-fit-content>.fit-table .problem-cell small,.table-fit-content>.fit-table .judge-summary th,.table-fit-content>.fit-table .judge-summary td,.public-problem-statistics .table-fit-content>.fit-table th,.public-problem-statistics .table-fit-content>.fit-table td{font-size:13px}
+.table-fit-content>.fit-table .problem-heading,.table-fit-content>.fit-table .judge-problem-heading,.table-fit-content>.fit-table .problem-cell{width:var(--fit-problem-width,58px);min-width:var(--fit-problem-width,58px)}
+.table-fit-content>.fit-table .problem-heading,.table-fit-content>.fit-table .judge-problem-heading>span{font-size:16px}
+.judge-submissions-fit .table-fit-content>.fit-table th,.judge-submissions-fit .table-fit-content>.fit-table td,.judge-submissions-fit .table-fit-content .submission-link,.judge-submissions-fit .table-fit-content .judge-verdict{font-size:14px}
+.judge-submissions-fit .table-fit-content .time-value,.judge-submissions-fit .table-fit-content .stage-label{font-size:13px}
+.judge-section-heading h2{font-size:19px}.judge-section-heading h2 .count-label,.judge-table-actions .button-small,.judge-table-actions .text-button,.judge-table-footer,.judge-filters label,.judge-filters select{font-size:13px}
+.judge-metadata .judge-contest-times,.judge-metadata .judge-updated,.judge-original-contest,.judge-identities .badge,.judge-metadata .judge-legend,.judge-metadata .judge-legend h3,.section-heading>.judge-legend,.section-heading>.judge-legend h3{font-size:12px}
+@media(max-width:760px){.judge-metadata .judge-contest-times,.judge-metadata .judge-updated,.judge-original-contest,.judge-identities .badge{font-size:11px}.judge-metadata .judge-legend,.judge-metadata .judge-legend h3{font-size:10px}}
+.table-fit-content>.fit-table .judge-rank,.table-fit-content>.fit-table .judge-solved,.table-fit-content>.fit-table .judge-penalty{width:auto}
+
+/* Center desktop content within the requested 75% reading area. */
+@media(min-width:1024px){.page-shell{width:75vw;max-width:none;margin-left:12.5vw;margin-right:0;padding-left:0;padding-right:0}}

@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 from .models import VPError
 from .parsing import CWNUOJ_HOST, NOWCODER_HOST
 from .browser_sites import canonical_host
+from .browser_transport import transport_identity, DEFAULT_PROFILE, DEFAULT_USER_AGENT
 
 # ---------------------------------------------------------------------------
 # Transport selection.
@@ -25,11 +26,10 @@ from .browser_sites import canonical_host
 # ---------------------------------------------------------------------------
 _IMPERSONATE = "firefox147"
 
-# "firefox" is a version-dependent alias: curl_cffi 0.11 resolves it to Firefox
-# 135 while 0.16 resolves it to Firefox 147.  Pairing that alias with a
-# hardcoded User-Agent would send a 147 header over a 135 fingerprint whenever an
-# older curl_cffi is installed.  Naming the profile explicitly keeps the two in
-# step; pyproject.toml requires a curl_cffi new enough to know this profile.
+# An explicit, coherent pair is the fallback when no Firefox profile can be
+# identified. browser_transport selects an exact supported profile for known
+# Firefox installations, including Linux Firefox 154, with its matching UA.
+# Never combine a new browser User-Agent with a hardcoded older TLS profile.
 #
 # curl_cffi keeps the profile's headers (User-Agent included) to itself rather
 # than in session.headers, but cli.py and qoj.py read session.headers
@@ -66,6 +66,27 @@ except ImportError:  # pragma: no cover - curl_cffi not installed
     _RequestException = _requests.RequestException
 
 
+def browser_challenge(response) -> bool:
+    """Recognize a verification response before generic HTTP status handling.
+
+    Do not decode PDFs or binary downloads. A JSON API failure with a 403 is
+    still an API failure unless the server explicitly marks it as a challenge.
+    """
+    headers = getattr(response, 'headers', {})
+    mitigation = headers.get('cf-mitigated', headers.get('Cf-Mitigated', ''))
+    if isinstance(mitigation, str) and mitigation.lower() == 'challenge':
+        return True
+    content_type = headers.get('Content-Type', '')
+    if isinstance(content_type, str) and content_type and not ('text/' in content_type.lower() or 'html' in content_type.lower()):
+        return False
+    try:
+        body = response.text
+    except Exception:
+        return False
+    return isinstance(body, str) and ('Just a moment...' in body[:16000] or 'cf-chl-' in body[:16000])
+
+
+
 class WebSession:
     def __init__(self, origin: str, account: dict, *, auto_refresh: bool = True):
         self.origin = origin.rstrip("/")
@@ -89,11 +110,11 @@ class WebSession:
         if account.get('cookie_source') in ('chrome', 'edge') and canonical == 'contest.ucup.ac':
             self._auto_refresh = auto_refresh and bool(account.get('handle'))
         if _IMPERSONATE:
-            # Linux retains its fixed Firefox profile. Extension snapshots use
-            # the Chromium transport and the actual normal-window User-Agent.
-            chromium = account.get('cookie_source') in ('chrome', 'edge')
-            self.session = _requests.Session(impersonate='chrome' if chromium else _IMPERSONATE)
-            self.session.headers["User-Agent"] = account.get('user_agent') if chromium and account.get('user_agent') else _IMPERSONATED_USER_AGENT
+            profile, user_agent = transport_identity(account)
+            if not user_agent:
+                profile, user_agent = DEFAULT_PROFILE, DEFAULT_USER_AGENT
+            self.session = _requests.Session(impersonate=profile)
+            self.session.headers["User-Agent"] = user_agent
         else:
             self.session = _requests.Session()
             self.session.headers["User-Agent"] = account.get(
@@ -119,8 +140,12 @@ class WebSession:
             self.account.update(selected)
         self.session.cookies.clear()
         self._set_cookies(self.account["cookie"])
-        if self.account.get('cookie_source') in ('chrome', 'edge') and self.account.get('user_agent'):
-            self.session.headers['User-Agent'] = self.account['user_agent']
+        if _IMPERSONATE:
+            profile, user_agent = transport_identity(self.account)
+            if not user_agent:
+                profile, user_agent = DEFAULT_PROFILE, DEFAULT_USER_AGENT
+            self.session.impersonate = profile
+            self.session.headers['User-Agent'] = user_agent
         return True
 
     def get(self, url: str, *, retry: bool = True, **kwargs) -> object:
@@ -156,9 +181,10 @@ class WebSession:
                     request_options['http_version'] = CurlHttpVersion.V1_1
                     sent_at = tick()
                     r = self.session.get(url, timeout=timeout, **request_options)
-                if (not refreshed and first_party and r.status_code == 200
+                if (not refreshed and first_party
                         and canonical_host(urlsplit(r.url).hostname or '') == canonical_host(urlsplit(self.origin).hostname or '')
-                        and urlsplit(r.url).path in ("/login", "/user/login", "/enter")):
+                        and (r.status_code == 200 and urlsplit(r.url).path in ("/login", "/user/login", "/enter")
+                             or browser_challenge(r))):
                     refreshed = True
                     if self._refresh_browser(force=True):
                         # Only an idempotent GET is repeated after refreshing login.
@@ -202,6 +228,9 @@ class WebSession:
         if urlsplit(r.url).hostname in ('codeforces.com', 'www.codeforces.com'):
             from .cf_forms import honor_response_cookies
             honor_response_cookies(self.session, r)
+        if browser_challenge(r):
+            browser = 'Firefox' if sys.platform == 'linux' else 'Chrome / Edge'
+            raise VPError(f"The platform requests browser verification (HTTP {r.status_code}); refresh this site in your usual {browser} window, then retry the command.")
         if r.status_code != 200:
             if (urlsplit(r.url).hostname == 'codeforces.com' and urlsplit(r.url).path.startswith('/api/')
                     and r.status_code in (400, 403, 429)):
@@ -217,23 +246,10 @@ class WebSession:
                 raise VPError("Login session expired; update the account cookie in ~/.config/vp/config.json.")
             browser = 'Chrome / Edge' if self.account.get('cookie_source') in ('chrome', 'edge') else 'Firefox'
             raise VPError(f"Login session expired. Log in to this site in {browser}, then run the command again.")
-        # Cloudflare's interstitial is only meaningful for textual responses.
-        # A PDF or other binary body must not be decoded here: requests happens
-        # to tolerate it, but curl_cffi reports such a response with a non-codec
-        # encoding ("binary") and raises LookupError/UnicodeDecodeError.
-        content_type = (r.headers.get("Content-Type") or "").lower()
-        if not content_type or "text/" in content_type or "html" in content_type:
-            try:
-                body = r.text[:3000]
-            except Exception:
-                body = ""
-            if "Just a moment..." in body or "cf-chl-" in body:
-                from .portable import login_browser
-                browser = 'Ubuntu browser' if sys.platform == 'linux' else login_browser()
-                raise VPError(f"The platform requests browser verification; refresh the login session in the {browser}.")
         from .platform_clock import observe
         observe(r, sent_at)
         return r
+
 
     def soup(self, url: str, **kwargs) -> BeautifulSoup:
         r = self.get(url, **kwargs)

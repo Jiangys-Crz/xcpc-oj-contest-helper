@@ -307,7 +307,9 @@ def browser_cookies(platform: str, account: dict, *, errors: list[str] | None = 
         for values in (combined, latest_combined, persistent, latest_persistent):
             header = _header(values)
             if header and header not in seen:
-                candidates.append(BrowserCookies(profile, header))
+                from .browser_transport import transport_identity
+                _, user_agent = transport_identity({'cookie_source': 'firefox', 'firefox_profile': str(profile)})
+                candidates.append(BrowserCookies(profile, header, user_agent=user_agent))
                 seen.add(header)
     return candidates
 
@@ -349,7 +351,11 @@ def _verify(platform: str, candidate: BrowserCookies, expected: str, *, errors: 
     from .http import WebSession
     host = candidate.host or platform_host(platform)
     origin = "https://" + host
-    credentials = {'cookie': candidate.cookie}
+    credentials = {'cookie': candidate.cookie, 'cookie_source': candidate.source}
+    if candidate.source == 'firefox':
+        credentials['firefox_profile'] = str(candidate.profile)
+        if candidate.user_agent:
+            credentials['user_agent'] = candidate.user_agent
     if candidate.source in ('chrome', 'edge'):
         credentials.update(cookie_source=candidate.source, user_agent=candidate.user_agent)
     web = WebSession(origin, credentials, auto_refresh=False)
@@ -428,7 +434,7 @@ def browser_fields(account: dict) -> dict:
     return {k: account[k] for k in ("cookie_source", "firefox_profile", "firefox_profile_strict", 'browser_profile', 'browser_host') if account.get(k)}
 
 
-def refresh_submission_login(path: Path, config: dict, platform: str) -> None:
+def refresh_submission_login(path: Path, config: dict, platform: str, *, force: bool = False) -> bool:
     from .storage import write_json
     from .chromium_login import enabled
     before = dict(config)
@@ -436,7 +442,7 @@ def refresh_submission_login(path: Path, config: dict, platform: str) -> None:
     if enabled() and config.get('cookie_source') != 'manual':
         target = urlsplit(config.get('base_url') or config.get('vp_context', {}).get('url') or '').hostname
         selected = {**config, '_browser_target': target or config.get('browser_host') or platform_host(platform)}
-    refreshed = refresh_browser_account(platform, selected)
+    refreshed = refresh_browser_account(platform, selected, **({'force': True} if force else {}))
     if refreshed and selected is not config:
         selected.pop('_browser_target', None)
         config.update(selected)
@@ -445,6 +451,7 @@ def refresh_submission_login(path: Path, config: dict, platform: str) -> None:
         raise VPError('无法验证当前 Chrome / Edge 登录。请在原浏览器窗口登录并同步 XCPC 扩展后重试。')
     if refreshed and config != before:
         write_json(path, config)
+    return refreshed
 
 
 def login_diagnostics(platform: str, account: dict, *, verified_account: dict | None = None) -> list[str]:

@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 from bs4 import BeautifulSoup
 from requests.cookies import RequestsCookieJar
 
-from vp_helper.cf_forms import _tta, form_secrets, honor_response_cookies, redact, safe_url, sign_form, submission_error, submission_target
+from vp_helper.cf_forms import _tta, form_secrets, honor_response_cookies, redact, safe_url, sign_form, submission_error, submission_target, submission_headers
 from vp_helper.models import VPError
 
 
@@ -151,8 +151,76 @@ class NativeFormTests(unittest.TestCase):
         self.assertEqual(fields['ftaa'],'fixture-ftaa-sensitive')
         self.assertEqual(fields['bfaa'],'fixture-bfaa-sensitive')
         self.assertEqual(options['timeout'],(10,40))
+        self.assertEqual(options['headers']['Sec-Fetch-Site'],'same-origin')
+        self.assertEqual(options['headers']['Sec-Fetch-Mode'],'navigate')
+        self.assertEqual(options['headers']['Sec-Fetch-Dest'],'document')
         for value in [TOKEN,'fixture-ftaa-sensitive','fixture-bfaa-sensitive','fixture-session-sensitive']:
             self.assertNotIn(value,output.getvalue())
+
+    def test_native_fetch_metadata_preserves_real_www_origin_without_leaking_csrf(self):
+        headers=submission_headers('https://www.codeforces.com/gym/728585/submit?csrf_token='+TOKEN,URL+'/submit')
+        self.assertEqual(headers['Origin'],'https://www.codeforces.com')
+        self.assertEqual(headers['Sec-Fetch-Site'],'same-site')
+        self.assertEqual(headers['Referer'],'https://www.codeforces.com/gym/728585/submit')
+        self.assertNotIn(TOKEN,str(headers))
+        for bad in ['https://other.example/submit','http://codeforces.com/submit','https://user@codeforces.com/submit']:
+            with self.assertRaises(VPError):submission_headers(bad,URL+'/submit')
+
+    def test_explicit_yes_skips_only_prompt_and_still_shows_native_preview(self):
+        browser=Browser();browser.xcpc_assume_yes=True
+        with patch('builtins.input',side_effect=AssertionError('explicit -y must not prompt')),patch('sys.stdout',io.StringIO()) as output:
+            self.assertTrue(self.module.submit_problem(browser,'728585','cpp',str(self.source),-1,expected_problem='L'))
+        self.assertEqual(len(browser.posts),1)
+        self.assertIn('Submission information:',output.getvalue())
+        self.assertIn('y [-y]',output.getvalue())
+
+    def test_cf_entry_yes_flag_is_explicit_and_keeps_login_verification(self):
+        import importlib.machinery
+        from unittest.mock import MagicMock
+        entry=Path(__file__).resolve().parents[1]/'third_party/cf_submit/submit'
+        (self.root/'contest.json').write_text('{"platform":"gym","contest_id":728585}')
+        for options,expected in [([],False),(['-y'],True),(['--yes'],True)]:
+            browser=SimpleNamespace()
+            login=SimpleNamespace(get_secret=Mock(return_value=('tester',None)),login=Mock(return_value=browser))
+            submitted=Mock()
+            loader=importlib.machinery.SourceFileLoader('fixture_cf_entry_yes',str(entry))
+            module=importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name,loader))
+            with patch.dict('sys.modules',{'cf_login':login,'cf_submit':SimpleNamespace(submit_files=submitted),
+                                         'cf_coach':MagicMock(),'cf_problems':MagicMock(),'cf_standings':MagicMock(),'colours':MagicMock()}), \
+                 patch('sys.argv',[str(entry),str(self.source),*options]):
+                loader.exec_module(module);module.main()
+            login.login.assert_called_once();submitted.assert_called_once()
+            self.assertIs(browser.xcpc_assume_yes,expected)
+
+    def test_post_redirect_challenge_is_unknown_and_never_replays_upload(self):
+        browser=Browser()
+        def upload(form,**options):
+            browser.posts.append((form.action,{},options))
+            browser.url=URL+'/my'
+            browser.parsed=BeautifulSoup('<title>Just a moment...</title>','html.parser')
+            browser.response=SimpleNamespace(status_code=403,headers={'cf-mitigated':'challenge'},history=[SimpleNamespace(status_code=302)])
+        browser.submit_form=upload
+        with patch('builtins.input',return_value='y'),patch('sys.stdout',io.StringIO()) as output:
+            with self.assertRaisesRegex(VPError,'outcome is unknown') as error:
+                self.module.submit_problem(browser,'728585','cpp',str(self.source),-1,expected_problem='L')
+        self.assertEqual(len(browser.posts),1)
+        self.assertIn('successful upload',str(error.exception));self.assertIn(URL+'/my',output.getvalue())
+
+    def test_native_transport_refreshes_challenged_get_once_but_never_any_post(self):
+        file=Path(__file__).resolve().parents[1]/'third_party/cf_submit/cf_login.py'
+        spec=importlib.util.spec_from_file_location('fixture_cf_login_challenge',file)
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        for method,url,should_refresh in [('GET',URL+'/submit/L',True),('POST',URL+'/submit/L',False),('GET','https://other.example/',False)]:
+            with self.subTest(method=method,url=url):
+                transport=module.make_session();self.addCleanup(transport.close)
+                transport._xcpc_refresh=Mock(return_value=True)
+                challenge=SimpleNamespace(status_code=403,headers={'Content-Type':'text/html','cf-mitigated':'challenge'},text='<title>Just a moment...</title>',url=url,cookies=[],history=[])
+                fresh=SimpleNamespace(status_code=200,headers={},text='form',url=url,cookies=[],history=[])
+                with patch.object(module._requests.Session,'request',side_effect=[challenge,fresh]) as wire:
+                    result=transport.request(method,url)
+                self.assertEqual(wire.call_count,2 if should_refresh else 1)
+                self.assertEqual(transport._xcpc_refresh.call_count,int(should_refresh))
+                self.assertIs(result,fresh if should_refresh else challenge)
 
     def test_mid_vp_cookie_and_csrf_rotation_uses_latest_native_values(self):
         from requests import Request
@@ -204,6 +272,38 @@ class NativeFormTests(unittest.TestCase):
         self.assertNotIn('Cookie',transport.headers)
         values=[c.value for c in transport.cookies.jar if c.name=='JSESSIONID']
         self.assertEqual(values,['fixture-new'])
+
+    def test_native_and_shared_transport_use_matching_real_firefox_profile_and_ua(self):
+        from vp_helper.http import WebSession
+        profile=self.root/'firefox';profile.mkdir()
+        binary=self.root/'firefox-binary';(binary/'distribution').mkdir(parents=True)
+        (binary/'distribution/distribution.ini').write_text('[Global]\nid=canonical-002\n')
+        (profile/'compatibility.ini').write_text('[Compatibility]\nLastVersion=154.0\nLastOSABI=Linux_aarch64-gcc3\nLastPlatformDir='+str(binary)+'\n')
+        account={'cookie_source':'firefox','firefox_profile':str(profile),'cookie':'sid=fixture',
+                 'user_agent':'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:147.0) Gecko/20100101 Firefox/147.0'}
+        file=Path(__file__).resolve().parents[1]/'third_party/cf_submit/cf_login.py'
+        spec=importlib.util.spec_from_file_location('fixture_cf_login_identity',file)
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        expected='Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:154.0) Gecko/20100101 Firefox/154.0'
+        with patch('vp_helper.browser_transport._supported_profiles',return_value=frozenset({'firefox147','firefox154'})):
+            native=module.make_session(account['user_agent'],'firefox',account=account)
+            web=WebSession('https://codeforces.com',account,auto_refresh=False)
+        self.addCleanup(native.close);self.addCleanup(web.session.close)
+        self.assertEqual(native.impersonate,'firefox154');self.assertEqual(web.session.impersonate,'firefox154')
+        self.assertEqual(native.headers['User-Agent'],expected);self.assertEqual(web.session.headers['User-Agent'],expected)
+
+    def test_firefox_login_verification_passes_candidate_profile_to_transport(self):
+        from vp_helper import browser_login
+        candidate=browser_login.BrowserCookies(self.root/'firefox','sid=fixture','firefox')
+        fake=Mock();fake.session.get.return_value=SimpleNamespace(url='https://codeforces.com/',
+            text='<div id="header"><a href="/profile/tester">tester</a></div>',headers={})
+        fake.session.cookies=RequestsCookieJar();fake.session.cookies.set('sid','fixture',domain='codeforces.com',path='/')
+        with patch('vp_helper.http.WebSession',return_value=fake) as factory:
+            verified=browser_login._verify('gym',candidate,'tester')
+        self.assertIsNotNone(verified)
+        credentials=factory.call_args.args[1]
+        self.assertEqual(credentials['cookie_source'],'firefox');self.assertEqual(credentials['firefox_profile'],str(candidate.profile))
+        self.assertFalse(factory.call_args.kwargs['auto_refresh'])
 
     def test_requests_fallback_keeps_files_payload_and_honors_native_rotation(self):
         file=Path(__file__).resolve().parents[1]/'third_party/cf_submit/cf_login.py'

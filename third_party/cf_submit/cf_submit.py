@@ -7,7 +7,7 @@ import re
 import requests
 from urllib.parse import urlsplit
 
-from vp_helper.cf_forms import form_secrets, safe_url, sign_form, submission_error, submission_target
+from vp_helper.cf_forms import form_secrets, safe_url, sign_form, submission_error, submission_target, submission_headers
 from vp_helper.models import VPError
 
 # cf_login.make_session may hand RoboBrowser a curl_cffi session instead of a
@@ -173,8 +173,9 @@ def submit_problem(browser, contest, lang, source, guru, expected_problem=None):
     target = submission_target(page_url, action, native_base, problem if guru == -1 else None)
     submission.action = target
     secrets = form_secrets(submission, browser.session, target)
+    confirmation = {'assume_yes': True} if getattr(browser, 'xcpc_assume_yes', False) is True else {}
     if not confirm_submission(Path(source), config, problem, available[langcode], safe_url(target),
-                              config_path if config_path.is_file() else None):
+                              config_path if config_path.is_file() else None, **confirmation):
         return False
     browser.vp_submitted_at = platform_now(base_url)
     try:
@@ -183,10 +184,10 @@ def submit_problem(browser, contest, lang, source, guru, expected_problem=None):
         if native_form is None or native_form.select_one('[name="sourceFile"]') is not None:
             with Path(source).open('rb') as source_file:
                 submission['sourceFile'] = source_file
-                browser.submit_form(submission, timeout=(10, 40), headers={'Origin': 'https://codeforces.com', 'Referer': safe_url(page_url)})
+                browser.submit_form(submission, timeout=(10, 40), headers=submission_headers(page_url, target))
         elif native_form.select_one('[name="source"]') is not None:
             submission['source'] = Path(source).read_text(encoding='utf8')
-            browser.submit_form(submission, timeout=(10, 40), headers={'Origin': 'https://codeforces.com', 'Referer': safe_url(page_url)})
+            browser.submit_form(submission, timeout=(10, 40), headers=submission_headers(page_url, target))
         else:
             raise VPError('Codeforces did not offer a source field. No code was submitted.')
     except _SESSION_ERRORS:
@@ -202,7 +203,8 @@ def submit_problem(browser, contest, lang, source, guru, expected_problem=None):
             or result.path.rstrip('/') != accepted_path or isinstance(status, int) and status != 200):
         if guru == -1:
             print_judging_link(base_url)
-        raise VPError(submission_error(browser.parsed, status, browser.url, secrets))
+        raise VPError(submission_error(browser.parsed, status, browser.url, secrets,
+                                      headers=getattr(browser.response, 'headers', None), attempted=True))
     print("Code submitted properly")
 
     """ now get time """

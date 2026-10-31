@@ -9,7 +9,7 @@
     "curl_cffi transport for Cloudflare, with CurlMime for the multipart submission that curl_cffi's files= cannot express",
     "Resolve contest configuration beside the source or in its parent directories, with explicit missing or conflicting configuration errors",
     "Refresh a verified same-account Firefox login before submitting",
-    "Use the common VP submission preview, require y/n confirmation and remove the automatic -y bypass",
+    "Use the common VP submission preview, require y/n confirmation by default with an explicit -y / --yes option",
     "Use the shared judge clock for submission receipt timestamps",
     "Print a shared English judging-result link after submission, including unconfirmed outcomes",
     "Use the Chromium transport and actual browser User-Agent for native Chrome/Edge extension sessions",

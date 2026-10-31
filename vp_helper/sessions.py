@@ -173,6 +173,9 @@ def save_state(path: Path, state: dict) -> None:
                 state['contest']['rules']['problem_reveal_count'] = (50 if selected == 'CCPC' else None) if selected else ccpc_reveal_count(state['workspace_name'])
         if previous.get("cloud"):
             state["cloud"] = previous["cloud"]
+        for key in ('cloud_restore', 'restored_submissions', 'restored_from'):
+            if key in previous:
+                state[key] = previous[key]
         if previous.get("practice_view"):
             state["practice_view"] = True
         if 'practice_rank' in previous:

@@ -42,11 +42,17 @@
 +        sys.argv.insert(1, 'submit')
 @@ -83 +93,0 @@
 -            "test -- tests a problem by running the code on .in and comparing with .ans\n" +
-@@ -244,3 +253,0 @@
+@@ -127,0 +138,2 @@
++    parser.add_argument('-y', '--yes', action='store_true', default=False,
++                        help='confirm the displayed submission without prompting')
+@@ -235,0 +248,2 @@
++        if browser is not None:
++            browser.xcpc_assume_yes = args.yes
+@@ -244,3 +257,0 @@
 -    elif args.command == "test":
 -        cf_test.test(args.option, args.verbose)
 -
-@@ -254,0 +262,3 @@
+@@ -254,0 +266,3 @@
 +    except (VPError, OSError, UnicodeError) as exc:
 +        print('submit: ' + str(exc), file=sys.stderr)
 +        sys.exit(1)
@@ -57,13 +63,17 @@
 +	browser.open("https://codeforces.com/gyms")
 --- upstream/cf_login.py
 +++ installed/cf_login.py
-@@ -4,0 +5,99 @@
+@@ -4,0 +5,112 @@
 +import json
 +from pathlib import Path
 +from http.cookies import SimpleCookie
++from urllib.parse import urlsplit
 +import requests
 +from vp_helper.browser_login import refresh_submission_login
 +from vp_helper.cf_forms import honor_response_cookies
++from vp_helper.http import browser_challenge
++from vp_helper.browser_transport import transport_identity, DEFAULT_PROFILE, DEFAULT_USER_AGENT
++from vp_helper.models import VPError
 +
 +# codeforces.com sits behind Cloudflare, which fingerprints the TLS handshake:
 +# a plain requests session is answered with "HTTP 403 / Just a moment...".
@@ -142,22 +152,31 @@
 +                kwargs['multipart'] = _mime_from(kwargs.pop('data', None), files)
 +        response = super().request(method, url, *args, **kwargs)
 +        honor_response_cookies(self, response)
++        refresh = getattr(self, '_xcpc_refresh', None)
++        if (str(method).upper() == 'GET' and urlsplit(url).hostname in ('codeforces.com', 'www.codeforces.com')
++                and urlsplit(str(getattr(response, 'url', ''))).hostname in ('codeforces.com', 'www.codeforces.com')
++                and browser_challenge(response) and callable(refresh) and refresh()):
++            # Refresh only a preflight GET; a POST may already have succeeded
++            # before its following GET encounters verification.
++            response = super().request(method, url, *args, **kwargs)
++            honor_response_cookies(self, response)
 +        return response
 +
 +
-+def make_session(user_agent=None, cookie_source=None):
++def make_session(user_agent=None, cookie_source=None, *, account=None):
 +    """A browser session that can pass Cloudflare and accept RoboBrowser's forms."""
 +    if _IMPERSONATE:
-+        chromium = cookie_source in ('chrome', 'edge')
-+        session = _FormSession(impersonate='chrome' if chromium else _IMPERSONATE)
-+        if chromium and user_agent:
-+            session.headers['User-Agent'] = user_agent
++        profile, actual_user_agent = transport_identity(account or {'cookie_source': cookie_source, 'user_agent': user_agent})
++        if not actual_user_agent:
++            profile, actual_user_agent = DEFAULT_PROFILE, DEFAULT_USER_AGENT
++        session = _FormSession(impersonate=profile)
++        session.headers['User-Agent'] = actual_user_agent
 +        return session
 +    session = _FormSession()
 +    if user_agent:
 +        session.headers['User-Agent'] = user_agent
 +    return session
-@@ -9,13 +108,13 @@
+@@ -9,13 +121,13 @@
 -	global root
 -	res = ""
 -	length = len(s)
@@ -184,7 +203,7 @@
 +        res += str(chr(temp))
 +        i += rng + 2
 +    return res
-@@ -24,15 +123,15 @@
+@@ -24,15 +136,15 @@
 -	global root
 -	res = ""
 -	length = len(s)
@@ -215,7 +234,7 @@
 +            curr -= temp
 +        res += str(chr(curr + ord(root) + jump))
 +    return res
-@@ -41,14 +140,19 @@
+@@ -41,14 +153,19 @@
 -	handle = None
 -	password = None
 -	secret_loc = os.path.join(os.path.dirname(__file__), "secret")
@@ -249,7 +268,7 @@
 +        return handle, password
 +    else:
 +        return handle
-@@ -58,22 +162,22 @@
+@@ -58,22 +175,22 @@
 -	if handle is None:
 -		handle = input("Handle: ")
 -	password = getpass.getpass("Password: ")
@@ -294,7 +313,7 @@
 +        secretfile.write(encode(handle) + " " + encode(password))
 +        secretfile.close()
 +        print("Successfully logged in as " + handle)
-@@ -83,16 +187,33 @@
+@@ -83,16 +200,48 @@
 -	handle, password = get_secret(True)
 -
 -	browser = RoboBrowser(parser = "lxml")
@@ -316,13 +335,28 @@
 +        account = json.loads(context.read_text(encoding='utf8'))
 +        if account.get('platform') == 'gym':
 +            refresh_submission_login(context, account, 'gym')
-+            session = make_session(account['user_agent'], account.get('cookie_source'))
-+            jar = SimpleCookie()
-+            jar.load(account['cookie'])
-+            for item in jar.values():
-+                session.cookies.set(item.key, item.value, domain='codeforces.com', path='/')
++            session = make_session(account['user_agent'], account.get('cookie_source'), account=account)
++            def set_current_cookies():
++                session.cookies.clear()
++                jar = SimpleCookie(); jar.load(account['cookie'])
++                for item in jar.values():
++                    session.cookies.set(item.key, item.value, domain='codeforces.com', path='/')
++            def refresh_current_login():
++                if not refresh_submission_login(context, account, 'gym', force=True):
++                    return False
++                profile, actual_user_agent = transport_identity(account)
++                if _IMPERSONATE:
++                    session.impersonate = profile
++                if actual_user_agent:
++                    session.headers['User-Agent'] = actual_user_agent
++                set_current_cookies()
++                return True
++            set_current_cookies()
++            session._xcpc_refresh = refresh_current_login
 +            browser = RoboBrowser(parser='lxml', session=session)
 +            browser.open('https://codeforces.com/')
++            if browser_challenge(browser.response):
++                raise VPError('Codeforces requests browser verification. Refresh it in your usual browser; no code was submitted.')
 +            logged_in = any(a.get('href', '').lower() == '/profile/' + account['handle'].lower()
 +                            for a in browser.select('#header a'))
 +            if not logged_in:
@@ -390,7 +424,7 @@
 @@ -5,0 +8,14 @@
 +from urllib.parse import urlsplit
 +
-+from vp_helper.cf_forms import form_secrets, safe_url, sign_form, submission_error, submission_target
++from vp_helper.cf_forms import form_secrets, safe_url, sign_form, submission_error, submission_target, submission_headers
 +from vp_helper.models import VPError
 +
 +# cf_login.make_session may hand RoboBrowser a curl_cffi session instead of a
@@ -438,7 +472,7 @@
 +    if langcode is None:
 +        print("No compatible compiler is offered by this contest")
 +        return False
-@@ -123,2 +160,36 @@
+@@ -123,2 +160,37 @@
 -
 -    browser.submit_form(submission)
 +    elif expected_problem is not None:
@@ -457,8 +491,9 @@
 +    target = submission_target(page_url, action, native_base, problem if guru == -1 else None)
 +    submission.action = target
 +    secrets = form_secrets(submission, browser.session, target)
++    confirmation = {'assume_yes': True} if getattr(browser, 'xcpc_assume_yes', False) is True else {}
 +    if not confirm_submission(Path(source), config, problem, available[langcode], safe_url(target),
-+                              config_path if config_path.is_file() else None):
++                              config_path if config_path.is_file() else None, **confirmation):
 +        return False
 +    browser.vp_submitted_at = platform_now(base_url)
 +    try:
@@ -467,17 +502,17 @@
 +        if native_form is None or native_form.select_one('[name="sourceFile"]') is not None:
 +            with Path(source).open('rb') as source_file:
 +                submission['sourceFile'] = source_file
-+                browser.submit_form(submission, timeout=(10, 40), headers={'Origin': 'https://codeforces.com', 'Referer': safe_url(page_url)})
++                browser.submit_form(submission, timeout=(10, 40), headers=submission_headers(page_url, target))
 +        elif native_form.select_one('[name="source"]') is not None:
 +            submission['source'] = Path(source).read_text(encoding='utf8')
-+            browser.submit_form(submission, timeout=(10, 40), headers={'Origin': 'https://codeforces.com', 'Referer': safe_url(page_url)})
++            browser.submit_form(submission, timeout=(10, 40), headers=submission_headers(page_url, target))
 +        else:
 +            raise VPError('Codeforces did not offer a source field. No code was submitted.')
 +    except _SESSION_ERRORS:
 +        if guru == -1:
 +            print_judging_link(base_url)
 +        raise VPError('Submission outcome unknown. Check My submissions before retrying; the request was not repeated.') from None
-@@ -127,4 +198,8 @@
+@@ -127,4 +199,9 @@
 -    if (guru != -1 and browser.url[-7:] != "/status") or (guru == -1 and browser.url[-3:] != "/my"):
 -        print("Failed to submit code")
 -        print(" @ " + str(browser.url))
@@ -489,8 +524,9 @@
 +            or result.path.rstrip('/') != accepted_path or isinstance(status, int) and status != 200):
 +        if guru == -1:
 +            print_judging_link(base_url)
-+        raise VPError(submission_error(browser.parsed, status, browser.url, secrets))
-@@ -142,0 +218,13 @@
++        raise VPError(submission_error(browser.parsed, status, browser.url, secrets,
++                                      headers=getattr(browser.response, 'headers', None), attempted=True))
+@@ -142,0 +220,13 @@
 +    from pathlib import Path
 +    import json
 +    from vp_helper.receipts import cf_submission_id, cf_submission_ids, record_receipt
@@ -504,16 +540,16 @@
 +                previous = cf_submission_ids(response.text)
 +        except _SESSION_ERRORS:
 +            pass
-@@ -150 +238 @@
+@@ -150 +240 @@
 -        browser.open("http://codeforces.com/problemsets/acmsguru/submit")
 +        browser.open("https://codeforces.com/problemsets/acmsguru/submit")
-@@ -153 +241 @@
+@@ -153 +243 @@
 -        browser.open("http://codeforces.com/gym/" + contest + "/submit/" + problem.upper())
 +        browser.open("https://codeforces.com/gym/" + contest + "/submit/" + problem.upper())
-@@ -155 +243 @@
+@@ -155 +245 @@
 -        browser.open("http://codeforces.com/contest/" + contest + "/submit/" + problem.upper())
 +        browser.open("https://codeforces.com/contest/" + contest + "/submit/" + problem.upper())
-@@ -158,2 +246,18 @@
+@@ -158,2 +248,18 @@
 -    if submit_problem(browser, contest, lang, source, pid) and show:
 -        watch(handle)
 +    submitted_at = platform_now(browser.url)
@@ -534,13 +570,13 @@
 +            print_judging_link('https://codeforces.com/' + prefix + '/' + contest, sid)
 +        if show:
 +            watch(handle)
-@@ -189 +293 @@
+@@ -189 +295 @@
 -                splitted = re.split('(\D+)', defaultprob)
 +                splitted = re.split(r'(\D+)', defaultprob)
-@@ -211 +315 @@
+@@ -211 +317 @@
 -                    splitted = re.split('(\D+)', info[0])
 +                    splitted = re.split(r'(\D+)', info[0])
-@@ -220 +323,0 @@
+@@ -220 +325,0 @@
 -
 --- upstream/colours.py
 +++ installed/colours.py

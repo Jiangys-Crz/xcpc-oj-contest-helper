@@ -135,6 +135,8 @@ def main():
             action="store_true", default=False,
             help="submit to acmsguru problemset"
     )
+    parser.add_argument('-y', '--yes', action='store_true', default=False,
+                        help='confirm the displayed submission without prompting')
     args = parser.parse_args()
 
     """ -------------------------------------------------- """
@@ -243,6 +245,8 @@ def main():
         defaulthandle, defaultpass = cf_login.get_secret(True)
         """ open browser """
         browser = cf_login.login()
+        if browser is not None:
+            browser.xcpc_assume_yes = args.yes
         if args.contest is not None:
             defaultcontest = args.contest
         if browser is not None:

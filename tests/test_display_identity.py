@@ -44,6 +44,18 @@ class DisplayIdentityTests(unittest.TestCase):
         (config_directory()/'cloud-account.json').write_text('{broken')
         self.assertEqual(dashboard_identity(state),('NativeHandle',''))
 
+    def test_restored_team_identity_requires_the_current_account_and_local_owner(self):
+        account={'token':'fixture','serverUrl':'https://vp.cwnupaa.com','user':{'id':'u1','username':'昵称','realname':'姓名'}}
+        write_json(config_directory()/'cloud-account.json',account)
+        path=self.root/'state/vp/restored.json'
+        restored={'userId':'u1','serverUrl':account['serverUrl'],'participantTitle':'Team-Zero','participantSubtitle':'甲、乙'}
+        state={'handle':'OwnNativeHandle','cloud_restore':restored}
+        self.assertEqual(dashboard_identity(state,path),('OwnNativeHandle',''))
+        write_json(path.with_suffix('.cloud-owner'),{'userId':'u1','serverUrl':account['serverUrl']})
+        self.assertEqual(dashboard_identity(state,path),('Team-Zero','甲、乙'))
+        restored['userId']='another'
+        self.assertEqual(dashboard_identity(state,path),('昵称','姓名'))
+
     def test_identity_enrichment_preserves_fresh_submissions_and_cannot_rebind(self):
         context={'serverUrl':'https://vp.cwnupaa.com','userId':'u1','roomId':'r1','participantId':'p1','label':'Team-甲'}
         saved={'cloud':deepcopy(context),'submissions':[{'id':'new'}],'start_time':123,'handle':'native'}

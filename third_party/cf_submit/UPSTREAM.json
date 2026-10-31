@@ -35,12 +35,17 @@
     "Honor native Set-Cookie rotations across equivalent imported codeforces.com/.codeforces.com domains without retaining stale duplicate session cookies",
     "Honor the actual same-contest native submission form action, including /submit/PROBLEM, and upload source files as binary on Windows and Unix",
     "Redact CSRF and browser signature data from submission diagnostics; report native rejection reasons and never retry an uncertain submission POST",
-    "Scope native browser signatures to the actual Codeforces host and path, and honor cookie rotations with both curl_cffi and the requests fallback"
+    "Scope native browser signatures to the actual Codeforces host and path, and honor cookie rotations with both curl_cffi and the requests fallback",
+    "Match supported Firefox TLS profiles and request User-Agent to verified browser profile metadata, including Ubuntu Firefox 154, without changing the profile",
+    "Send native same-origin form navigation Fetch Metadata rather than the impersonation address-bar defaults",
+    "Refresh verified browser state and retry only a challenged preflight GET once; never replay a POST or its uncertain redirect outcome",
+    "Support explicit -y/--yes after preview and authorization while keeping interactive confirmation as the default"
   ],
   "excluded_files": [
     "cf_test.py"
   ],
   "protocol_sources": [
-    "https://codeforces.com/codeforces.org/s/78055/js/codeforces.js?v=20160131"
+    "https://codeforces.com/codeforces.org/s/78055/js/codeforces.js?v=20160131",
+    "https://codeforces.com/codeforces.org/s/90440/js/codeforces.js?v=20160131"
   ]
 }

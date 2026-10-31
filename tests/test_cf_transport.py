@@ -15,7 +15,7 @@ except ImportError:
     from requests.exceptions import SSLError
 
 from vp_helper.gym import Gym
-from vp_helper.http import WebSession
+from vp_helper.http import WebSession, browser_challenge
 from vp_helper.models import Contest, Rules, VPError
 
 
@@ -49,6 +49,35 @@ class CFTransportTests(unittest.TestCase):
         response.url=URL
         with self.assertRaisesRegex(VPError,'HTTP 400'):
             web.check(response)
+
+    def test_http403_browser_verification_is_identified_before_generic_status(self):
+        web=WebSession('https://codeforces.com',{},auto_refresh=False)
+        self.addCleanup(web.session.close)
+        challenge=Mock(status_code=403,url=URL,headers={'Content-Type':'text/html','cf-mitigated':'challenge'},text='Verification required')
+        with self.assertRaisesRegex(VPError,'browser verification.*HTTP 403'):
+            web.check(challenge)
+        api=self.response(403,{'status':'FAILED','comment':'fixture key invalid'})
+        self.assertIs(web.check(api),api)
+        class Binary:
+            headers={'Content-Type':'application/pdf'}
+            @property
+            def text(self):raise AssertionError('binary must not be decoded')
+        self.assertFalse(browser_challenge(Binary()))
+
+    def test_only_safe_get_is_repeated_after_verified_browser_refresh(self):
+        web=WebSession('https://codeforces.com',{'handle':'tester'},auto_refresh=False)
+        self.addCleanup(web.session.close)
+        web._browser_checked=True
+        challenge=Mock(status_code=403,url=URL,headers={'Content-Type':'text/html','cf-mitigated':'challenge'},text='Just a moment...')
+        valid=Mock(status_code=200,url=URL,headers={'Content-Type':'text/html'},text='current form')
+        web.session=Mock();web.session.get.side_effect=[challenge,valid]
+        with patch.object(web,'_refresh_browser',return_value=True) as refresh:
+            self.assertIs(web.get(URL,retry=False),valid)
+        refresh.assert_called_once_with(force=True);self.assertEqual(web.session.get.call_count,2)
+        web.session.post.return_value=challenge
+        with patch.object(web,'_refresh_browser') as refresh,self.assertRaisesRegex(VPError,'browser verification'):
+            web.post(URL,{'csrf_token':'fixture'})
+        web.session.post.assert_called_once();refresh.assert_not_called()
 
     @unittest.skipUnless(CurlHttpVersion is not None,'requires the installed curl_cffi transport')
     def test_post_is_never_resent_after_ssl_failure(self):

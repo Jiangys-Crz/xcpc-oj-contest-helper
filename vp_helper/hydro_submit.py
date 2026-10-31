@@ -50,7 +50,7 @@ def submission_id(data: dict, location: str, prefix: str) -> str | None:
     return None
 
 
-def submit(source: Path, problem: str | None = None, language: str | None = None) -> str | None:
+def submit(source: Path, problem: str | None = None, language: str | None = None, *, assume_yes: bool = False) -> str | None:
     source = source.expanduser().resolve()
     if not source.is_file():
         raise VPError("Source file not found: " + str(source))
@@ -112,7 +112,8 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
         payload["tid"] = api.id
     payload.pop("pretest", None)
     submit_url = url + ("?" + urlencode(query) if query else "")
-    if not confirm_submission(source, config, label, str(options[payload['lang']]), submit_url, config_path):
+    if not confirm_submission(source, config, label, str(options[payload['lang']]), submit_url, config_path,
+                              **({'assume_yes': True} if assume_yes else {})):
         return None
     submitted_at = platform_now(api.url)
     if submitted_at < contest.original_start:
@@ -162,10 +163,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Submit to an existing CWNUOJ contest participation")
     parser.add_argument("source", type=Path)
     parser.add_argument("-p", "--problem")
+    parser.add_argument("-y", "--yes", action="store_true", help="confirm the submission without prompting")
     parser.add_argument("-l", "--lang", help="CWNUOJ compiler ID, e.g. cc.cc20o2 or py.pypy3")
     args = parser.parse_args()
     try:
-        submit(args.source, args.problem, args.lang)
+        submit(args.source, args.problem, args.lang, **({'assume_yes': True} if args.yes else {}))
     except (VPError, OSError, UnicodeError) as exc:
         print("submit: " + str(exc), file=sys.stderr)
         raise SystemExit(1) from None

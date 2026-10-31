@@ -322,6 +322,37 @@ export class CloudService {
     const statistics=row.mode!=='bt' || row.statistics_json?this.statisticsView(room||{starts_at:row.started_at||now(),duration_seconds:rules.duration,freeze_minutes:rules.freeze_minutes,scoring_system:rules.contest_format},[row],JSON.parse(row.problems_json),at):{};
     return details?{...value,...statistics,submissions:filtered?.submissions??submissions.filter(s=>Date.parse(s.submittedAt)<=at)}:value;
   }
+  private restoreEnded(row:Row):boolean {
+    if(['failed','cancelled','scheduled'].includes(row.status))return false;
+    if(row.mode==='bt')return true;
+    if(row.room_id) {
+      const room=this.room(row.room_id);
+      // Never authorize a teammate from a guessed/default duration or a
+      // client's early "complete" flag while the shared room is still live.
+      return room.duration_seconds>0 && Date.now()>=Date.parse(roomTiming(room).endsAt);
+    }
+    const rules=JSON.parse(row.rules_json||'{}'),start=Date.parse(row.started_at);
+    const natural=Number.isFinite(start)&&rules.duration>0?start+rules.duration*1000:Infinity;
+    const manual=row.status==='archived'&&row.ended_at?Date.parse(row.ended_at):Infinity;
+    return Date.now()>=Math.min(natural,manual);
+  }
+  private restoreView(row:Row,user:User) {
+    if(row.owner_id!==user.id && (!row.participant_id || !this.snapshotMember(row.participant_id,user.id)))return fail(404,'比赛记录不存在或无权恢复');
+    if(!this.restoreEnded(row))return fail(409,'本场比赛尚未结束，不能恢复为补题');
+    const saved=JSON.parse(row.rules_json||'{}'),rules:Row={};
+    for(const key of ['duration','penalty_minutes','compile_penalty','freeze_minutes','scoring','score_policy','problem_max_scores','contest_format','problem_reveal_count'])if(saved[key]!==undefined)rules[key]=saved[key];
+    const room=row.room_id?this.room(row.room_id):undefined;
+    const recordView=(history:Row):Row[]=>JSON.parse(history.submissions_json).filter((s:Row)=>Date.parse(s.submittedAt)<=Date.now()).map((s:Row)=>({id:s.id,problem:s.problem,submittedAt:s.submittedAt,verdict:s.verdict,practice:s.practice===true,...(s.points===undefined?{}:{points:s.points})}));
+    // Explicit outbound allowlist: no judge credentials, local paths, source
+    // files, association passwords, or other teams' records can be restored.
+    const submissions=recordView(row),personal=this.store.one("SELECT * FROM histories WHERE owner_id=? AND contest_url=? AND mode='bt' AND room_id IS NULL AND id<>? ORDER BY created_at DESC,id DESC LIMIT 1",user.id,row.contest_url,row.id);
+    return {historyId:row.id,localId:row.local_id,isOwner:row.owner_id===user.id,roomId:row.room_id,participantId:row.participant_id,
+      participantType:row.participant_id?this.store.one('SELECT type FROM participants WHERE id=?',row.participant_id)?.type||'individual':'individual',
+      ...this.historyIdentity(row),mode:row.mode,startedAt:row.started_at,endedAt:room?roomTiming(room).endsAt:row.ended_at,
+      rank:historyRank(row,room,false),revision:row.revision,updatedAt:row.updated_at,
+      contest:{platform:row.platform,contestId:new URL(row.contest_url).pathname.split('/').pop(),url:row.contest_url,name:row.contest_name,problems:JSON.parse(row.problems_json),rules},submissions,
+      personalPractice:personal?{historyId:personal.id,localId:personal.local_id,revision:personal.revision,submissions:recordView(personal)}:null,serverNow:now()};
+  }
   private sanitizeSnapshot(body:Row) {
     const localId=text(body.localId,'本地记录标识',200), c=body.contest;
     if(!c || typeof c!=='object')return fail(400,'缺少比赛资料');
@@ -593,7 +624,9 @@ export class CloudService {
     }
     if(segments[0]==='history' && segments.length===2 && method==='GET') {const h=this.store.one('SELECT * FROM histories WHERE id=?',segments[1]);if(!h||!this.historyVisible(h,user,true))return fail(404,'比赛记录不存在或无权查看');return {data:this.historyView(h,true,user)};}
     if(segments[0]==='client') {
-      if(segments.length===4 && segments[1]==='rooms' && segments[3]==='authorize' && method==='POST') {const room=this.visibleRoom(segments[2],user),p=this.participant(room.id,user.id);if(!p)return fail(403,'请先接受 VP 参赛邀请');return {data:{room:{id:room.id,name:room.name,contestUrl:room.contest_url,startsAt:room.starts_at,freezeMinutes:room.freeze_minutes??0,scoringSystem:room.scoring_system||'ICPC'},participant:this.participantView(p),canSubmit:p.captain_id===user.id,serverNow:now()}};}
+      if(segments.length===4 && segments[1]==='rooms' && segments[3]==='authorize' && method==='POST') {const room=this.visibleRoom(segments[2],user),p=this.participant(room.id,user.id);if(!p)return fail(403,'请先接受 VP 参赛邀请');const history=this.store.one('SELECT * FROM histories WHERE participant_id=?',p.id);return {data:{room:{id:room.id,name:room.name,contestUrl:room.contest_url,startsAt:room.starts_at,freezeMinutes:room.freeze_minutes??0,scoringSystem:room.scoring_system||'ICPC'},participant:this.participantView(p),canSubmit:p.captain_id===user.id,canRestore:Boolean(history&&this.restoreEnded(history)),serverNow:now()}};}
+      if(segments.length===4 && segments[1]==='rooms' && segments[3]==='restore' && method==='POST') {const room=this.visibleRoom(segments[2],user),p=this.participant(room.id,user.id);if(!p)return fail(403,'请先接受 VP 参赛邀请');const history=this.store.one('SELECT * FROM histories WHERE participant_id=?',p.id);if(!history)return fail(404,'此参赛记录尚未同步到云端，请让队长先同步');return {data:this.restoreView(history,user)};}
+      if(path==='client/restore' && method==='POST') {const url=contestUrl(body.contestUrl),histories=this.store.all('SELECT h.* FROM histories h WHERE h.contest_url=? AND (h.owner_id=? OR EXISTS(SELECT 1 FROM participants p,json_each(p.members_json) m WHERE p.id=h.participant_id AND json_extract(m.value,\'$.id\')=?)) ORDER BY CASE WHEN h.mode=\'bt\' THEN 1 ELSE 0 END,h.created_at DESC,h.id DESC',url,user.id,user.id);const history=histories.find(h=>this.restoreEnded(h));return {data:{snapshot:history?this.restoreView(history,user):null}};}
       if(path==='client/sync' && method==='POST')return {data:this.sync(user,body)};
       if(path==='client/prints' && method==='POST') {
         const rid=text(body.roomId,'VP房间ID',80),p=this.participant(rid,user.id);if(!p)return fail(403,'你未报名此 VP，不能打印');

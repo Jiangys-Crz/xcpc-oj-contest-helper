@@ -24,7 +24,7 @@ HELP = """XCPC 比赛终端助手
 
 补题（支持牛客、CWNUOJ、Codeforces、Gym、QOJ）
   bt CONTEST_URL
-  submit A.cpp     在比赛或补题目录中提交
+  submit A.cpp [-y] 在比赛或补题目录中提交，-y 跳过确认
   优先恢复最新 VP/live 的原目录；补题不计时，Rank 固定，不显示公共统计区。
 
 云端账号与多人组队 VP
@@ -32,8 +32,8 @@ HELP = """XCPC 比赛终端助手
   xcpc logout             退出云端登录
   xcpc account            查看云端账号和同步状态
   vp https://vp.cwnupaa.com/vp/房间ID
-  printfile A.cpp         虚拟打印代码，仅本队成员可见，需英文确认
-  云端队伍参赛仅队长可本地创建和提交；比赛数据自动同步到线上。
+  printfile A.cpp [-y]    虚拟打印代码，仅本队成员可见，-y 跳过确认
+  赛时仅队长可本地创建和提交；赛后队员也可用房间链接同步记录并补题。
 
 历史记录
   vp history

@@ -102,7 +102,7 @@ function FirstContest({platform}:{platform:Platform}){
     <label className={styles.urlLabel}>原站比赛链接<input type="url" value={link} onChange={event=>setLink(event.target.value)} placeholder="例如 https://qoj.ac/contest/3617" autoComplete="off" spellCheck={false}/></label>
     {valid?<Command label="复制到终端执行" command={mode+' '+quoted}/>:<p className="install-note">{error||'从比赛网页的地址栏复制完整链接，粘贴到这里后会生成命令。'}</p>}
     <p>打开比赛后，程序会自动建立比赛名称文件夹。用编辑器在里面新建、编写并保存 <code>A.cpp</code>，再提交：</p>
-    <Command command="submit A.cpp" note="核对提交信息后，输入 y 并回车确认。"/>
+    <Command command="submit A.cpp" note="核对提交信息后输入 y 确认；submit A.cpp -y 可跳过确认输入。"/>
     <p>{platform==='windows'?'面板在当前终端显示。有下方命令区时直接输入；普通 PowerShell 先按 q 返回命令行，再提交。':'下方的命令区已经进入比赛文件夹，直接在这里输入提交命令。'}</p>
     <Picture kind="terminal" platform={platform}/>
   </>;

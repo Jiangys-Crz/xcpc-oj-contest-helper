@@ -49,7 +49,7 @@ def language_id(source: Path, requested: str | None) -> str:
     return selected
 
 
-def submit(source: Path, problem: str | None = None, language: str | None = None) -> str | None:
+def submit(source: Path, problem: str | None = None, language: str | None = None, *, assume_yes: bool = False) -> str | None:
     source = source.expanduser().resolve()
     if not source.is_file():
         raise VPError("Source file not found: " + str(source))
@@ -101,7 +101,8 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     lang = language_id(source, language)
     payload = {key: fields[key] for key in ("questionId", "tagId", "subTagId", "doneQuestionId")}
     payload.update(content=source.read_text(encoding="utf8"), language=lang, languageName=LANGUAGES[lang])
-    if not confirm_submission(source, config, label, LANGUAGES[lang], url, config_path):
+    if not confirm_submission(source, config, label, LANGUAGES[lang], url, config_path,
+                              **({'assume_yes': True} if assume_yes else {})):
         return None
     submitted_at = platform_now(api.url)
     if submitted_at < contest.original_start:
@@ -148,10 +149,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Submit to an existing Nowcoder contest participation")
     parser.add_argument("source", type=Path)
     parser.add_argument("-p", "--problem")
+    parser.add_argument("-y", "--yes", action="store_true", help="confirm the submission without prompting")
     parser.add_argument("-l", "--lang", help="Nowcoder compiler ID: 2 clang++, 38 g++, 11 Python3, 25 PyPy3, 4 Java")
     args = parser.parse_args()
     try:
-        submit(args.source, args.problem, args.lang)
+        submit(args.source, args.problem, args.lang, **({'assume_yes': True} if args.yes else {}))
     except (VPError, OSError, UnicodeError) as exc:
         print("submit: " + str(exc), file=sys.stderr)
         raise SystemExit(1) from None

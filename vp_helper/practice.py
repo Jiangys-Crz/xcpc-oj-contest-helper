@@ -198,13 +198,17 @@ def prepare(url: str) -> tuple[Path, dict]:
 
 
 class PracticeDashboard(Dashboard):
-    def __init__(self, contest, elapsed, records, message="", handle="", *, start_time=None):
+    def __init__(self, contest, elapsed, records, message="", handle="", *, start_time=None, restored=False, practice_rank='—'):
         # This summary is only a view of the practice workspace. Original
         # records remain practice and never enter a VP's saved score.
-        events = [Submission(str(s["id"]), "me", s["problem"], s["time"], s["verdict"]) for s in records]
+        events = [Submission(str(s["id"]), "me", s["problem"], s["time"], s["verdict"])
+                  for s in records if not restored or not s.get('practice')]
         me = score_practice_submissions(events, list(contest.problems), elapsed, name=handle or "me")
-        super().__init__(contest, elapsed, me, "—", "", None,
-                         [{**s, "practice": True} for s in records], message, practice=True, start_time=start_time)
+        if restored:
+            contest = Contest.from_dict(contest.to_dict())
+            contest.extra['practice'] = False
+        super().__init__(contest, elapsed, me, practice_rank, "", None,
+                         [dict(s) if restored else {**s, "practice": True} for s in records], message, practice=True, start_time=start_time)
 
 
 def monitor(path: Path) -> None:
@@ -241,9 +245,11 @@ def monitor(path: Path) -> None:
                     from .pending_results import seed_pending
                     seed_pending(api, contest.platform, state.get('submissions', []))
                     future = pool.submit(api.submissions, contest, state["start_time"])
-                records = submission_records(merge_records(path, state, []), "FINISHED")
+                from .cloud_restore import display_records
+                records = submission_records(display_records(state, merge_records(path, state, [])), "FINISHED")
                 dashboard = PracticeDashboard(contest, platform_now(state)-state["start_time"], records, message,
-                                              state.get("cloud", {}).get("label", state["handle"]), start_time=state['start_time'])
+                                              state.get("cloud", {}).get("label", state["handle"]), start_time=state['start_time'],
+                                              restored=bool(state.get('restored_submissions')), practice_rank=state.get('practice_rank', '—'))
                 from .identity import dashboard_identity
                 dashboard.participant_title, dashboard.participant_subtitle = dashboard_identity(state, path)
                 view.update(dashboard)

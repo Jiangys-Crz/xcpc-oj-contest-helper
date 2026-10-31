@@ -54,7 +54,7 @@ if len(sys.argv) == 2 and sys.argv[1] in ('-h', '--help'):
     sys.exit(0)
 
 if __name__ == '__main__' and (len(sys.argv) not in (2, 3)
-                              or (len(sys.argv) == 3 and sys.argv[2] != '-y')):
+                              or (len(sys.argv) == 3 and sys.argv[2] not in ('-y', '--yes'))):
     print('Usage: submit code.cpp [-y]')
     sys.exit(2)
 
@@ -197,8 +197,8 @@ def submit_with_session(web, url: str, lang: str, code: str, problem: str) -> No
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 2:
-        print('Usage: submit code.cpp')
+    if len(sys.argv) not in (2, 3):
+        print('Usage: submit code.cpp [-y]')
         sys.exit(-1)
 
     file_name = sys.argv[1]
@@ -223,7 +223,8 @@ if __name__ == '__main__':
     url = contest_base_url + '/problem/' + str(problem_id)
 
     from vp_helper.submission_confirmation import confirm_submission
-    if confirm_submission(code_path, contest, problem, lang, url, config_path):
+    if confirm_submission(code_path, contest, problem, lang, url, config_path,
+                          **({'assume_yes': True} if len(sys.argv) == 3 else {})):
         code = code_path.read_text('utf8')
         try:
             submit(url, lang, code, problem)

@@ -158,7 +158,7 @@ def account_status():
     kick_sync_process()
 
 
-def authorize(room_id, *, fresh=False):
+def authorize(room_id, *, fresh=False, allow_restore=False):
     saved = read_json(configuration_path())
     if fresh:
         if not saved.get('account') or not saved.get('password'):
@@ -177,7 +177,7 @@ def authorize(room_id, *, fresh=False):
                     saved = current
         except (ValueError, OSError):
             pass
-    if not result.get('canSubmit'):
+    if not result.get('canSubmit') and not (allow_restore and result.get('canRestore')):
         raise VPError('此房间以队伍参加，仅队长可以在本地创建 VP 和提交；队员可在网页查看榜单与虚拟打印。')
     return result, saved
 
@@ -225,8 +225,13 @@ def start_room(value):
     saved = read_json(configuration_path())
     if saved and saved.get('serverUrl') != base:
         raise VPError('此房间服务器与已登录账号不符，请先运行 xcpc login --server ' + base)
-    result, saved = authorize(room_id, fresh=True)
+    result, saved = authorize(room_id, fresh=True, allow_restore=True)
     room, participant = result['room'], result['participant']
+    if result.get('canRestore'):
+        from .cloud_restore import restore_room
+        path, state = restore_room(room_id, saved)
+        cli.open_state(path, state)
+        return
     from .parsing import contest_url
     platform, _, native_url = contest_url(room['contestUrl'])
     if platform not in ('cf','gym','qoj'):
@@ -315,7 +320,8 @@ def sync_payload(path, state):
     from .submission_results import judging_url
     contest = Contest.from_dict(state['contest'])
     duration = contest.rules.duration
-    records = [dict(item) for item in state.get('submissions', [])]
+    imported = {str(item['id']) for item in state.get('restored_submissions', [])} if state.get('cloud_restore') and state.get('mode') == 'practice' else set()
+    records = [dict(item) for item in state.get('submissions', []) if str(item['id']) not in imported]
     for event in records:
         event['practice'] = bool(state.get('mode') == 'practice' or event.get('practice') or event['time'] >= duration)
     def scoring_events(practice):

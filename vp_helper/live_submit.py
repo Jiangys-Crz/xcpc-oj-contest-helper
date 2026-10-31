@@ -20,7 +20,7 @@ from .storage import read_json, state_directory
 from .submit_context import submission_configuration
 from .submission_confirmation import confirm_submission
 from .submission_results import print_judging_link
-from .cf_forms import form_secrets, honor_response_cookies, safe_url, sign_form, submission_error, submission_target
+from .cf_forms import form_secrets, honor_response_cookies, safe_url, sign_form, submission_error, submission_target, submission_headers
 
 
 def compiler_id(form, source: Path, requested: str | None) -> str:
@@ -44,7 +44,7 @@ def compiler_id(form, source: Path, requested: str | None) -> str:
     raise VPError("No compatible compiler was found; use --lang with a compiler offered by this contest.")
 
 
-def submit(source: Path, problem: str | None = None, language: str | None = None) -> str | None:
+def submit(source: Path, problem: str | None = None, language: str | None = None, *, assume_yes=False) -> str | None:
     source = source.expanduser().resolve()
     if not source.is_file():
         raise VPError("Source file not found: " + str(source))
@@ -105,12 +105,13 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     base_path = urlsplit(api.url).path.rstrip("/")
     secrets = form_secrets(payload, api.web.session, target)
     language_name = form.select_one(f'select[name="programTypeId"] option[value="{payload["programTypeId"]}"]').get_text(' ', strip=True)
-    if not confirm_submission(source, config, label, language_name, safe_url(target), config_path):
+    confirmation = {'assume_yes': True} if assume_yes is True else {}
+    if not confirm_submission(source, config, label, language_name, safe_url(target), config_path, **confirmation):
         return None
     submitted_at = platform_now(api.url)
     try:
         # A POST is sent once. A timeout can mean the server accepted it.
-        response = api.web.session.post(target, data=payload, headers={'Origin': 'https://codeforces.com', 'Referer': safe_url(api.url + '/submit')}, timeout=(10, 40))
+        response = api.web.session.post(target, data=payload, headers=submission_headers(api.url + '/submit', target), timeout=(10, 40))
     except _RequestException:
         print_judging_link(api.url)
         raise VPError("Submission outcome unknown. Check Codeforces My submissions before retrying; the request was not repeated.") from None
@@ -119,7 +120,8 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
             or urlsplit(response.url).path.rstrip("/") != base_path + "/my"):
         print_judging_link(api.url)
         soup = BeautifulSoup(response.text, "html.parser")
-        raise VPError(submission_error(soup, response.status_code, response.url, secrets))
+        raise VPError(submission_error(soup, response.status_code, response.url, secrets,
+                                      headers=response.headers, attempted=True))
     sid = cf_submission_id(BeautifulSoup(response.text, "html.parser"), previous, api.id, label, api.handle)
     if sid is None:
         print("Codeforces returned My submissions; the new ID is not yet identifiable. Check the live panel before retrying.")
@@ -139,9 +141,10 @@ def main() -> None:
     parser.add_argument("source", type=Path)
     parser.add_argument("-p", "--problem")
     parser.add_argument("-l", "--lang", help="compiler ID or an unambiguous compiler name")
+    parser.add_argument('-y', '--yes', action='store_true', help='confirm the displayed submission without prompting')
     args = parser.parse_args()
     try:
-        submit(args.source, args.problem, args.lang)
+        submit(args.source, args.problem, args.lang, **({'assume_yes': True} if args.yes else {}))
     except (VPError, OSError, UnicodeError) as exc:
         print("submit: " + str(exc), file=sys.stderr)
         raise SystemExit(1) from None

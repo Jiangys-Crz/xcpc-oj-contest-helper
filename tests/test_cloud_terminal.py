@@ -325,7 +325,7 @@ class CloudTerminalTests(unittest.TestCase):
                 patch.object(vp,'prepare',return_value=(self.path,prepared)) as prepare, \
                 patch.object(cli,'open_state') as panel,patch('builtins.input',side_effect=AssertionError('No manual scheduling')):
             cloud.start_room('vp.cwnupaa.com/vp/room-1')
-        auth.assert_called_once_with('room-1',fresh=True)
+        auth.assert_called_once_with('room-1',fresh=True,allow_restore=True)
         self.assertEqual(prepare.call_args.args,('https://qoj.ac/contest/123',1793361600.0))
         self.assertEqual(prepare.call_args.kwargs['cloud']['label'],'队伍-甲、乙')
         panel.assert_called_once()

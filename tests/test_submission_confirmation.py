@@ -9,9 +9,21 @@ from unittest.mock import Mock, patch
 from bs4 import BeautifulSoup
 
 from vp_helper.submission_confirmation import confirm_submission
+from vp_helper.models import VPError
 
 
 class ConfirmationTests(unittest.TestCase):
+    def test_explicit_yes_keeps_preview_and_permission_check_without_reading_input(self):
+        config={'name':'Contest'}
+        with patch('vp_helper.cloud.check_submission') as access,patch('builtins.input') as decision,patch('sys.stdout',io.StringIO()) as output:
+            self.assertTrue(confirm_submission(Path('A.cpp'),config,'A','C++20','https://example.invalid/submit',assume_yes=True))
+        access.assert_called_once_with(config);decision.assert_not_called()
+        self.assertIn('Submission information:',output.getvalue());self.assertIn('y [-y]',output.getvalue())
+        with patch('vp_helper.cloud.check_submission',side_effect=VPError('denied')),patch('builtins.input') as decision:
+            with self.assertRaisesRegex(VPError,'denied'):
+                confirm_submission(Path('A.cpp'),config,'A','C++20','https://example.invalid/submit',assume_yes=True)
+        decision.assert_not_called()
+
     def test_blank_eof_and_interrupt_cancel_and_invalid_input_does_not_confirm(self):
         for answers in ([''],[EOFError()],[KeyboardInterrupt()],['invalid','n']):
             with patch('builtins.input',side_effect=answers),patch('sys.stdout',io.StringIO()):
