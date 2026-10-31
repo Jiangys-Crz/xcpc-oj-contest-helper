@@ -265,7 +265,9 @@ class RepairScriptTests(unittest.TestCase):
             legacy = legacy.replace(new, old)
         previous = fixed.replace(repair.STATISTICS_REPLACEMENTS[1][1],
                                  repair.STATISTICS_REPLACEMENTS[1][1].replace(', ratio=1', ''))
-        for original in (legacy, previous):
+        previous_single_line = fixed.replace(repair.STATISTICS_REPLACEMENTS[1][1],
+            '            table.add_column(problem if problem in visible else "?", justify="center", ratio=1)')
+        for original in (legacy, previous, previous_single_line):
             with self.subTest(previous_layout=original == previous), tempfile.TemporaryDirectory() as temporary:
                 path = Path(temporary) / "tui.py"
                 path.write_text(original)
