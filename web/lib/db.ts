@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS audit(id TEXT PRIMARY KEY, actor_id TEXT REFERENCES u
 `);
     if (!(this.db.prepare('PRAGMA table_info(histories)').all() as Row[]).some(c => c.name === 'status')) this.db.exec("ALTER TABLE histories ADD COLUMN status TEXT NOT NULL DEFAULT 'running'");
     const historyColumns = new Set((this.db.prepare('PRAGMA table_info(histories)').all() as Row[]).map(c => c.name));
-    for (const [column, definition] of Object.entries({rules_json:"TEXT NOT NULL DEFAULT '{}'",rank_source:"TEXT NOT NULL DEFAULT 'legacy'",freeze_rank:'TEXT',freeze_rank_at:'TEXT',freeze_rank_source:"TEXT NOT NULL DEFAULT 'legacy'",points:'REAL',freeze_points:'REAL',freeze_event_points:'REAL',freeze_cells_json:'TEXT',statistics_json:'TEXT',statistics_source:"TEXT NOT NULL DEFAULT 'legacy'",revealed_problems_json:'TEXT',statistics_at:'TEXT'})) {
+    for (const [column, definition] of Object.entries({participant_title:"TEXT NOT NULL DEFAULT ''",participant_subtitle:"TEXT NOT NULL DEFAULT ''",rules_json:"TEXT NOT NULL DEFAULT '{}'",rank_source:"TEXT NOT NULL DEFAULT 'legacy'",freeze_rank:'TEXT',freeze_rank_at:'TEXT',freeze_rank_source:"TEXT NOT NULL DEFAULT 'legacy'",points:'REAL',freeze_points:'REAL',freeze_event_points:'REAL',freeze_cells_json:'TEXT',statistics_json:'TEXT',statistics_source:"TEXT NOT NULL DEFAULT 'legacy'",revealed_problems_json:'TEXT',statistics_at:'TEXT'})) {
       if (!historyColumns.has(column)) this.db.exec(`ALTER TABLE histories ADD COLUMN ${column} ${definition}`);
     }
     this.transaction(() => {

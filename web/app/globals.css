@@ -155,4 +155,34 @@ body{background:#fff}.site-header{height:56px;position:sticky;top:0;z-index:40;b
 .judge-submissions{width:max-content;max-width:100%;margin-right:auto}
 .judge-submissions .judge-submissions-table.fit-table{width:max-content;max-width:100%;min-width:0;table-layout:auto;margin-inline:0}
 .judge-submissions .judge-submissions-table.fit-table th,.judge-submissions .judge-submissions-table.fit-table td{width:auto;padding:8px 10px}
-@media(max-width:760px){.compact-result-table{font-size:9px}.compact-score-columns>col:nth-child(1){width:7%!important}.compact-score-columns>col:nth-child(2){width:15%!important}.compact-score-columns>col:nth-child(3){width:9%!important}.compact-score-columns>col:nth-child(4){width:10%!important}.compact-practice-columns>col:first-child{width:20%!important}.compact-history-columns>col:nth-child(1){width:19%!important}.compact-history-columns>col:nth-child(2){width:5%!important}.compact-history-columns>col:nth-child(3){width:7%!important}.compact-history-columns>col:nth-child(4){width:3.5%!important}.compact-history-columns>col:nth-child(5){width:4%!important}.compact-history-columns>col:nth-child(6){width:6.5%!important}.compact-history-columns>col:last-child{width:5%!important}.compact-result-table.fit-table .problem-heading{padding-inline:1px;font-size:9px}.compact-result-table.fit-table .judge-problem-heading{padding-inline:1px}.compact-result-table.fit-table .judge-problem-heading>span{font-size:9px;border-width:0}.judge-submissions{width:100%}.judge-submissions .judge-submissions-table.fit-table{width:100%;table-layout:fixed}.judge-submissions .judge-submissions-table.fit-table th,.judge-submissions .judge-submissions-table.fit-table td{padding:8px 3px}}
+
+/* Complete contest tables share one layout in history and My submissions. */
+.table-fit-viewport{position:relative;width:100%;min-width:0;max-width:100%;overflow:hidden}
+.table-fit-content{transform-origin:top left;min-width:0}
+.table-fit-content>.fit-table{width:100%;max-width:none;min-width:0;table-layout:fixed;font-size:11px;margin-inline:0}
+.table-fit-content>.fit-table th{font-size:11px;white-space:nowrap;overflow-wrap:normal;word-break:normal;padding:9px 4px}
+.table-fit-content>.fit-table td{font-size:11px;padding:10px 4px}
+.table-fit-content>.fit-table .rank-value,.table-fit-content>.fit-table .metric-value{font-size:12px}
+.table-fit-content>.fit-table .problem-heading{font-size:14px;padding:8px 2px}
+.table-fit-content>.fit-table .problem-cell{font-size:10px;line-height:1.4;padding:8px 2px;overflow-wrap:normal;word-break:normal}
+.table-fit-content>.fit-table .problem-cell span,.table-fit-content>.fit-table .problem-cell small{font-size:10px;white-space:normal;overflow-wrap:normal;word-break:normal;line-height:1.4}
+.table-fit-content>.fit-table .judge-problem-heading>span{width:26px;height:26px;font-size:14px}
+.table-fit-content>.fit-table .judge-summary th{font-size:11px}
+.table-fit-content>.fit-table .judge-summary td{font-size:10px;padding:5px 2px}
+.participant-identity{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0;max-width:100%;line-height:1.5}
+.participant-identity strong{font-size:11px;font-weight:600;white-space:normal;overflow-wrap:anywhere;line-height:1.5}
+.participant-identity small{display:block;font-size:10px!important;color:#6b7280;white-space:normal;overflow-wrap:anywhere;line-height:1.5}
+.history-table .participant-identity{align-items:flex-start;margin-top:3px}
+.history-table .participant-identity strong,.history-table .participant-identity small{font-size:10px!important;font-weight:400}
+.table-fit-content .board-team a,.table-fit-content .judge-team-name strong{font-size:11px}
+.table-fit-content .board-team>.participant-identity+small,.table-fit-content .board-team>a+small{font-size:9px;margin-top:6px}
+.judge-submissions{width:100%;max-width:100%;margin-right:auto}
+.judge-submissions .table-fit-content>.judge-submissions-table.fit-table{width:100%;max-width:none;min-width:0;table-layout:fixed}
+.judge-submissions .table-fit-content>.fit-table th,.judge-submissions .table-fit-content>.fit-table td{padding:9px 7px}
+.judge-submissions .table-fit-content .time-value{white-space:nowrap;font-size:11px}
+.judge-submissions .table-fit-content .submission-link{font-size:11px;overflow-wrap:anywhere;white-space:normal}
+.judge-submissions .table-fit-content .judge-verdict{font-size:11px;white-space:normal;overflow-wrap:anywhere;word-break:normal}
+.judge-submissions .table-fit-content .stage-label{white-space:nowrap;font-size:10px}
+.judge-contest-detail>.page-heading{margin-top:5px}
+
+.table-fit-content>.fit-table .rank-value,.table-fit-content>.fit-table .metric-value{white-space:nowrap;overflow-wrap:normal}

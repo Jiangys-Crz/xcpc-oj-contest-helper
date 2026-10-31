@@ -242,8 +242,11 @@ def monitor(path: Path) -> None:
                     seed_pending(api, contest.platform, state.get('submissions', []))
                     future = pool.submit(api.submissions, contest, state["start_time"])
                 records = submission_records(merge_records(path, state, []), "FINISHED")
-                view.update(PracticeDashboard(contest, platform_now(state)-state["start_time"], records, message,
-                                             state.get("cloud", {}).get("label", state["handle"]), start_time=state['start_time']))
+                dashboard = PracticeDashboard(contest, platform_now(state)-state["start_time"], records, message,
+                                              state.get("cloud", {}).get("label", state["handle"]), start_time=state['start_time'])
+                from .identity import dashboard_identity
+                dashboard.participant_title, dashboard.participant_subtitle = dashboard_identity(state, path)
+                view.update(dashboard)
                 time.sleep(0.2)
 
 

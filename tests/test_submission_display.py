@@ -1,4 +1,5 @@
 import copy
+from collections import Counter
 import io
 import os
 import re
@@ -148,17 +149,66 @@ class SubmissionDisplayTests(unittest.TestCase):
                             continue  # The points/hacks headers require two more cells.
                         with self.subTest(name=name,width=width,engine=engine,view=type(view).__name__):
                             lines=self.fixed_lines(view,width,engine)
+                            rendered='\n'.join(lines)
+                            self.assertNotIn('Enlarge the score pane',rendered)
+                            self.assertNotIn('…',rendered)
+                            for label in contest.problems:
+                                self.assertRegex(rendered,r'(?m)(?:^|\s)'+label+r'(?:\s|$)')
+                            self.assertTrue(any('rank' in line and 'team' in line for line in lines))
                             if isinstance(view,LiveDashboard):
-                                # A 15-digit unbroken result cannot fit in
-                                # thirteen readable problem columns here.
-                                self.assertIn('Enlarge the score pane to view all problems.','\n'.join(lines))
-                                self.assertFalse(any('rank' in line and 'team' in line for line in lines))
-                                continue
-                            header=next(line for line in lines if 'rank' in line and 'team' in line)
-                            centers=[self.cell_center(header,label)[0] for label in contest.problems]
-                            gaps=[right-left for left,right in zip(centers,centers[1:])]
-                            self.assertLessEqual(max(gaps)-min(gaps),1)
+                                self.assertIn('123456789012345',rendered)
                             self.assertTrue(all(cell_len(line)<=width for line in lines))
+
+    def test_structured_participant_names_keep_native_scoring_identity_unchanged(self):
+        contest=self.contest()
+        me=score_submissions([],list(contest.problems),contest.rules,120,name='NativeHandle')
+        own={'party':{'members':[{'handle':'NativeHandle'}]},'rank':127,'points':0,
+             'penalty':128,'problemResults':[]}
+        for title,subtitle in (('Code-Zero','曹荣智、李明、王红'),('nickname-with-hyphens','曹荣智')):
+            views=[Dashboard(contest,120,me,'127','',None,[]),
+                   LiveDashboard(contest,120,{'own':own},[]),
+                   PracticeDashboard(contest,120,[],handle='NativeHandle')]
+            for view in views:
+                view.participant_title=title;view.participant_subtitle=subtitle
+                for width in (80,100,130,160):
+                    for engine in ('rich','curses'):
+                        with self.subTest(title=title,view=type(view).__name__,width=width,engine=engine):
+                            lines=self.fixed_lines(view,width,engine)
+                            self.assertIn(title,'\n'.join(lines))
+                            self.assertIn(subtitle,'\n'.join(lines))
+                            title_row=next(i for i,line in enumerate(lines) if title in line)
+                            subtitle_row=next(i for i,line in enumerate(lines) if subtitle in line)
+                            self.assertEqual(subtitle_row,title_row+1)
+                            self.assertNotIn('NativeHandle','\n'.join(lines))
+                            self.assertTrue(all(cell_len(line)<=width for line in lines))
+            self.assertEqual(me.name,'NativeHandle')
+            self.assertEqual(own['party']['members'][0]['handle'],'NativeHandle')
+
+    def test_active_scoreboard_shows_all_twenty_problems_and_summary_fields(self):
+        contest=self.contest()
+        contest.problems={chr(65+i):str(i) for i in range(20)}
+        records=[Submission(str(i*3+j),'me',label,120+j,verdict)
+                 for i,label in enumerate(contest.problems)
+                 for j,verdict in enumerate(('WRONG-ANSWER','WRONG-ANSWER'))]
+        me=score_submissions(records,list(contest.problems),contest.rules,600,name='NativeHandle')
+        me.known_penalty=128
+        own={'party':{'members':[{'handle':'NativeHandle'}]},'rank':127,'points':0,
+             'penalty':128,'problemResults':[{'display':'2 + 1 tries'} for _ in contest.problems]}
+        views=[Dashboard(contest,600,me,'127','',None,[]),
+               LiveDashboard(contest,600,{'own':own},[])]
+        for view in views:
+            view.participant_title='Example Team';view.participant_subtitle='Alice、Bob、Carol'
+            for width in (80,100,130,160):
+                for engine in ('rich','curses'):
+                    with self.subTest(view=type(view).__name__,width=width,engine=engine):
+                        lines=self.fixed_lines(view,width,engine);rendered='\n'.join(lines)
+                        for heading in ('rank','team','solved','penalty',*contest.problems):
+                            self.assertRegex(rendered,r'(?m)(?:^|\s)'+heading+r'(?:\s|$)')
+                        for value in ('127','128','Example Team','Alice、Bob、Carol'):
+                            self.assertIn(value,rendered)
+                        self.assertNotIn('…',rendered)
+                        self.assertTrue(all(cell_len(line)<=width for line in lines))
+                        self.assertGreaterEqual(rendered.count('tries'),20)
 
     def test_unavailable_awards_never_show_unknown_or_a_false_no_prize(self):
         contest=self.contest()
@@ -192,7 +242,7 @@ class SubmissionDisplayTests(unittest.TestCase):
                  Submission('5','me','D',60,'WRONG-ANSWER'),Submission('6','me','D',120,'PENDING')]
         me=score_submissions(records,list(contest.problems),contest.rules,18000,name='Example Team')
         practice=[{'id':'7','problem':'E','time':19000,'verdict':'CORRECT','practice':True}]
-        for width in (130,156,160):
+        for width in (80,100,130,156,160):
             with self.subTest(width=width):
                 view=Dashboard(contest,19000,me,'3','Unknown',None,practice)
                 console=Console(width=width,color_system='truecolor',legacy_windows=False)
@@ -236,7 +286,7 @@ class SubmissionDisplayTests(unittest.TestCase):
         self.assertTrue(view.input())
         callback.assert_called_once_with()
 
-    def test_impossibly_narrow_score_pane_prompts_instead_of_hiding_problems(self):
+    def test_very_narrow_score_pane_shows_metadata_and_all_problem_bands(self):
         contest=self.contest()
         me=score_submissions([],list(contest.problems),contest.rules,120,name='tester')
         own={'party':{'members':[{'handle':'tester'}]},'rank':1,'points':0,'penalty':0,
@@ -244,8 +294,11 @@ class SubmissionDisplayTests(unittest.TestCase):
         for view in (Dashboard(contest,120,me,'1','',None,[]),LiveDashboard(contest,120,{'own':own},[])):
             for engine in ('rich','curses'):
                 lines=self.fixed_lines(view,45,engine)
-                self.assertIn('Enlarge the score pane to view all problems.','\n'.join(lines))
-                self.assertFalse(any('rank' in line and 'team' in line for line in lines))
+                rendered='\n'.join(lines)
+                self.assertNotIn('Enlarge the score pane',rendered)
+                for heading in ('rank','team','solved','penalty',*contest.problems):
+                    self.assertRegex(rendered,r'(?m)(?:^|\s)'+heading+r'(?:\s|$)')
+                self.assertTrue(all(cell_len(line)<=45 for line in lines))
 
     def test_absolute_time_matches_vp_live_bt_and_history_even_after_rebase(self):
         contest = self.contest()
@@ -272,6 +325,60 @@ class SubmissionDisplayTests(unittest.TestCase):
         self.assertIn('#' + 'a'*24, output)
         self.assertIn('IDLENESS-LIMIT', output)
         self.assertEqual(len([line for line in output.splitlines() if line.strip()]), 1)
+
+    def test_narrow_submission_columns_fold_full_ids_timestamps_and_verdicts(self):
+        contest=self.contest()
+        records=[{'id':'a'*24,'problem':'A','time':65,'verdict':'IDLENESS-LIMIT'},
+                 {'id':'396538368','problem':'M','time':125,'verdict':'WRONG-ANSWER'}]
+        view=LiveDashboard(contest,120,{},records)
+        with patch.dict(os.environ,{'TZ':'Asia/Shanghai'}):
+            for width in (45,80,100,130,160):
+                with self.subTest(width=width):
+                    renderer=TerminalDashboard()
+                    lines=[''.join(segment.text for segment in line)
+                           for line in renderer._lines(view.records(),width)]
+                    rendered='\n'.join(lines)
+                    # Wrapping may put segments on separate lines, but cannot
+                    # replace any of the original field text with an ellipsis.
+                    self.assertNotIn('…',rendered)
+                    expected=''.join(value.plain for row in Dashboard.record_rows(view) for value in row)
+                    self.assertEqual(Counter(re.sub(r'\s','',rendered)),Counter(re.sub(r'\s','',expected)))
+                    if width>=80:
+                        for value in ('#'+'a'*24,'#396538368','2025-01-01 08:01:05',
+                                      '2025-01-01 08:02:05','IDLENESS-LIMIT','WRONG-ANSWER'):
+                            self.assertIn(value,rendered)
+                    self.assertTrue(all(cell_len(line)<=width for line in lines))
+                    header=self.render(Dashboard.record_heading(width,Dashboard.record_rows(view)),width)
+                    for name in ('problem','submission','time','result'):
+                        self.assertIn(name,header)
+
+    def test_small_terminal_scrolls_all_problem_bands_instead_of_discarding_them(self):
+        contest=self.contest();contest.problems={chr(65+i):str(i) for i in range(20)}
+        records=[Submission(str(i),'me',label,120,'WRONG-ANSWER')
+                 for i,label in enumerate(contest.problems)]
+        me=score_submissions(records,list(contest.problems),contest.rules,600,name='NativeHandle')
+        view=Dashboard(contest,600,me,'127','',None,
+                       [{'id':'396538368','problem':'T','time':125,'verdict':'WRONG-ANSWER'}],
+                       participant_title='Example Team',participant_subtitle='Alice、Bob、Carol')
+        for platform in ('darwin','linux','win32'):
+            with patch('sys.platform',platform),self.subTest(platform=platform):
+                renderer=TerminalDashboard();renderer.screen=Mock();renderer.curses=Mock()
+                renderer.screen.getmaxyx.return_value=(16,80)
+                rendered=[]
+                renderer._draw=lambda row,segments,width,left=0: rendered.append((row,''.join(s.text for s in segments)))
+                renderer.update(view)
+                complete=renderer._lines(view.fixed(76),76)+renderer._lines(view.records(),76)
+                self.assertEqual(renderer.total_lines,len(complete))
+                self.assertGreater(renderer.total_lines,renderer.page_size)
+                visible=[]
+                for offset in range(0,renderer.total_lines,renderer.page_size):
+                    renderer.offset=offset;rendered.clear();renderer.update(view)
+                    visible.extend(line for row,line in rendered if row<14)
+                output='\n'.join(visible)
+                for name in ('rank','team','solved','penalty',*contest.problems):
+                    self.assertRegex(output,r'(?m)(?:^|\s)'+name+r'(?:\s|$)')
+                self.assertIn('396538368',output)
+                self.assertTrue(all(cell_len(line)<=76 for line in visible))
 
     def test_result_links_are_platform_records_and_invalid_ids_use_list(self):
         cases = [('https://codeforces.com/contest/123', '77', 'https://codeforces.com/contest/123/submission/77', '/my'),

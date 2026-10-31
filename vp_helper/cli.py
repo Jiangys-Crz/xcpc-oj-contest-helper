@@ -424,6 +424,8 @@ def start(url: str, *, live: bool = False, practice: bool = False, resume: bool 
 def open_state(path: Path, state: dict) -> None:
     from .cloud import ensure_access
     ensure_access(state)
+    from .identity import persist_display_identity
+    persist_display_identity(path, state)
     if not Path(state['directory']).is_dir():
         config = load_account(state['contest']['platform'], live=True)
         path, state = restore_contest(path, read_json(path), config)
@@ -473,6 +475,12 @@ def poll(api, contest: Contest, elapsed: float, refresh_reference: bool = False)
 
 def monitor(path: Path) -> None:
     from .accounts import same_handle
+    from .identity import dashboard_identity, persist_display_identity
+    identity_state = read_json(path)
+    if identity_state.get('cloud') and 'participantTitle' not in identity_state['cloud']:
+        from .cloud import ensure_access
+        ensure_access(identity_state)
+        persist_display_identity(path, identity_state)
     # A renamed workspace keeps the same tmux cwd. Repair an old daemon's
     # stale directory field when it is relaunched after an application update.
     here = Path.cwd()
@@ -525,9 +533,11 @@ def monitor(path: Path) -> None:
                         retry_at = time.monotonic() + 15
                     continue
                 c = Contest.from_dict(waiting["contest"])
-                view.update(display(c, -max(0, remaining), score_submissions([], list(c.problems), c.rules, 0,
-                                                                          name=waiting["handle"]),
-                                    "—", "", None, [], error or "Waiting for scheduled start"))
+                dashboard = display(c, -max(0, remaining), score_submissions([], list(c.problems), c.rules, 0,
+                                                                           name=waiting["handle"]),
+                                    "—", "", None, [], error or "Waiting for scheduled start")
+                dashboard.participant_title, dashboard.participant_subtitle = dashboard_identity(waiting, path)
+                view.update(dashboard)
                 time.sleep(0.2)
         if waiting.get("status") in ("cancelled", "failed"):
             return
@@ -699,6 +709,7 @@ def monitor(path: Path) -> None:
                     dashboard = display(contest, max(0, scoring_elapsed) if interrupted else elapsed,
                                         private, shown_rank, prize, stats, records, shown_message)
                     dashboard.practice = state["practice_view"]
+                    dashboard.participant_title, dashboard.participant_subtitle = dashboard_identity(state, path)
                     dashboard.start_time = state['start_time']
                     dashboard.revealed = revealed
                     view.update(dashboard)

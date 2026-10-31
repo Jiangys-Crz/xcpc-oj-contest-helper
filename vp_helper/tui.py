@@ -53,23 +53,33 @@ class ProblemBox:
             yield Segment.line()
 
 
-def score_table(columns, problems, rows, width, *, separate_summary=False):
+def score_table(columns, problems, rows, width, *, separate_summary=False,
+                _minimum_problem_width=1, _active=None, _allow_bands=True, _minimum_box_height=0):
+    problems = list(problems)
     # Keep summary fields at their content width; share the rest among problems.
     def content_width(value):
         text = value if isinstance(value, Text) else Text.from_markup(str(value))
         return max((cell_len(line) for line in text.plain.splitlines()), default=0)
 
     minimum = [content_width(label) for label in columns]
+    if 'team' in columns and rows:
+        index = columns.index('team')
+        value = rows[0][index]
+        text = value.plain if isinstance(value, Text) else str(value)
+        if '\n' in text:
+            minimum[index] = max(minimum[index], min(24, max(4, width // 3),
+                                                    max(cell_len(line) for line in text.splitlines())))
     sizes = [max([minimum[index]] + [content_width(row[index]) for row in rows])
              for index in range(len(columns))]
     count = len(columns) + len(problems)
-    problem_minimum = max((content_width(label) for label in problems), default=1)
+    problem_minimum = max(_minimum_problem_width, max((content_width(label) for label in problems), default=1))
     # A narrow untried table can stay compact. Once results are present, keep
     # complete words ("tries") and times intact rather than splitting them
     # into fragments such as "trie" / "s".
     first_cells = rows[0][len(columns):] if rows else []
-    active = any((cell.plain if isinstance(cell, Text) else str(cell)).strip() not in ("", "—")
-                 for cell in first_cells)
+    active = (_active if _active is not None else
+              any((cell.plain if isinstance(cell, Text) else str(cell)).strip() not in ("", "—")
+                  for cell in first_cells))
     if active:
         problem_minimum = max(problem_minimum, max((cell_len(word)
                               for cell in first_cells
@@ -78,7 +88,12 @@ def score_table(columns, problems, rows, width, *, separate_summary=False):
     padding = 1 if sum(sizes) + problem_space + 2 * count <= width else 0
     available = width - problem_space - (2 * count if padding else count - 1)
     if available < sum(minimum):
-        return Text("Enlarge the score pane to view all problems.", style="#555555")
+        if _allow_bands and problems:
+            return score_bands(columns, problems, rows, width, problem_minimum, active)
+        # Every label/value stays visible even when a terminal cannot fit a
+        # conventional row. Rich folds the stacked fields instead of clipping.
+        return Group(*(Text(str(label) + ': ' + str(value), overflow='fold')
+                       for row in rows for label, value in zip([*columns, *problems], row)))
     excess = max(0, sum(sizes) - available)
     # A long team name must not hide the problem labels in a narrow pane.
     order = sorted(range(len(columns)), key=lambda index: columns[index] != "team")
@@ -90,8 +105,8 @@ def score_table(columns, problems, rows, width, *, separate_summary=False):
                   header_style="bold black on #eeeeee", border_style="#bbbbbb",
                   show_edge=False, expand=bool(problems), collapse_padding=True)
     for label, size in zip(columns, sizes):
-        table.add_column(label, width=size, justify="center", no_wrap=True)
-    if padding:
+        table.add_column(label, width=size, justify="center", no_wrap=False, overflow='fold')
+    if padding and columns:
         # Some Rich versions omit the leading collapsed padding when measuring
         # fixed columns, although they still draw it. Keep that edge in budget.
         table.columns[0].width += max(0, 2 * padding - table._get_padding_width(0))
@@ -103,15 +118,50 @@ def score_table(columns, problems, rows, width, *, separate_summary=False):
         problem_width = min(widths[index] - table._get_padding_width(index)
                             for index in range(len(columns), count))
         if problem_width < problem_minimum:
-            return Text("Enlarge the score pane to view all problems.", style="#555555")
-        height = max(len((cell if isinstance(cell, Text) else Text(str(cell))).wrap(
+            if _allow_bands:
+                return score_bands(columns, problems, rows, width, problem_minimum, active)
+        height = max(_minimum_box_height, max(len((cell if isinstance(cell, Text) else Text(str(cell))).wrap(
                          layout, problem_width, overflow="fold", no_wrap=False))
-                     for cell in first_cells)
+                     for cell in first_cells))
         rows = [[*rows[0][:len(columns)], *(ProblemBox(cell if isinstance(cell, Text) else Text(str(cell)),
                                                        problem_width, height) for cell in first_cells)], *rows[1:]]
     for index, row in enumerate(rows):
         table.add_row(*row, end_section=separate_summary and index == 0)
     return table
+
+
+def score_bands(columns, problems, rows, width, problem_minimum, active):
+    """Use full-width metadata and consecutive problem bands on small consoles."""
+    metadata = score_table(columns, [], [rows[0][:len(columns)]], width,
+                           _allow_bands=False) if columns else None
+    label_width = len('submitted') if len(rows) > 1 else 0
+    capacity = max(1, (width - label_width - (1 if label_width else 0)) // (problem_minimum + 1))
+    capacity = min(capacity, len(problems))
+    layout = Console(width=width, legacy_windows=False)
+    box_height = max((len((cell if isinstance(cell, Text) else Text(str(cell))).wrap(
+                          layout, problem_minimum, overflow='fold', no_wrap=False))
+                      for cell in rows[0][len(columns):]), default=1)
+    pieces = [metadata, Text('')] if metadata is not None else []
+    for start in range(0, len(problems), capacity):
+        selected = problems[start:start+capacity]
+        labels = [*selected, *([''] * (capacity-len(selected)))]
+        band_rows = []
+        for index, row in enumerate(rows):
+            cells = row[len(columns)+start:len(columns)+start+len(selected)]
+            cells = [*cells, *([Text('')] * (capacity-len(selected)))]
+            if label_width:
+                label = '' if index == 0 else next((str(item) for item in row[:len(columns)] if str(item)), '')
+                cells = [label, *cells]
+            band_rows.append(cells)
+        pieces.append(score_table(['public'] if label_width else [], labels, band_rows, width,
+                                  separate_summary=True, _minimum_problem_width=problem_minimum,
+                                  _active=active, _allow_bands=False, _minimum_box_height=box_height))
+    return Group(*pieces)
+
+
+def participant_text(title: str, subtitle: str, fallback: str) -> Text:
+    return Text(title + ('\n' + subtitle if subtitle else '') if title else fallback,
+                overflow='fold', no_wrap=False)
 
 
 def clock(value: float) -> str:
@@ -166,14 +216,16 @@ class Dashboard:
     revealed: frozenset[str] | None = None
     practice: bool = False
     start_time: float | None = None
+    participant_title: str = ''
+    participant_subtitle: str = ''
 
     def fixed(self, width: int):
         # Equal side columns keep the contest title at the screen's center.
         sides = min(30, max(19, (width - 8) // 3))
         heading = Table.grid(expand=True, padding=0)
         heading.style = "default"
-        heading.add_column(width=sides, no_wrap=True)
-        heading.add_column(ratio=1, justify="center", no_wrap=True, overflow="ellipsis")
+        heading.add_column(width=sides, no_wrap=False, overflow='fold')
+        heading.add_column(ratio=1, justify="center", no_wrap=False, overflow="fold")
         heading.add_column(width=sides, justify="right", no_wrap=True)
         prize = {"Gold": "Gold Prize", "Silver": "Silver Prize", "Bronze": "Bronze Prize"}.get(self.prize, "")
         if self.prize == "None" and self.contest.medals is not None:
@@ -217,7 +269,8 @@ class Dashboard:
             else:
                 cells.append(Text(tries))
         columns = ["rank", "team"]
-        values = [Text(result, style="bold default"), self.me.name]
+        values = [Text(result, style="bold default"),
+                  participant_text(self.participant_title, self.participant_subtitle, self.me.name)]
         if not self.practice:
             columns.append('solved' if scoring == 'ICPC' else 'points')
             values.append(str(self.me.solved) if scoring == 'ICPC' else
@@ -232,8 +285,7 @@ class Dashboard:
                                                    for p in self.contest.problems)])
         table = score_table(columns, self.contest.problems,
                             rows, width, separate_summary=True)
-        labels = self._record_table()
-        labels.add_row("problem", "submission", "time", "result", style="bold black on #eeeeee")
+        labels = self.record_heading(width, self.record_rows(self))
         if not self.practice and self.contest.rules.problem_reveal_count:
             return Group(heading, Text(" "), table, self.public_statistics(), Text(" "), labels)
         return Group(heading, Text(" "), table, Text(" "), labels)
@@ -263,25 +315,45 @@ class Dashboard:
         return Group(Text(caption, style="#555555"), table)
 
     @staticmethod
-    def _record_table():
-        results = Table.grid(expand=True, padding=(0, 2))
-        results.add_column(width=10, justify="center", no_wrap=True)
-        results.add_column(width=26, justify="center", no_wrap=True)
-        results.add_column(width=21, justify="center", no_wrap=True)
-        results.add_column(ratio=1, min_width=20, no_wrap=True)
+    def _record_table(width=160, rows=None):
+        rows = rows or []
+        desired = [max([minimum] + [max((cell_len(line) for line in row[index].plain.splitlines()), default=0)
+                                    for row in rows]) for index, minimum in enumerate((7, 10, 19, 20))]
+        minimum = [7, 10, 10, 6]
+        padding = 1 if width >= sum(minimum) + 8 else 0
+        available = max(4, width - 8 * padding)
+        for index in (3, 1, 0, 2):
+            excess = max(0, sum(desired)-available)
+            desired[index] -= min(excess, desired[index]-minimum[index])
+        results = Table.grid(expand=True, padding=(0, padding))
+        for index, size in enumerate(desired):
+            results.add_column(width=size, justify='left' if index == 3 else 'center',
+                               no_wrap=False, overflow='fold')
         return results
 
+    @staticmethod
+    def record_heading(width, rows=None):
+        if width < 40:
+            return Text('problem · submission · time · result', style='bold black on #eeeeee', overflow='fold')
+        table = Dashboard._record_table(width, rows)
+        table.add_row('problem', 'submission', 'time', 'result', style='bold black on #eeeeee')
+        return table
+
     def records(self):
-        results = self._record_table()
-        for item in self.submissions:
+        return SubmissionRecords(self)
+
+    @staticmethod
+    def record_rows(view):
+        rows = []
+        for item in view.submissions:
             v = item["verdict"]
             color = "#008000" if v == "CORRECT" else "#b8860b" if v == "PRETESTS-PASSED" else "#808080" if v in UNRESOLVED_VERDICTS | NON_ATTEMPT_VERDICTS | {"PENDING", "TOO-LATE"} else "#ff0000"
             text = "RESULT UNAVAILABLE" if v == "UNAVAILABLE" else v
             if item.get('practice'):
                 text += ' · practice'
-            started = getattr(self, 'start_time', None)
+            started = getattr(view, 'start_time', None)
             if started is None:
-                started = getattr(getattr(self, 'contest', None), 'original_start', None)
+                started = getattr(getattr(view, 'contest', None), 'original_start', None)
             submitted_at = item.get('submitted_at')
             if submitted_at is None and isinstance(started, (int, float)):
                 submitted_at = started + item['time']
@@ -289,14 +361,31 @@ class Dashboard:
                 stamp = datetime.fromtimestamp(submitted_at, user_zone()).strftime('%Y-%m-%d %H:%M:%S') if submitted_at is not None else '—'
             except (ValueError, OverflowError, OSError, TypeError):
                 stamp = '—'
-            results.add_row(Text(item["problem"]), Text("#" + item["id"]),
-                            Text(stamp), Text(text, style=color))
-        if not self.submissions:
-            results.add_row(Text("No submissions yet", style="#555555"))
-        return results
+            rows.append([Text(item["problem"]), Text("#" + item["id"]), Text(stamp), Text(text, style=color)])
+        return rows
 
     def __rich_console__(self, console, options):
         yield Group(self.fixed(options.max_width), self.records(), Text(self.message, style="#555555"))
+
+
+@dataclass
+class SubmissionRecords:
+    view: object
+
+    def __rich_console__(self, console, options):
+        rows = Dashboard.record_rows(self.view)
+        if not rows:
+            yield Text('No submissions yet', style='#555555')
+        elif options.max_width < 40:
+            for row in rows:
+                for label, value in zip(('problem', 'submission', 'time', 'result'), row):
+                    yield Text(label + ': ') + value
+                yield Text('')
+        else:
+            table = Dashboard._record_table(options.max_width, rows)
+            for row in rows:
+                table.add_row(*row)
+            yield table
 
 
 def display(contest: Contest, elapsed: float, me: TeamScore, rank: str,
@@ -315,6 +404,8 @@ class LiveDashboard:
     practice: bool = False
     practice_rank: str | None = None
     participant_label: str = ""
+    participant_title: str = ''
+    participant_subtitle: str = ''
 
     _record_table = staticmethod(Dashboard._record_table)
     records = Dashboard.records
@@ -388,7 +479,8 @@ class LiveDashboard:
         name = self.participant_label or name
         value = (str(int(own["points"])) if scoring == "ICPC" else f"{own['points']:g}") if own else "—"
         rank = self.practice_rank if self.practice else str(own['rank']) if own else '—'
-        values = [str(rank).lstrip('=') if rank is not None else '—', Text(name)]
+        values = [str(rank).lstrip('=') if rank is not None else '—',
+                  participant_text(self.participant_title, self.participant_subtitle, name)]
         if not self.practice:
             values.append(value)
         if not self.practice and scoring == "ICPC":
@@ -412,8 +504,7 @@ class LiveDashboard:
             note = "Your participation is absent from the public official standings; points and rank unavailable."
         if self.practice:
             note = ""
-        labels = self._record_table()
-        labels.add_row("problem", "submission", "time", "result", style="bold black on #eeeeee")
+        labels = Dashboard.record_heading(width, Dashboard.record_rows(self))
         return Group(title, heading, table, Text(note, style="#666666"), Text(" "), labels)
 
 
@@ -560,24 +651,32 @@ class TerminalDashboard:
             self._draw(0, self._lines(Text("Enlarge the score pane to view submissions."), width)[0], width)
             self.screen.refresh()
             return
-        content_width = min(160, width - 4)
+        content_width = width - 4
         left = (width - content_width) // 2
         fixed = self._lines(dashboard.fixed(content_width), content_width)
         records = self._lines(dashboard.records(), content_width)
-        self.page_size = max(1, height - len(fixed) - 2)
-        self.total_lines = len(records)
-        self.offset = min(self.offset, max(0, len(records) - self.page_size))
-        for row, segments in enumerate(fixed[:height - 2]):
-            self._draw(row, segments, content_width, left)
-        for row, segments in enumerate(records[self.offset:self.offset + self.page_size], start=len(fixed)):
+        # A responsive scoreboard can use several problem bands on a narrow
+        # screen. Scroll the whole view in that case; never cut off its last
+        # fields to make room for the submissions area.
+        scroll_all = len(fixed) > height - 5
+        scrollable = [*fixed, *records] if scroll_all else records
+        start = 0 if scroll_all else len(fixed)
+        self.page_size = max(1, height - start - 2)
+        self.total_lines = len(scrollable)
+        self.offset = min(self.offset, max(0, self.total_lines - self.page_size))
+        if not scroll_all:
+            for row, segments in enumerate(fixed):
+                self._draw(row, segments, content_width, left)
+        for row, segments in enumerate(scrollable[self.offset:self.offset + self.page_size], start=start):
             if row < height - 2:
                 self._draw(row, segments, content_width, left)
-        last = min(self.offset + self.page_size, len(dashboard.submissions))
-        first = self.offset + 1 if dashboard.submissions else 0
+        last = min(self.offset + self.page_size, self.total_lines)
+        first = self.offset + 1 if self.total_lines else 0
         footer = Table.grid(expand=True, padding=(0, 1))
         footer.add_column(ratio=1, no_wrap=True, overflow="ellipsis")
         footer.add_column(justify="right", no_wrap=True)
-        footer.add_row(Text(dashboard.message, style="#666666"), Text(f"{first}–{last} / {len(dashboard.submissions)}", style="#666666"))
+        footer.add_row(Text(dashboard.message, style="#666666"),
+                       Text(f"{len(dashboard.submissions)} submissions · {first}–{last} / {self.total_lines} lines", style="#666666"))
         self._draw(height - 2, self._lines(footer, content_width)[0], content_width, left)
         keys = Text("q return · ↑/↓ scroll · PgUp/PgDn · Home/End", style="#999999", no_wrap=True, overflow="ellipsis")
         self._draw(height - 1, self._lines(keys, content_width)[0], content_width, left)

@@ -191,6 +191,9 @@ def ensure_access(state, *, fresh=False):
         raise VPError('当前云端账号与本场 VP 不符，请运行 xcpc login 切回原队长或参赛账号。')
     result, saved = authorize(context['roomId'], fresh=fresh)
     _check_room_context(state, result['room'], result['participant'])
+    from .identity import participant_identity
+    title, subtitle = participant_identity(result['participant'])
+    context.update(participantTitle=title, participantSubtitle=subtitle)
 
 
 def _check_room_context(state, room, participant):
@@ -240,6 +243,9 @@ def start_room(value):
                'label':participant['label'], 'startsAt':room['startsAt'],
                'freezeMinutes':room.get('freezeMinutes', 0), 'scoringSystem':room.get('scoringSystem', 'ICPC'),
                'captainId':str(participant['captainId']), 'type':participant['type']}
+    from .identity import participant_identity
+    title, subtitle = participant_identity(participant)
+    context.update(participantTitle=title, participantSubtitle=subtitle)
     if previous:
         path, state = previous
         # Native activation uses the same locks. Re-read before rebinding so a

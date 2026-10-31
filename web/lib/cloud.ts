@@ -75,6 +75,16 @@ function profile(row: Row, full = false): User {
     numberid:row.numberid,email:full?row.email:'',role:row.role};
 }
 const labelUser = (u: User) => `${u.username || u.useraccount}-${u.realname || u.username || u.useraccount}`;
+type ParticipantIdentity = {participantTitle:string;participantSubtitle:string};
+const userIdentity = (user:Pick<User,'username'|'realname'|'useraccount'>):ParticipantIdentity => ({participantTitle:user.username||user.useraccount,participantSubtitle:user.realname||''});
+function legacyIdentity(label:string,user:Pick<User,'username'|'realname'|'useraccount'>):ParticipantIdentity {
+  const suffix='-'+(user.realname||user.username||user.useraccount);
+  // Nicknames and team names may contain hyphens. A legacy label can only be
+  // separated when its entire saved real-name suffix is still identifiable.
+  return label.endsWith(suffix) && label.length>suffix.length
+    ? {participantTitle:label.slice(0,-suffix.length),participantSubtitle:user.realname||''}
+    : {participantTitle:label,participantSubtitle:''};
+}
 const pendingVerdicts = new Set(['PENDING','TESTING','RUNNING','QUEUED','JUDGING','COMPILING','WAITING','WAITING-FOR-JUDGING','WAITING-FOR-TESTING']);
 export type CloudOptions = { path?:string; adminAccount?:string;adminPassword?:string; externalAppKey?:string;externalBaseUrl?:string;publicUrl?:string; fetch?:typeof fetch };
 
@@ -177,7 +187,20 @@ export class CloudService {
     if(body.participantId!==undefined && text(body.participantId,'参赛身份',80)!==participant.id)return fail(409,'参赛身份已改变，请重新运行房间 VP 命令');
     if(body.roomStartsAt!==undefined && iso(body.roomStartsAt,'房间开始时间')!==room.starts_at)return fail(409,'VP 房间开始时间已改变，请重新运行房间 VP 命令');
   }
-  private participantView(row:Row) { return {id:row.id,type:row.type,userId:row.user_id,teamId:row.team_id,captainId:row.captain_id,label:row.label,members:JSON.parse(row.members_json)}; }
+  private participantIdentity(row:Row):ParticipantIdentity {
+    const members:User[]=JSON.parse(row.members_json);
+    if(row.type!=='team')return members[0]?userIdentity(members[0]):{participantTitle:row.label,participantSubtitle:''};
+    const names=members.map(member=>member.realname||member.username||member.useraccount).join('、');
+    const suffix='-'+names;
+    return {participantTitle:names && row.label.endsWith(suffix) && row.label.length>suffix.length?row.label.slice(0,-suffix.length):row.label,participantSubtitle:names};
+  }
+  private historyIdentity(row:Row):ParticipantIdentity {
+    const participant=row.participant_id?this.store.one('SELECT * FROM participants WHERE id=?',row.participant_id):undefined;
+    if(participant)return this.participantIdentity(participant);
+    if(row.participant_title)return {participantTitle:row.participant_title,participantSubtitle:row.participant_subtitle||''};
+    return legacyIdentity(row.participant_label,this.user(row.owner_id));
+  }
+  private participantView(row:Row) { return {id:row.id,type:row.type,userId:row.user_id,teamId:row.team_id,captainId:row.captain_id,label:row.label,...this.participantIdentity(row),members:JSON.parse(row.members_json)}; }
   private room(roomId:string):Row { const row=this.store.one('SELECT r.*,rules.duration_seconds,rules.freeze_minutes,rules.scoring_system FROM rooms r LEFT JOIN room_rules rules ON rules.room_id=r.id WHERE r.id=?',roomId);if(!row)return fail(404,'VP 房间不存在');return row; }
   private visibleRoom(roomId:string,user:User):Row {const room=this.room(roomId);if(room.creator_id!==user.id && !this.participant(roomId,user.id))return fail(403,'你尚未接受此 VP 房间的邀请');return room;}
   private manager(roomId:string,user:User):Row {const room=this.room(roomId);if(room.creator_id!==user.id)return fail(403,'只有创建者可以管理 VP 房间');return room;}
@@ -295,7 +318,7 @@ export class CloudService {
     const rules=JSON.parse(row.rules_json||'{}');
     if(frozen && rules.score_policy!=='subtasks' && filtered?.points!==undefined && row.freeze_points!==null && row.freeze_points!==undefined && row.freeze_event_points!==null && row.freeze_event_points!==undefined)filtered.points+=row.freeze_points-row.freeze_event_points;
     else if(frozen && filtered && (filtered.points===undefined || row.freeze_event_points===null) && row.freeze_points!==null && row.freeze_points!==undefined)filtered.points=row.freeze_points;
-    const value={id:row.id,participantType,contestName:row.contest_name,contestUrl:row.contest_url,platform:row.platform,mode:row.mode,rank:historyRank(row,room,frozen),rankSource:row.mode==='bt'?'unavailable':frozen?(row.freeze_rank_source==='original'?'original':'unavailable'):row.rank_source||'legacy',solved:filtered?.solved??row.solved,penalty:row.mode==='bt'?0:filtered?.penalty??row.penalty,points:row.mode==='bt'?null:filtered?filtered.points??null:row.points??null,scoring:rules.scoring||'ICPC',problems:JSON.parse(row.problems_json),cells:filtered?.cells??JSON.parse(row.cells_json),startedAt:row.mode==='bt'?null:row.started_at,endedAt:row.mode==='bt'?null:row.ended_at,participantLabel:row.participant_label,roomId:row.room_id,status:row.status,createdAt:row.created_at,updatedAt:row.updated_at,rules,...(timing?{...timing,freezeActive:timing.frozen,frozen}: {frozen:false})};
+    const value={id:row.id,participantType,...this.historyIdentity(row),contestName:row.contest_name,contestUrl:row.contest_url,platform:row.platform,mode:row.mode,rank:historyRank(row,room,frozen),rankSource:row.mode==='bt'?'unavailable':frozen?(row.freeze_rank_source==='original'?'original':'unavailable'):row.rank_source||'legacy',solved:filtered?.solved??row.solved,penalty:row.mode==='bt'?0:filtered?.penalty??row.penalty,points:row.mode==='bt'?null:filtered?filtered.points??null:row.points??null,scoring:rules.scoring||'ICPC',problems:JSON.parse(row.problems_json),cells:filtered?.cells??JSON.parse(row.cells_json),startedAt:row.mode==='bt'?null:row.started_at,endedAt:row.mode==='bt'?null:row.ended_at,participantLabel:row.participant_label,roomId:row.room_id,status:row.status,createdAt:row.created_at,updatedAt:row.updated_at,rules,...(timing?{...timing,freezeActive:timing.frozen,frozen}: {frozen:false})};
     const statistics=row.mode!=='bt' || row.statistics_json?this.statisticsView(room||{starts_at:row.started_at||now(),duration_seconds:rules.duration,freeze_minutes:rules.freeze_minutes,scoring_system:rules.contest_format},[row],JSON.parse(row.problems_json),at):{};
     return details?{...value,...statistics,submissions:filtered?.submissions??submissions.filter(s=>Date.parse(s.submittedAt)<=at)}:value;
   }
@@ -401,7 +424,8 @@ export class CloudService {
       if(upgrading && (old!.mode!=='vp' || !old!.started_at || Math.abs(Date.parse(old!.started_at)-Date.parse(room!.starts_at))>60000))return fail(409,'本地 VP 开始时间与房间不匹配，不能关联');
       if(old && old.revision>=data.revision) {
         if(upgrading) {
-          this.store.run('UPDATE histories SET room_id=?,participant_id=?,participant_label=?,updated_at=? WHERE id=?',room!.id,participant!.id,participant!.label,now(),old.id);
+          const identity=this.participantIdentity(participant!);
+          this.store.run('UPDATE histories SET room_id=?,participant_id=?,participant_label=?,participant_title=?,participant_subtitle=?,updated_at=? WHERE id=?',room!.id,participant!.id,participant!.label,identity.participantTitle,identity.participantSubtitle,now(),old.id);
           this.audit(user,'history.bind-room',old.id);
           return {id:old.id,upgraded:true};
         }
@@ -444,10 +468,11 @@ export class CloudService {
       const preserveRank=Boolean(old && (practiceContinuation || old.ended_at && old.rank!=='—') && (mode!=='vp' || old.rank_source==='original'));
       const rankSource=preserveRank?old!.rank_source:data.rankSource;
       const rank=mode==='vp' && rankSource!=='original'?'—':preserveRank?old!.rank:data.rank;
-      const values=[user.id,old?.local_id||data.localId,room?.id||null,participant?.id||null,participant?.label||labelUser(user),data.name,data.url,data.platform,mode,startedAt,endedAt,rank,practiceContinuation?old!.solved:data.solved,practiceContinuation?old!.penalty:data.penalty,JSON.stringify(data.problems),JSON.stringify(data.cells),JSON.stringify(submissions),data.revision,now()];
+      const identity=participant?this.participantIdentity(participant):old?this.historyIdentity(old):userIdentity(user);
+      const values=[user.id,old?.local_id||data.localId,room?.id||null,participant?.id||null,participant?.label||old?.participant_label||labelUser(user),data.name,data.url,data.platform,mode,startedAt,endedAt,rank,practiceContinuation?old!.solved:data.solved,practiceContinuation?old!.penalty:data.penalty,JSON.stringify(data.problems),JSON.stringify(data.cells),JSON.stringify(submissions),data.revision,now()];
       if(old)this.store.run('UPDATE histories SET owner_id=?,local_id=?,room_id=?,participant_id=?,participant_label=?,contest_name=?,contest_url=?,platform=?,mode=?,started_at=?,ended_at=?,rank=?,solved=?,penalty=?,problems_json=?,cells_json=?,submissions_json=?,revision=?,updated_at=? WHERE id=?',...values,hid);
       else this.store.run('INSERT INTO histories(id,owner_id,local_id,room_id,participant_id,participant_label,contest_name,contest_url,platform,mode,started_at,ended_at,rank,solved,penalty,problems_json,cells_json,submissions_json,revision,updated_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',hid,...values,data.createdAt||now());
-      this.store.run('UPDATE histories SET status=?,rank_source=? WHERE id=?',data.status,rankSource,hid);
+      this.store.run('UPDATE histories SET status=?,rank_source=?,participant_title=?,participant_subtitle=? WHERE id=?',data.status,rankSource,identity.participantTitle,identity.participantSubtitle,hid);
       const rules=effectiveRules;
       this.store.run('UPDATE histories SET rules_json=?,points=? WHERE id=?',JSON.stringify(rules),practiceContinuation?old!.points:data.points??old?.points??null,hid);
       const statisticsTiming=room?roomTiming(room):null;
@@ -545,12 +570,13 @@ export class CloudService {
         return {data:{room:this.roomView(room,user),participation:this.participantView(part),history,submissions:history && 'submissions' in history?history.submissions:[],serverNow:now()}};
       }
       if(segments.length===3 && segments[2]==='leaderboard' && method==='GET') {
-        const room=this.visibleRoom(rid,user), histories=this.store.all('SELECT h.*,p.id participant_key,p.label participant_name FROM participants p LEFT JOIN histories h ON h.participant_id=p.id WHERE p.room_id=? AND NOT EXISTS(SELECT 1 FROM participant_departures d WHERE d.participant_id=p.id) ORDER BY p.created_at,p.id',rid);
+        const room=this.visibleRoom(rid,user), histories=this.store.all('SELECT h.*,p.id participant_key,p.label participant_name,p.type participant_type,p.members_json participant_members_json FROM participants p LEFT JOIN histories h ON h.participant_id=p.id WHERE p.room_id=? AND NOT EXISTS(SELECT 1 FROM participant_departures d WHERE d.participant_id=p.id) ORDER BY p.created_at,p.id',rid);
         const problems=[...new Set<string>(histories.flatMap(r=>r.problems_json?JSON.parse(r.problems_json):[]))];
         const timing=roomTiming(room),statistics=this.statisticsView(room,histories,problems);
         const rows=histories.map(r=>{
           const view=r.id?this.historyView(r,false,user,true):undefined;
-          return {participantId:r.participant_key,label:r.participant_name,rank:view?.rank||'—',rankSource:view?.rankSource||'unavailable',solved:view?.solved??0,penalty:view?.penalty??0,points:view?.points??null,scoring:view?.scoring||(['OI','IOI'].includes(room.scoring_system)?room.scoring_system:'ICPC'),cells:view?.cells||{},historyId:r.id,lastSyncedAt:r.updated_at,status:r.status||'scheduled',frozen:view?.frozen||false,canViewHistory:Boolean(r.id && this.historyVisible(r,user,true))};
+          const identity=this.participantIdentity({label:r.participant_name,type:r.participant_type,members_json:r.participant_members_json});
+          return {participantId:r.participant_key,label:r.participant_name,...identity,rank:view?.rank||'—',rankSource:view?.rankSource||'unavailable',solved:view?.solved??0,penalty:view?.penalty??0,points:view?.points??null,scoring:view?.scoring||(['OI','IOI'].includes(room.scoring_system)?room.scoring_system:'ICPC'),cells:view?.cells||{},historyId:r.id,lastSyncedAt:r.updated_at,status:r.status||'scheduled',frozen:view?.frozen||false,canViewHistory:Boolean(r.id && this.historyVisible(r,user,true))};
         }).sort((a,b)=>a.points!==null||b.points!==null?(b.points??0)-(a.points??0)||a.penalty-b.penalty:b.solved-a.solved||a.penalty-b.penalty);
         return {data:{room:this.roomView(room,user),...timing,rows,problems,...statistics,serverNow:now()}};
       }

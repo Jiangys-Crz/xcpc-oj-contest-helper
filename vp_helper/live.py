@@ -279,6 +279,10 @@ def monitor_live(path: Path) -> None:
                                               state["handle"], practice=state["practice_view"],
                                               practice_rank=read_json(path).get('practice_rank', state.get('practice_rank', '—')))
                     dashboard.participant_label = state.get("cloud", {}).get("label", "")
+                    from .identity import dashboard_identity
+                    title, subtitle = dashboard_identity(state, path)
+                    if state.get('cloud') or subtitle or title != state['handle']:
+                        dashboard.participant_title, dashboard.participant_subtitle = title, subtitle
                     view.update(dashboard)
                     next_render = now + 0.25
                 time.sleep(0.1)
