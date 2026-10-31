@@ -42,29 +42,29 @@ class PracticeDisplayTests(unittest.TestCase):
         before=deepcopy(self.records)
         backgrounds=self.colors(view.fixed(180),background=True)
         self.assertIn((96,231,96),backgrounds)
-        self.assertIn((0,0,255),backgrounds)
+        self.assertIn((139,92,246),backgrounds)
         self.assertEqual(me.solved,1)
         self.assertFalse(me.cells['B'].solved)
         self.assertEqual(self.records,before)
         colors=self.colors(view.records())
         self.assertIn((0,128,0),colors)
         self.assertIn((255,0,0),colors)
-        self.assertNotIn((0,0,255),colors)
+        self.assertNotIn((139,92,246),colors)
 
-    def test_standalone_bt_accepted_cell_is_blue(self):
+    def test_standalone_bt_accepted_cell_is_purple(self):
         self.contest.extra['practice']=True
         records=[{**self.records[0],'practice':True}]
         view=PracticeDashboard(self.contest,19000,records,handle='tester')
-        self.assertIn((0,0,255),self.colors(view.fixed(180),background=True))
+        self.assertIn((139,92,246),self.colors(view.fixed(180),background=True))
 
-    def test_live_ac_is_preserved_and_new_practice_ac_is_blue_on_all_live_platforms(self):
+    def test_live_ac_is_preserved_and_new_practice_ac_is_purple_on_all_live_platforms(self):
         own={'party':{'members':[{'handle':'tester'}]},'rank':5,'points':1,'penalty':1,
              'problemResults':[{'points':1,'bestSubmissionTimeSeconds':60},{'points':0}]}
         for platform in ('cf','cwnuoj','nowcoder'):
             self.contest.platform=platform
             self.contest.extra.update(scoring='ICPC',phase='FINISHED')
             view=LiveDashboard(self.contest,19000,{'own':own},self.records,practice=True)
-            self.assertIn((0,0,255),self.colors(view.fixed(180),background=True))
+            self.assertIn((139,92,246),self.colors(view.fixed(180),background=True))
             self.assertIn((96,231,96),self.colors(view.fixed(180),background=True))
             self.assertEqual(own['problemResults'][1]['points'],0)
 
@@ -101,14 +101,14 @@ class PracticeDisplayTests(unittest.TestCase):
         table = next(item for item in view.fixed(180).renderables if isinstance(item, Table))
         self.assertEqual([c.header for c in table.columns], ['rank','team','A','B'])
         self.assertEqual(table.columns[2]._cells[0].plain, '2 tries')
-        self.assertIn((0,0,255), self.colors(view.fixed(180),background=True))
+        self.assertIn((139,92,246), self.colors(view.fixed(180),background=True))
 
     def test_saved_live_ac_remains_visible_when_official_row_is_unavailable(self):
         self.contest.extra.update(scoring='ICPC',phase='FINISHED')
         view=LiveDashboard(self.contest,19000,{'own':None},self.records,practice=True)
         backgrounds=self.colors(view.fixed(180),background=True)
         self.assertIn((96,231,96),backgrounds)
-        self.assertIn((0,0,255),backgrounds)
+        self.assertIn((139,92,246),backgrounds)
 
     def test_manual_live_freeze_hides_native_counts_that_may_include_later_attempts(self):
         self.contest.extra.update(scoring='ICPC', phase='CODING', freeze_source='manual')
