@@ -43,6 +43,15 @@ test('history details and room My submissions use the shared detail renderer',()
   assert.doesNotMatch(render(fixture()),/clarifications?/i);
 });
 
+test('room pages can supply their common title while keeping all shared detail content',()=>{
+  const history=fixture(),html=renderToStaticMarkup(createElement(ContestDetailView,{history,showTitle:false}));
+  assert.doesNotMatch(html,/<h1(?:\s[^>]*)?>/);
+  assert.match(render(history),/<h1>The 2026 ICPC Fixture<\/h1>/);
+  for(const heading of ['Rank','Team','Solved','Penalty','Time','Problem','Lang','Result','Submission'])assert(headers(html).includes(heading),heading);
+  assert(html.includes(history.contestUrl));
+  assert(html.includes('#396538368'));
+});
+
 test('the shared detail keeps every scoreboard header and both participant identity lines',()=>{
   for(const count of [13,20]){
     const history=fixture(count),html=render(history),labels=headers(html);

@@ -384,6 +384,68 @@ class SubmissionDisplayTests(unittest.TestCase):
                         self.assertNotIn('public',header)
                         self.assertEqual(rendered.count('2 + 1 tries' if isinstance(view,LiveDashboard) else '2 tries'),20)
 
+    def test_long_titles_use_the_whole_line_and_keep_timer_without_mutation(self):
+        for name in ('The 2026 ICPC Northern Eurasia Regional Programming Contest',
+                     '第二十届国际大学生程序设计竞赛亚洲区现场赛冠军邀请赛'):
+            for practice in (False,True):
+                contest=self.contest();contest.name=name
+                score=score_submissions([],list(contest.problems),contest.rules,120,name='native-handle')
+                view=Dashboard(contest,120,score,'87','',None,[],practice=practice)
+                label=name+(' · BT' if practice else '')
+                for width in (80,100):
+                    for engine in ('rich','curses'):
+                        with self.subTest(name=name,practice=practice,width=width,engine=engine):
+                            before=copy.deepcopy(vars(view))
+                            lines=self.fixed_lines(view,width,engine)
+                            title=next(line for line in lines if label in line)
+                            self.assertEqual(title.strip(),label)
+                            self.assertLessEqual(abs(self.cell_center(title,label)[0]-width/2),0.5)
+                            if practice:
+                                self.assertNotIn('00:02:00 / 05:00:00','\n'.join(lines))
+                            else:
+                                self.assertIn('00:02:00 / 05:00:00','\n'.join(lines))
+                            self.assertEqual(vars(view),before)
+
+    def test_titles_wrap_only_after_the_complete_pane_width_is_exceeded(self):
+        for name in ('VeryLongContestName'*8,'算法竞赛'*35):
+            for practice in (False,True):
+                contest=self.contest();contest.name=name
+                score=score_submissions([],list(contest.problems),contest.rules,120)
+                view=Dashboard(contest,-60,score,'87','',None,[],practice=practice)
+                heading=view.fixed(80).renderables[0]
+                lines=self.render(heading,80).splitlines()
+                title_lines=lines if practice else lines[:-1]
+                self.assertGreater(len(title_lines),1)
+                self.assertEqual(''.join(line.strip() for line in title_lines),name+(' · BT' if practice else ''))
+                self.assertTrue(all(cell_len(line)<=80 for line in lines))
+                self.assertNotIn('…','\n'.join(lines))
+                if not practice:
+                    self.assertEqual(lines[-1].strip(),'Starts in 00:01:00')
+        contest=self.contest();score=score_submissions([],list(contest.problems),contest.rules,120)
+        view=Dashboard(contest,120,score,'87','',None,[])
+        inline=self.render(view.fixed(100).renderables[0],100).splitlines()
+        self.assertEqual(len(inline),1)
+        self.assertIn('Fixture',inline[0]);self.assertIn('00:02:00 / 05:00:00',inline[0])
+        contest.name='The 2026 ICPC Northern Eurasia Regional Programming Contest'
+        live=LiveDashboard(contest,120,{},[])
+        self.assertEqual(self.render(live.fixed(80).renderables[0],80).strip(),contest.name+' · LIVE')
+
+    def test_only_stacked_metadata_gives_rank_two_extra_characters_and_keeps_it_centered(self):
+        view=self.active_team_views()[0]
+        for engine in ('rich','curses'):
+            before=copy.deepcopy(vars(view))
+            narrow=self.fixed_lines(view,80,engine)
+            wide=self.fixed_lines(view,360,engine)
+            narrow_index=next(i for i,line in enumerate(narrow) if 'rank' in line and 'team' in line)
+            wide_header=next(line for line in wide if 'rank' in line and 'team' in line)
+            header=narrow[narrow_index];body=narrow[narrow_index+2]
+            self.assertEqual(self.cell_center(header,'rank')[0],self.cell_center(wide_header,'rank')[0]+1)
+            self.assertLessEqual(abs(self.cell_center(body,'127')[0]-self.cell_center(header,'rank')[0]),0.5)
+            another=self.fixed_lines(view,320,engine)
+            another_header=next(line for line in another if 'rank' in line and 'team' in line)
+            self.assertEqual(self.cell_center(wide_header,'rank')[0],self.cell_center(another_header,'rank')[0])
+            self.assertEqual(vars(view),before)
+
     def test_complete_attempt_labels_stay_on_first_line_and_native_minutes_on_second(self):
         for count in (13,20):
             contest=self.contest();contest.problems={chr(65+i):str(i) for i in range(count)}

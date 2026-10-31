@@ -88,6 +88,9 @@ def score_table(columns, problems, rows, width, *, separate_summary=False, _allo
         metadata = score_table(columns, [], [rows[0][:len(columns)]], width, _allow_split=False)
         if isinstance(metadata, Table):
             metadata.expand = True
+            if "rank" in columns:
+                rank = metadata.columns[columns.index("rank")]
+                rank.width = (rank.width or minimum[columns.index("rank")]) + 2
             if "team" in columns:
                 team = metadata.columns[columns.index("team")]
                 team.width = None
@@ -239,11 +242,6 @@ class Dashboard:
     def fixed(self, width: int):
         # Equal side columns keep the contest title at the screen's center.
         sides = min(30, max(19, (width - 8) // 3))
-        heading = Table.grid(expand=True, padding=0)
-        heading.style = "default"
-        heading.add_column(width=sides, no_wrap=False, overflow='fold')
-        heading.add_column(ratio=1, justify="center", no_wrap=False, overflow="fold")
-        heading.add_column(width=sides, justify="right", no_wrap=True)
         prize = {"Gold": "Gold Prize", "Silver": "Silver Prize", "Bronze": "Bronze Prize"}.get(self.prize, "")
         if self.prize == "None" and self.contest.medals is not None:
             prize = "No Prize"
@@ -256,7 +254,18 @@ class Dashboard:
             label += " · BT"
         if self.contest.extra.get("local_attempt") and not self.practice:
             label += " · local timer"
-        heading.add_row(Text(" " + timer, style="bold default"), Text(label, style="bold"), Text(""))
+        heading = Table.grid(expand=True, padding=0)
+        heading.style = "default"
+        if self.practice or cell_len(label) > width - 2 * sides:
+            heading.add_column(ratio=1, justify="center", no_wrap=False, overflow="fold")
+            heading.add_row(Text(label, style="bold"))
+            if timer:
+                heading = Group(heading, Text(" " + timer, style="bold default"))
+        else:
+            heading.add_column(width=sides, no_wrap=False, overflow="fold")
+            heading.add_column(ratio=1, justify="center", no_wrap=False, overflow="fold")
+            heading.add_column(width=sides, justify="right", no_wrap=True)
+            heading.add_row(Text(" " + timer, style="bold default"), Text(label, style="bold"), Text(""))
         cells = []
         corrections = recorded_cells(self.contest, self.submissions, practice=True)
         originals = recorded_cells(self.contest, self.submissions, practice=False, all_attempts=True) if self.practice else {}
