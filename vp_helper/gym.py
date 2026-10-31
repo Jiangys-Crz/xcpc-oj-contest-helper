@@ -38,11 +38,15 @@ class Gym:
         self.public = WebSession(self.origin, {}, auto_refresh=False)
         self.start_time: float | None = None
         self._original = None
+        self._next_original_attempt = 0.0
         self.submissions_complete = False
         self.pending_judgements = PendingJudgements()
         self._replay = None
         self._next_replay_attempt = 0.0
         self._replay_error = ""
+        self._onsite_replay = None
+        self._next_onsite_attempt = 0.0
+        self._onsite_error = ""
 
     def api(self, method: str, **params):
         if self.platform == 'cf' and method == 'contest.standings':
@@ -112,6 +116,7 @@ class Gym:
         freeze_known, freeze_at = freeze_metadata(raw, duration)
         medals = medals_from_html(dashboard_html, self.url)
         self._original = data
+        self._next_original_attempt = time.monotonic() + 30
         # Codeforces registers native virtual participations using ICPC rules,
         # including Div./Educational rounds whose original scoreboard uses CF.
         extra = {"scoring": "ICPC", "original_scoring": raw["type"], "freeze_known": freeze_known,
@@ -337,7 +342,11 @@ class Gym:
         return rows
 
     def reference(self, contest: Contest, elapsed: float) -> Reference:
-        if self._original is None:
+        if (self._original is None or
+                not any(raw.get("party", {}).get("participantType") == "CONTESTANT"
+                        for raw in self._original.get("rows", []))
+                and time.monotonic() >= self._next_original_attempt):
+            self._next_original_attempt = time.monotonic() + 30
             self._original = self.api("contest.standings", contestId=self.id, showUnofficial=False, participantTypes="CONTESTANT")
         released = contest.rules.freeze_at is None
         if contest.extra.get("local_attempt") and elapsed >= contest.rules.duration:
@@ -354,6 +363,12 @@ class Gym:
             self._original = final
         complete = final["contest"]["phase"] == "FINISHED" and not final["contest"].get("frozen", False)
         rows = self.rows_from_api(final, contest)
+        if not rows:
+            # A mirror may expose only virtual/practice participants. Empty
+            # original timelines also reproduce an empty final board, but
+            # that does not make the local team first in the onsite contest.
+            self._replay = None
+            return self._onsite_reference(contest, elapsed, released)
         if final["contest"]["type"] != "ICPC":
             # The original CF/IOI ranking is not an ICPC ranking. Build the
             # native virtual comparison from actual original submissions;
@@ -367,29 +382,54 @@ class Gym:
             if self._replay is not None:
                 return self._replay.at(contest, elapsed, released=released)
             return Reference(released=released, message=self._replay_error or "Original submissions unavailable for the native ICPC virtual ranking.")
-        if any(raw["party"].get("ghost") for raw in final["rows"]):
+        if any(raw["party"].get("ghost") and raw["party"].get("participantType") == "CONTESTANT"
+               for raw in final["rows"]):
             try:
                 # Imported CONTESTANT ghosts can have lost starred-team flags.
                 classify(rows, contest, load_metadata(contest))
             except VPError as exc:
-                return Reference(released=released, message=str(exc))
+                return self._onsite_reference(contest, elapsed, released, str(exc))
+            if not any(row.eligible for row in rows):
+                return Reference(rows, complete=False, statistics_complete=True, released=released,
+                                 message="No verified official participants are available for the original ranking.")
+        if complete and self._replay is None and time.monotonic() >= self._next_replay_attempt:
+            self._next_replay_attempt = time.monotonic() + 120
+            try:
+                self._replay = self._original_replay(contest, rows)
+            except VPError as exc:
+                self._replay_error = str(exc)
+        if self._replay is not None:
+            return self._replay.at(contest, elapsed, released=released)
         if elapsed < contest.rules.duration or contest.rules.frozen(elapsed, released):
-            if complete and self._replay is None and time.monotonic() >= self._next_replay_attempt:
-                self._next_replay_attempt = time.monotonic() + 120
-                try:
-                    self._replay = self._original_replay(contest, rows)
-                except VPError as exc:
-                    self._replay_error = str(exc)
-            if self._replay is not None:
-                return self._replay.at(contest, elapsed, released=released)
             return Reference(released=released, message=self._replay_error or "Original submission events unavailable; final scoreboard only.")
-        return Reference(rows, complete, complete, released, "" if complete else "Waiting for original final standings.")
+        # API penalties and accepted cells can validate a final original rank,
+        # but rejectedAttemptCount omits CE and does not describe every submit.
+        # Publish attempt statistics only after the actual events are verified.
+        return Reference(rows, complete, False, released,
+                         "Original rank available; original attempt statistics are unavailable."
+                         if complete else "Waiting for original final standings.")
+
+    def _onsite_reference(self, contest: Contest, elapsed: float, released: bool, error: str = "") -> Reference:
+        if self._onsite_replay is None and time.monotonic() >= self._next_onsite_attempt:
+            self._next_onsite_attempt = time.monotonic() + 120
+            try:
+                from .onsite import load_replay
+                self._onsite_replay = load_replay(contest)
+            except VPError as exc:
+                self._onsite_error = str(exc)
+        if self._onsite_replay is not None:
+            return self._onsite_replay.at(contest, elapsed, released=released)
+        return Reference(released=released, message=self._onsite_error or error or
+                         "Original official participants are unavailable; original rank and public statistics are unavailable.")
 
     def _original_replay(self, contest: Contest, rows: list[TeamScore]) -> OriginalReplay:
         from .originals import cache_archive_submissions, cache_path, load_archive_submissions
         from .storage import read_json, write_json
         from dataclasses import asdict
-        if any(raw["party"].get("ghost") for raw in self._original["rows"]):
+        if not rows:
+            raise VPError("The original contest has no verified participants to replay.")
+        if any(raw["party"].get("ghost") and raw["party"].get("participantType") == "CONTESTANT"
+               for raw in self._original["rows"]):
             metadata = load_metadata(contest)
             events = load_archive_submissions(contest, metadata)
             replay = OriginalReplay(contest, metadata["teams"], events, rows)
@@ -429,6 +469,8 @@ class Gym:
         offset = 1
         while True:
             data = self.api("contest.status", contestId=self.id, **{"from": offset, "count": 1000})
+            if not isinstance(data, list):
+                raise VPError("The original submission API returned an invalid event list.")
             for raw in data:
                 party = raw["author"]
                 if party["participantType"] != "CONTESTANT":

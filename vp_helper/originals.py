@@ -18,7 +18,7 @@ import requests
 
 from .models import Contest, Medals, Reference, Submission, TeamScore, VPError
 from .parsing import timestamp
-from .scoring import score_submissions, verdict
+from .scoring import score_submissions, statistics, verdict
 from .storage import read_json, write_json
 
 _github_api_preferred = False
@@ -238,7 +238,6 @@ def classify(rows: list[TeamScore], contest: Contest, metadata: dict | None = No
             if original_group is not None and group is not None and group != original_group:
                 continue
             if not row.eligible:  # QOJ's explicit unofficial import can be excluded directly.
-                resolved.append((row, False, row.name))
                 continue
             raise VPError("An imported original team could not be matched to its official eligibility record.")
         name_key = identity(team["name"])
@@ -290,7 +289,7 @@ def archive_submissions(runs: list, metadata: dict, contest: Contest) -> list[Su
             if (not sid or (team, sid) in seen or problem not in contest.problems
                     or not math.isfinite(at) or not 0 <= at < contest.rules.duration):
                 raise ValueError("invalid event identity or time")
-            status = verdict(run["status"])
+            status = 'IGNORED' if run['status'] == 'IGNORED' else verdict(run['status'])
             if status in ("PENDING", "TOO-LATE"):
                 raise ValueError("the original events are not final")
             seen.add((team, sid))
@@ -337,6 +336,8 @@ class OriginalReplay:
     """An event timeline accepted only when every final scoring cell agrees."""
 
     def __init__(self, contest: Contest, teams: list[dict], submissions: list[Submission], expected: list[TeamScore]):
+        if not teams or not any(team.get('official') is True for team in teams):
+            raise VPError('The original contest has no verified official participants; its rank is unavailable.')
         self.problems = list(contest.problems)
         self.duration = contest.rules.duration
         self.teams = teams
@@ -389,3 +390,24 @@ class OriginalReplay:
                                     message="Scoreboard frozen" if key[1] else "Original submissions replayed at VP time", replay=self)
             self._cache_key = key
         return self._cache
+
+    def statistics_at(self, contest: Contest, elapsed: float, *, released: bool = False,
+                      include_unofficial: bool = True) -> dict[str, dict[str, int]]:
+        reference = self.at(contest, elapsed, released=released)
+        result = statistics(reference.rows, self.problems, include_unofficial=include_unofficial)
+        visible_teams = {row.id for row in reference.rows if include_unofficial or row.eligible}
+        cutoff = self._cache_key[0]
+        # Scoring tries intentionally omit compilation errors. Public submitted
+        # and attempted counts describe every submission, including CE-only teams.
+        submitted = dict.fromkeys(self.problems, 0)
+        attempted = {problem: set() for problem in self.problems}
+        for team, events in self.events.items():
+            if team not in visible_teams:
+                continue
+            for event in events:
+                if event.time <= cutoff:
+                    submitted[event.problem] += 1
+                    attempted[event.problem].add(team)
+        result['submitted'] = submitted
+        result['attempted'] = {problem: len(teams) for problem, teams in attempted.items()}
+        return result

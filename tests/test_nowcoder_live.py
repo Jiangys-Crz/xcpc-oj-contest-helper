@@ -148,6 +148,25 @@ class AdapterTests(unittest.TestCase):
                 self.assertEqual(self.contest.problems, {"A": "10", "B": "11"})
                 self.assertFalse(any("ignoreRankFrozen" in c.kwargs for c in self.api.get_json.call_args_list))
 
+    def test_all_participant_rank_and_statistics_refresh_without_own_submissions(self):
+        first = self.api.snapshot(self.contest)
+        self.assertEqual(first["own"]["rank"], 17)
+        self.assertEqual(first["stats"]["submitted"]["A"], 30)
+        self.ranking["myRankData"]["ranking"] = 35
+        self.ranking["problemData"] = [{"problemId": 10, "submitCount": 100,
+                                          "submitPersonCount": 42, "acceptedCount": 28}]
+        second = self.api.snapshot(self.contest)
+        self.assertEqual(second["own"]["rank"], 35)
+        self.assertEqual(second["stats"]["submitted"]["A"], 100)
+        self.assertEqual(second["stats"]["attempted"]["A"], 42)
+        self.assertEqual(second["stats"]["accepted"]["A"], 28)
+        self.ranking.pop("myRankData")
+        without_own = self.api.snapshot(self.contest)
+        self.assertIsNone(without_own["own"])
+        self.assertEqual(without_own["stats"], second["stats"])
+        self.assertTrue(all(call.kwargs.get("rankScope") == "ALL"
+                            for call in self.api.get_json.call_args_list if call.args[0] == RANK))
+
     def test_ioi_and_weekly_use_server_total_and_partial_scores(self):
         for kind in (3, 4):
             self.info = details(kind)

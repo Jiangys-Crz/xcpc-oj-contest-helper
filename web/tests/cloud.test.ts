@@ -34,7 +34,7 @@ function fixture(t:any) {
   return {service,root,api,login,admin,room,invite};
 }
 const snapshot=(localId:string,revision=1):Data=>({
-  localId,contest:{platform:'qoj',contestId:'3617',url:'https://qoj.ac/contest/3617',name:'The Training Contest',problems:['A','B']},mode:'vp',startedAt:new Date(Date.now()-600e3).toISOString(),rank:'87',solved:1,penalty:20,
+  localId,contest:{platform:'qoj',contestId:'3617',url:'https://qoj.ac/contest/3617',name:'The Training Contest',problems:['A','B']},mode:'vp',startedAt:new Date(Date.now()-600e3).toISOString(),rankSource:'original',rank:'87',solved:1,penalty:20,
   cells:{A:{tries:1,pending:0,solved:true,practiceSolved:false,solveTime:20},B:{tries:1,pending:1,solved:false,practiceSolved:false}},
   submissions:[{id:'123',problem:'A',submittedAt:new Date(Date.now()-300e3).toISOString(),verdict:'CORRECT',practice:false,url:'https://qoj.ac/submission/123'},{id:'124',problem:'B',submittedAt:new Date(Date.now()-100e3).toISOString(),verdict:'PENDING',practice:false}],revision
 });
@@ -528,6 +528,7 @@ test('CCPC public statistics preserve native reveal decisions, anonymize labels 
   const n=await invite(r.id,owner.token,{userId:user.user.id});await api('POST',`notifications/${n}/respond`,{accept:true},user.token);
   const start=Date.parse(r.startsAt),stamp=(seconds:number)=>new Date(start+seconds*1000).toISOString();t.mock.timers.setTime(start+5000e3);
   const data=snapshot('ccpc-statistics');data.roomId=r.id;data.startedAt=r.startsAt;data.contest.problems=['A','B','C'];data.contest.rules={duration:7200};data.submissions=[];data.cells={};
+  data.statisticsSource='original';
   data.publicStatistics={submitted:{A:80,B:2,C:20},attempted:{A:60,B:2,C:15},accepted:{A:49,B:0,C:10}};
   // The native timeline counts starred teams toward the 50-team reveal threshold,
   // while the published accepted count here contains only official teams.

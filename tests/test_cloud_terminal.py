@@ -31,6 +31,8 @@ class CloudTerminalTests(unittest.TestCase):
                         {'id':'1','team':'me','problem':'A','time':10,'verdict':'CORRECT'},
                         {'id':'2','team':'me','problem':'B','time':20,'verdict':'WRONG-ANSWER'},
                         {'id':'3','team':'me','problem':'B','time':3700,'verdict':'CORRECT','practice':True}]}
+        self.state['reference_rank']={'source':'original','contestUrl':contest.url,'rank':'27',
+                                     'officialParticipants':100,'scoring':'ICPC','scoreKey':[-1,0]}
         self.path=self.root/'state/vp/vp-qoj-123-fixture.json';write_json(self.path,self.state)
         self.context={'serverUrl':cloud.DEFAULT_SERVER,'roomId':'room-1','roomName':'Team VP','userId':'user-1',
                       'participantId':'part-1','captainId':'user-1','label':'队伍-甲、乙','type':'team','startsAt':'2026-10-30T12:00:00Z'}
@@ -79,9 +81,54 @@ class CloudTerminalTests(unittest.TestCase):
         self.assertFalse(payload['cells']['B']['solved'])
         self.assertTrue(payload['cells']['B']['practiceSolved'])
         self.assertEqual(payload['rank'],'27');self.assertEqual(payload['solved'],1)
+        self.assertEqual(payload['rankSource'],'original')
         self.assertNotIn('solveTime',payload['cells']['B'])
         self.assertEqual(payload['submissions'][0]['submittedAt'],'2023-11-14T22:13:30+00:00')
         self.assertEqual(payload['submissions'][0]['url'],'https://qoj.ac/submission/1')
+
+    def test_vp_never_uploads_a_native_virtual_or_room_position_without_original_proof(self):
+        self.state.pop('reference_rank')
+        self.state['cloud']=self.context
+        self.state['last_rank']='1'
+        self.state['summary']={'rank':'2'}
+        self.state['snapshot']={'own':{'rank':3}}
+        payload=cloud.sync_payload(self.path,self.state)
+        self.assertEqual((payload['rank'],payload['rankSource']),('—','unavailable'))
+
+    def test_changed_score_cannot_reuse_an_old_verified_original_rank(self):
+        self.state['submissions'].append({'id':'4','team':'me','problem':'B','time':30,'verdict':'CORRECT'})
+        payload=cloud.sync_payload(self.path,self.state)
+        self.assertEqual((payload['rank'],payload['rankSource']),('—','unavailable'))
+
+    def test_legacy_own_only_statistics_are_not_sent_as_original_public_statistics(self):
+        self.state.update(public_statistics={kind:{'A':1,'B':0} for kind in ('submitted','attempted','accepted')},
+                          revealed_problems=['A'],statistics_at=1700000100)
+        payload=cloud.sync_payload(self.path,self.state)
+        self.assertEqual(payload['statisticsSource'],'unavailable')
+        self.assertNotIn('publicStatistics',payload)
+        self.state['statistics_source']='original'
+        self.state['public_statistics']['submitted']['A']=500
+        payload=cloud.sync_payload(self.path,self.state)
+        self.assertEqual(payload['statisticsSource'],'original')
+        self.assertEqual(payload['publicStatistics']['submitted']['A'],500)
+
+    def test_live_uploads_platform_wide_statistics_instead_of_own_attempt_counts(self):
+        self.state['mode']='live'
+        self.state['snapshot']={'at':1700000100,'own':{'rank':17},'stats':{
+            'submitted':{'A':500,'B':600},'attempted':{'A':400,'B':300},'accepted':{'A':200,'B':100}}}
+        payload=cloud.sync_payload(self.path,self.state)
+        self.assertEqual((payload['rank'],payload['rankSource']),('17','native'))
+        self.assertEqual(payload['statisticsSource'],'native')
+        self.assertEqual(payload['publicStatistics'],self.state['snapshot']['stats'])
+
+    def test_partial_ioi_scores_are_not_published_as_acceptance_counts(self):
+        self.state['mode']='live'
+        self.state['contest']['extra']={'scoring':'IOI'}
+        self.state['snapshot']={'at':1700000100,'stats':{'scored':{'A':200},'attempted':{'A':300}}}
+        payload=cloud.sync_payload(self.path,self.state)
+        self.assertEqual(payload['publicStatistics']['accepted'],{})
+        self.assertEqual(payload['publicStatistics']['submitted'],{})
+        self.assertEqual(payload['publicStatistics']['attempted']['A'],300)
 
     def test_standalone_bt_has_no_start_end_time_and_counts_practice_accepts(self):
         self.state['mode']='practice'

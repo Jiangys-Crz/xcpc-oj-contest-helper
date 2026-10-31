@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from
 import { resolve } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { Store, type Row } from './db';
-import { roomTiming, publicScore, frozenRank, pointScoring } from './scoreboard';
+import { roomTiming, publicScore, historyRank, pointScoring } from './scoreboard';
 
 export class ApiError extends Error { constructor(public status: number, message: string) { super(message); } }
 const fail = (status: number, message: string): never => { throw new ApiError(status, message); };
@@ -277,13 +277,13 @@ export class CloudService {
   }
   private statisticsView(room:Row,histories:Row[],problems:string[],at=Date.now()) {
     const timing=roomTiming(room,at),cutoff=timing.frozen && timing.freezeAt?Date.parse(timing.freezeAt):at;
-    const reference=histories.filter(h=>h.statistics_json && h.statistics_at && Date.parse(h.statistics_at)<=cutoff).sort((a,b)=>b.statistics_at.localeCompare(a.statistics_at))[0];
+    const reference=histories.filter(h=>h.statistics_json && h.statistics_at && Date.parse(h.statistics_at)<=cutoff && (h.mode!=='vp' || h.statistics_source==='original')).sort((a,b)=>b.statistics_at.localeCompare(a.statistics_at))[0];
     const stats=reference?JSON.parse(reference.statistics_json):null;
     const allRevealed=room.scoring_system!=='CCPC' || timing.frozen || at>=Date.parse(timing.endsAt);
     const revealed=new Set<string>(allRevealed?problems:reference?JSON.parse(reference.revealed_problems_json||'[]'):[]);
     // Unrevealed CCPC identities are omitted from JSON, not merely hidden by CSS.
     const publicProblemStatistics=problems.map(problem=>({label:revealed.has(problem)?problem:null,submitted:stats?.submitted?.[problem]??null,attempted:stats?.attempted?.[problem]??null,accepted:stats?.accepted?.[problem]??null})).sort((a,b)=>a.label && b.label?a.label.localeCompare(b.label,'en',{numeric:true}):a.label?-1:b.label?1:(b.accepted??-1)-(a.accepted??-1)||(b.attempted??-1)-(a.attempted??-1)||(b.submitted??-1)-(a.submitted??-1));
-    return {publicProblemStatistics,statisticsAt:reference?.statistics_at??null};
+    return {publicProblemStatistics,statisticsAt:reference?.statistics_at??null,statisticsSource:reference?.statistics_source||'unavailable'};
   }
   private historyView(row:Row, details=false, viewer?:User, publicBoard=false) {
     const participantType=row.participant_id?this.store.one('SELECT type FROM participants WHERE id=?',row.participant_id)?.type||'individual':'individual';
@@ -295,8 +295,8 @@ export class CloudService {
     const rules=JSON.parse(row.rules_json||'{}');
     if(frozen && rules.score_policy!=='subtasks' && filtered?.points!==undefined && row.freeze_points!==null && row.freeze_points!==undefined && row.freeze_event_points!==null && row.freeze_event_points!==undefined)filtered.points+=row.freeze_points-row.freeze_event_points;
     else if(frozen && filtered && (filtered.points===undefined || row.freeze_event_points===null) && row.freeze_points!==null && row.freeze_points!==undefined)filtered.points=row.freeze_points;
-    const value={id:row.id,participantType,contestName:row.contest_name,contestUrl:row.contest_url,platform:row.platform,mode:row.mode,rank:row.mode==='bt'?'—':frozen?frozenRank(row,room!):row.rank,solved:filtered?.solved??row.solved,penalty:row.mode==='bt'?0:filtered?.penalty??row.penalty,points:row.mode==='bt'?null:filtered?filtered.points??null:row.points??null,scoring:rules.scoring||'ICPC',problems:JSON.parse(row.problems_json),cells:filtered?.cells??JSON.parse(row.cells_json),startedAt:row.mode==='bt'?null:row.started_at,endedAt:row.mode==='bt'?null:row.ended_at,participantLabel:row.participant_label,roomId:row.room_id,status:row.status,createdAt:row.created_at,updatedAt:row.updated_at,rules,...(timing?{...timing,freezeActive:timing.frozen,frozen}: {frozen:false})};
-    const statistics=row.statistics_json?this.statisticsView(room||{starts_at:row.started_at||now(),duration_seconds:rules.duration,freeze_minutes:rules.freeze_minutes,scoring_system:rules.contest_format},[row],JSON.parse(row.problems_json),at):{};
+    const value={id:row.id,participantType,contestName:row.contest_name,contestUrl:row.contest_url,platform:row.platform,mode:row.mode,rank:historyRank(row,room,frozen),rankSource:row.mode==='bt'?'unavailable':frozen?(row.freeze_rank_source==='original'?'original':'unavailable'):row.rank_source||'legacy',solved:filtered?.solved??row.solved,penalty:row.mode==='bt'?0:filtered?.penalty??row.penalty,points:row.mode==='bt'?null:filtered?filtered.points??null:row.points??null,scoring:rules.scoring||'ICPC',problems:JSON.parse(row.problems_json),cells:filtered?.cells??JSON.parse(row.cells_json),startedAt:row.mode==='bt'?null:row.started_at,endedAt:row.mode==='bt'?null:row.ended_at,participantLabel:row.participant_label,roomId:row.room_id,status:row.status,createdAt:row.created_at,updatedAt:row.updated_at,rules,...(timing?{...timing,freezeActive:timing.frozen,frozen}: {frozen:false})};
+    const statistics=row.mode!=='bt' || row.statistics_json?this.statisticsView(room||{starts_at:row.started_at||now(),duration_seconds:rules.duration,freeze_minutes:rules.freeze_minutes,scoring_system:rules.contest_format},[row],JSON.parse(row.problems_json),at):{};
     return details?{...value,...statistics,submissions:filtered?.submissions??submissions.filter(s=>Date.parse(s.submittedAt)<=at)}:value;
   }
   private sanitizeSnapshot(body:Row) {
@@ -304,6 +304,10 @@ export class CloudService {
     if(!c || typeof c!=='object')return fail(400,'缺少比赛资料');
     const url=contestUrl(c.url), mode=body.mode;
     if(!['vp','live','bt'].includes(mode))return fail(400,'参赛类型无效');
+    if(body.rankSource!==undefined && !['original','native','unavailable'].includes(body.rankSource))return fail(400,'排名来源无效');
+    const rankSource=mode==='bt'?'unavailable':body.rankSource??(mode==='live'?'native':'legacy');
+    if(body.statisticsSource!==undefined && !['original','native','unavailable'].includes(body.statisticsSource))return fail(400,'原站统计来源无效');
+    const statisticsSource=body.statisticsSource??(mode==='live'?'native':'legacy');
     const platform=url.includes('codeforces.com/gym/')?'gym':url.includes('codeforces.com/')?'cf':url.includes('nowcoder.com/')?'nowcoder':url.includes('cwnupaa.com/')?'cwnuoj':'qoj';
     const name=text(c.name,'比赛名称',300);
     const rules:Row={};
@@ -370,7 +374,7 @@ export class CloudService {
     const endedAt=mode==='bt'?null:body.endedAt?iso(body.endedAt,'结束时间'):null;
     if(status==='failed')startedAt=null;
     if(startedAt && endedAt && endedAt<startedAt) {if(['failed','cancelled'].includes(status))startedAt=null;else return fail(400,'结束时间不能早于开始时间');}
-    return {localId,url,mode,status,platform,name,problems,rules,cells,submissions,publicStatistics,revealedProblems,statisticsAt,startedAt,endedAt,createdAt,rank:mode==='bt'?'—':text(String(body.rank??'—'),'原站排名',100),solved:number(body.solved,'解决题数',100),penalty:mode==='bt'?0:number(body.penalty,'罚时'),points:mode==='bt'||body.points===undefined?null:score(body.points),revision:number(body.revision,'同步版本',Number.MAX_SAFE_INTEGER)};
+    return {localId,url,mode,status,platform,name,problems,rules,cells,submissions,publicStatistics,revealedProblems,statisticsAt,statisticsSource,startedAt,endedAt,createdAt,rankSource,rank:mode==='bt'?'—':text(String(body.rank??'—'),'原站排名',100),solved:number(body.solved,'解决题数',100),penalty:mode==='bt'?0:number(body.penalty,'罚时'),points:mode==='bt'||body.points===undefined?null:score(body.points),revision:number(body.revision,'同步版本',Number.MAX_SAFE_INTEGER)};
   }
   private sync(user:User,body:Row) {
     const data=this.sanitizeSnapshot(body);
@@ -437,19 +441,24 @@ export class CloudService {
       if(practiceContinuation)for(const [problem,prior] of Object.entries(JSON.parse(old!.cells_json)) as [string,Row][]) {
         if(data.cells[problem])for(const key of ['solved','solveTime','points','maxPoints'])if(prior[key]!==undefined)data.cells[problem][key]=prior[key];
       }
-      const values=[user.id,old?.local_id||data.localId,room?.id||null,participant?.id||null,participant?.label||labelUser(user),data.name,data.url,data.platform,mode,startedAt,endedAt,practiceContinuation || old?.ended_at && old.rank!=='—'?old!.rank:data.rank,practiceContinuation?old!.solved:data.solved,practiceContinuation?old!.penalty:data.penalty,JSON.stringify(data.problems),JSON.stringify(data.cells),JSON.stringify(submissions),data.revision,now()];
+      const preserveRank=Boolean(old && (practiceContinuation || old.ended_at && old.rank!=='—') && (mode!=='vp' || old.rank_source==='original'));
+      const rankSource=preserveRank?old!.rank_source:data.rankSource;
+      const rank=mode==='vp' && rankSource!=='original'?'—':preserveRank?old!.rank:data.rank;
+      const values=[user.id,old?.local_id||data.localId,room?.id||null,participant?.id||null,participant?.label||labelUser(user),data.name,data.url,data.platform,mode,startedAt,endedAt,rank,practiceContinuation?old!.solved:data.solved,practiceContinuation?old!.penalty:data.penalty,JSON.stringify(data.problems),JSON.stringify(data.cells),JSON.stringify(submissions),data.revision,now()];
       if(old)this.store.run('UPDATE histories SET owner_id=?,local_id=?,room_id=?,participant_id=?,participant_label=?,contest_name=?,contest_url=?,platform=?,mode=?,started_at=?,ended_at=?,rank=?,solved=?,penalty=?,problems_json=?,cells_json=?,submissions_json=?,revision=?,updated_at=? WHERE id=?',...values,hid);
       else this.store.run('INSERT INTO histories(id,owner_id,local_id,room_id,participant_id,participant_label,contest_name,contest_url,platform,mode,started_at,ended_at,rank,solved,penalty,problems_json,cells_json,submissions_json,revision,updated_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',hid,...values,data.createdAt||now());
-      this.store.run('UPDATE histories SET status=? WHERE id=?',data.status,hid);
+      this.store.run('UPDATE histories SET status=?,rank_source=? WHERE id=?',data.status,rankSource,hid);
       const rules=effectiveRules;
       this.store.run('UPDATE histories SET rules_json=?,points=? WHERE id=?',JSON.stringify(rules),practiceContinuation?old!.points:data.points??old?.points??null,hid);
       const statisticsTiming=room?roomTiming(room):null;
       const statisticsCutoff=statisticsTiming?.frozen && statisticsTiming.freezeAt?Date.parse(statisticsTiming.freezeAt):Infinity;
-      if(data.publicStatistics && Date.parse(data.statisticsAt!)<=statisticsCutoff)this.store.run('UPDATE histories SET statistics_json=?,revealed_problems_json=?,statistics_at=? WHERE id=?',JSON.stringify(data.publicStatistics),JSON.stringify(data.revealedProblems),data.statisticsAt,hid);
+      if(data.statisticsSource==='unavailable')this.store.run('UPDATE histories SET statistics_json=NULL,revealed_problems_json=NULL,statistics_at=NULL,statistics_source=? WHERE id=?','unavailable',hid);
+      else if(data.publicStatistics && Date.parse(data.statisticsAt!)<=statisticsCutoff)this.store.run('UPDATE histories SET statistics_json=?,revealed_problems_json=?,statistics_at=?,statistics_source=? WHERE id=?',JSON.stringify(data.publicStatistics),JSON.stringify(data.revealedProblems),data.statisticsAt,data.statisticsSource,hid);
       // Only server receipt time establishes that an original rank predates freezing.
       const freezeAt=room?roomTiming(room).freezeAt:null;
+      if(room && old?.freeze_rank_source!=='original')this.store.run('UPDATE histories SET freeze_rank=NULL,freeze_rank_at=NULL,freeze_rank_source=? WHERE id=?','unavailable',hid);
       if(room && (!freezeAt || Date.now()<Date.parse(freezeAt))) {
-        this.store.run('UPDATE histories SET freeze_rank=?,freeze_rank_at=? WHERE id=?',data.rank,now(),hid);
+        if(rankSource==='original' && /^=?[1-9][0-9]*$/.test(rank))this.store.run('UPDATE histories SET freeze_rank=?,freeze_rank_at=?,freeze_rank_source=? WHERE id=?',rank,now(),'original',hid);
         if(pointScoring(rules) && data.points!==null) {
           const projection=publicScore(this.store.one('SELECT * FROM histories WHERE id=?',hid)!,room,Date.now(),false,true);
           this.store.run('UPDATE histories SET freeze_points=?,freeze_event_points=?,freeze_cells_json=? WHERE id=?',data.points,projection.points??null,JSON.stringify(data.cells),hid);
@@ -541,7 +550,7 @@ export class CloudService {
         const timing=roomTiming(room),statistics=this.statisticsView(room,histories,problems);
         const rows=histories.map(r=>{
           const view=r.id?this.historyView(r,false,user,true):undefined;
-          return {participantId:r.participant_key,label:r.participant_name,rank:view?.rank||'—',solved:view?.solved??0,penalty:view?.penalty??0,points:view?.points??null,scoring:view?.scoring||(['OI','IOI'].includes(room.scoring_system)?room.scoring_system:'ICPC'),cells:view?.cells||{},historyId:r.id,lastSyncedAt:r.updated_at,status:r.status||'scheduled',frozen:view?.frozen||false,canViewHistory:Boolean(r.id && this.historyVisible(r,user,true))};
+          return {participantId:r.participant_key,label:r.participant_name,rank:view?.rank||'—',rankSource:view?.rankSource||'unavailable',solved:view?.solved??0,penalty:view?.penalty??0,points:view?.points??null,scoring:view?.scoring||(['OI','IOI'].includes(room.scoring_system)?room.scoring_system:'ICPC'),cells:view?.cells||{},historyId:r.id,lastSyncedAt:r.updated_at,status:r.status||'scheduled',frozen:view?.frozen||false,canViewHistory:Boolean(r.id && this.historyVisible(r,user,true))};
         }).sort((a,b)=>a.points!==null||b.points!==null?(b.points??0)-(a.points??0)||a.penalty-b.penalty:b.solved-a.solved||a.penalty-b.penalty);
         return {data:{room:this.roomView(room,user),...timing,rows,problems,...statistics,serverNow:now()}};
       }

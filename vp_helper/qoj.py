@@ -632,19 +632,21 @@ class QOJ:
             return Reference(message="QOJ has not published a matching point scoreboard.", released=released)
         QOJ.graded_maxima(html, contest)
         maxima = contest.extra.get("problem_max_scores", {})
-        rows, seen = [], set()
+        rows, seen, imported = [], set(), False
         for raw in raw_rows:
             if not isinstance(raw, list) or len(raw) < 3 or not isinstance(raw[2], list) or len(raw[2]) < 4:
                 return Reference(message="QOJ returned an incomplete point scoreboard row.", released=released)
             info = raw[2]
-            # Native category 4 is a virtual participant; compare against the
-            # original participants, including their native starred ranks.
+            # QOJ's own /js/uoj.js renders native types 1 and 2 with a star;
+            # type 4 is a virtual participant. Retain native unofficial rows
+            # as reference data without letting them increase formal ranks.
             if info[2] == 4:
                 continue
             if info[2] not in (0, 1, 2, 3) or str(info[0]) in seen or str(info[0]) not in raw_scores:
                 return Reference(message="QOJ returned an unrecognized point-score participant.", released=released)
             ident = str(info[0])
             seen.add(ident)
+            imported = imported or info[2] == 3
             values = raw_scores[ident]
             cells = {label: Cell(score=0, max_score=maxima.get(label)) for label in contest.problems}
             for index, col in (values.items() if isinstance(values, dict) else enumerate(values) if isinstance(values, list) else []):
@@ -663,10 +665,20 @@ class QOJ:
                     or not math.isclose(sum(c.score or 0 for c in cells.values()), raw[0], abs_tol=1e-6)
                     or type(raw[1]) not in (int, float) or not math.isfinite(raw[1]) or raw[1] < 0):
                 return Reference(message="QOJ's native total does not match its point results.", released=released)
-            rows.append(TeamScore(ident, str(info[3]), cells, scoring=scoring, known_points=raw[0],
+            rows.append(TeamScore(ident, str(info[3]), cells, eligible=info[2] in (0, 3),
+                                  scoring=scoring, known_points=raw[0],
                                   oi_time_tiebreak=scoring == "OI", known_score_tiebreak=int(raw[1])))
         if not rows:
             return Reference(message="QOJ has not published original point results yet.", released=released)
+        if imported:
+            # Imports can lose the original starred-team flag, just as in the
+            # ICPC path. Their display category alone cannot verify eligibility.
+            try:
+                classify(rows, contest)
+            except VPError as exc:
+                return Reference(message=str(exc), released=released)
+        if not any(row.eligible for row in rows):
+            return Reference(message="QOJ did not publish any formal original point-score participants.", released=released)
         # A latest/best score cell does not expose a complete attempt timeline.
         return Reference(rows, complete=True, statistics_complete=False, released=released)
 

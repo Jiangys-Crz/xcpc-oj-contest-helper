@@ -1,5 +1,7 @@
 """QOJ's native OI/IOI score schema, without starting an actual VP."""
 import json
+import os
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -7,7 +9,7 @@ from bs4 import BeautifulSoup
 
 from vp_helper.models import Contest, Rules, Submission
 from vp_helper.qoj import QOJ
-from vp_helper.scoring import rank_of, score_submissions
+from vp_helper.scoring import rank_of, score_submissions, statistics
 
 
 URL = "https://qoj.ac/contest/123"
@@ -106,6 +108,67 @@ class QOJPointModes(unittest.TestCase):
         self.assertLess(reference.rows[0].rank_key, reference.rows[1].rank_key)
         self.assertEqual(reference.rows[0].cells["B"].score, 50)
         self.assertFalse(reference.rows[0].cells["B"].solved)
+
+    def test_formal_rank_excludes_native_starred_and_virtual_participants(self):
+        # The original QOJ JavaScript marks types 1 and 2 with '*'. Neither
+        # those entries nor the VP account itself can increase formal rank.
+        for kind in (1, 2):
+            html = scoreboard().replace('["two", 1500, 1, "Two"]',
+                                        json.dumps(["two", 1500, kind, "Two"]))
+            reference = self.api.graded_reference_from_html(html, contest(), 7200, released=True)
+            self.assertTrue(reference.complete)
+            self.assertEqual([row.eligible for row in reference.rows], [True, False])
+            me = score_submissions([Submission("1", "me", "A", 60, "CORRECT", score=100)],
+                                   ["A", "B"], Rules(7200), 7200, scoring="OI", oi_time_tiebreak=True)
+            self.assertEqual(rank_of(me, reference.rows), 2)
+
+    def test_only_starred_or_virtual_results_do_not_invent_formal_rank_one(self):
+        html = scoreboard().replace('["one", 1500, 0, "One"]',
+                                    json.dumps(["one", 1500, 2, "One"]))
+        reference = self.api.graded_reference_from_html(html, contest(), 7200, released=True)
+        self.assertFalse(reference.complete)
+        self.assertIn("formal original", reference.message)
+
+    def test_imported_point_roster_requires_verified_original_eligibility(self):
+        html = scoreboard().replace('["two", 1500, 1, "Two"]',
+                                    json.dumps(["two", 1500, 3, "Two"]))
+        result = self.api.graded_reference_from_html(html, contest(), 7200, released=True)
+        self.assertFalse(result.complete)
+        self.assertIn("eligibility", result.message)
+        c = contest()
+        c.extra["original_eligibility"] = {"version": 1, "contest_name": c.name,
+            "duration": 7200, "penalty_minutes": 0, "problems": ["A", "B"],
+            "source": "https://archive.example.test/original", "teams": [
+                {"id": "original-one", "name": "One", "official": True},
+                {"id": "original-two", "name": "Two", "official": False}]}
+        with tempfile.TemporaryDirectory() as cache, patch.dict(os.environ, {"XDG_CACHE_HOME": cache}):
+            result = self.api.graded_reference_from_html(html, c, 7200, released=True)
+        self.assertTrue(result.complete)
+        self.assertEqual([row.eligible for row in result.rows], [True, False])
+
+    def test_original_final_statistics_exclude_native_virtual_and_practice_accounts(self):
+        c = Contest("qoj", "123", URL, "Original contest", "Original contest", {"A": "10", "B": "11"}, Rules(7200))
+        c.extra["original_eligibility"] = {"version": 1, "contest_name": c.name,
+            "duration": 7200, "penalty_minutes": 20, "problems": ["A", "B"],
+            "source": "https://archive.example.test/original", "teams": [
+                {"id": "official", "name": "Formal onsite team", "official": True},
+                {"id": "star", "name": "Starred onsite team", "official": False}]}
+        rows = [[1, 60, ["$DEFAULT_DAT_PREFIX_0", 0, 3, "Formal onsite team"]],
+                [1, 120, ["$DEFAULT_DAT_PREFIX_1", 0, 4, "Starred onsite team"]],
+                [2, 0, ["current-vp", 0, 4, "Current virtual team"]],
+                [1, 0, ["older-practice", 0, 4, "Old practice team"]]]
+        scores = {"$DEFAULT_DAT_PREFIX_0": {"0": [100, 60, 1, 0, 100, 0]},
+                  "$DEFAULT_DAT_PREFIX_1": {"0": [100, 120, 2, 0, 100, 0]},
+                  "current-vp": {"0": [100, 30, 3, 0, 100, 0], "1": [100, 40, 4, 0, 100, 0]},
+                  "older-practice": {"1": [100, 50, 5, 0, 100, 0]}}
+        html = '<script>standings=' + json.dumps(rows) + ';score=' + json.dumps(scores) + ';problems_id=["A","B"];</script>'
+        with tempfile.TemporaryDirectory() as cache, patch.dict(os.environ, {"XDG_CACHE_HOME": cache}):
+            result = self.api.reference_from_html(html, c, 7200, released=True)
+        self.assertTrue(result.complete)
+        self.assertEqual([row.name for row in result.rows], ["Formal onsite team", "Starred onsite team"])
+        self.assertEqual(statistics(result.rows, ["A", "B"], include_unofficial=True),
+                         {"submitted": {"A": 2, "B": 0}, "attempted": {"A": 2, "B": 0},
+                          "accepted": {"A": 2, "B": 0}})
 
     def test_ioi_equal_points_share_rank_without_oi_time_tie(self):
         reference = self.api.graded_reference_from_html(scoreboard("IOI"), contest("IOI"), 7200, released=True)

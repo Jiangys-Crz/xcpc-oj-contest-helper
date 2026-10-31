@@ -644,15 +644,34 @@ def monitor(path: Path) -> None:
                                            public_elapsed, public=True, released=current_reference.released, name=api.handle, **score_options)
                 all_final = all(s.verdict not in ("PENDING", "UNAVAILABLE") for s in submissions.values() if not s.practice and 0 <= s.time < contest.rules.duration)
                 finalized = (not interrupted and elapsed >= contest.rules.duration and not frozen and current_reference.complete
+                             and any(row.eligible for row in current_reference.rows)
                              and api.submissions_complete and have_polled and all_final)
-                rank = "?" if frozen else str(rank_of(private, current_reference.rows)) if current_reference.complete and private.results_complete else "—"
-                shown_rank = rank_label(private, current_reference.rows) if current_reference.complete and private.results_complete and not frozen else rank
+                from .ranking import original_rank
+                proof = original_rank(private, current_reference, state['url']) if not frozen else None
+                rank = '?' if frozen else proof['rank'].lstrip('=') if proof else '—'
+                shown_rank = proof['rank'] if proof else rank
                 prize = prize_of(private, current_reference.rows, contest.medals) if finalized else ""
-                stats = statistics(current_reference.rows + [public], list(contest.problems)) if current_reference.statistics_complete and public.results_complete else None
+                stats = statistics(current_reference.rows, list(contest.problems), include_unofficial=True) if current_reference.statistics_complete and current_reference.rows else None
+                if stats is not None and hasattr(current_reference.replay, 'statistics_at'):
+                    stats = current_reference.replay.statistics_at(contest, scoring_elapsed,
+                                                                   released=current_reference.released)
                 revealed = revealed_problems(contest, scoring_elapsed, current_reference)
-                if stats is not None and (state.get('public_statistics') != stats or state.get('revealed_problems') != sorted(revealed)):
-                    state.update(public_statistics=stats, revealed_problems=sorted(revealed),
-                                 statistics_at=state['start_time'] + max(0, min(scoring_elapsed, contest.rules.freeze_at if frozen else contest.rules.duration)))
+                reference_changed = False
+                if not state.get('practice_view') and not frozen and state.get('reference_rank') != proof:
+                    state['reference_rank'] = proof
+                    reference_changed = True
+                if stats is not None:
+                    if (state.get('public_statistics') != stats or state.get('revealed_problems') != sorted(revealed)
+                            or state.get('statistics_source') != 'original'):
+                        state.update(public_statistics=stats, revealed_problems=sorted(revealed), statistics_source='original',
+                                     statistics_at=state['start_time'] + max(0, min(scoring_elapsed, contest.rules.freeze_at if frozen else contest.rules.duration)))
+                        reference_changed = True
+                elif state.get('statistics_source') not in ('original', 'unavailable'):
+                    for key in ('public_statistics', 'revealed_problems', 'statistics_at'):
+                        state.pop(key, None)
+                    state['statistics_source'] = 'unavailable'
+                    reference_changed = True
+                if reference_changed:
                     save_state(path, state)
                 shown_message = submission_error or reference_error or current_reference.message
                 if finalized and current_reference.replay is not None and not submission_error and not reference_error:

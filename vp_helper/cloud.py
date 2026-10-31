@@ -333,7 +333,16 @@ def sync_payload(path, state):
         if cell.get('solveTime') is None:
             cell.pop('solveTime', None)
     own = state.get('snapshot', {}).get('own') or {}
-    rank = state.get('practice_rank') or state.get('last_rank') or state.get('summary', {}).get('rank') or own.get('rank') or '—'
+    mode = {'practice':'bt','live':'live'}.get(state.get('mode'), 'vp')
+    if mode == 'vp':
+        from .ranking import verified_rank
+        rank = verified_rank(state, score)
+        rank_source = 'original' if rank != '—' else 'unavailable'
+    elif mode == 'live':
+        rank = state.get('practice_rank') or own.get('rank') or state.get('last_rank') or state.get('summary', {}).get('rank') or '—'
+        rank_source = 'native' if str(rank) not in ('', '?', '—') else 'unavailable'
+    else:
+        rank, rank_source = '—', 'unavailable'
     for index, label in enumerate(contest.problems):
         native = own.get('problemResults', [])
         if index < len(native):
@@ -345,7 +354,6 @@ def sync_payload(path, state):
             cells[label]['tries'] = max(original_attempts.cells[label].tries, native_tries) + practice_score.cells[label].tries
             if scoring != 'ICPC' and type(cell.get('points')) in (int, float):
                 cells[label]['points'] = cell['points']
-    mode = {'practice':'bt','live':'live'}.get(state.get('mode'), 'vp')
     solved = practice_score.solved if mode == 'bt' else sum(c['solved'] for c in cells.values())
     payload = {'localId':path.stem,'contest':{'platform':contest.platform,'contestId':contest.contest_id,
                'url':contest.url,'name':contest.name,'problems':list(contest.problems),
@@ -355,7 +363,7 @@ def sync_payload(path, state):
                         'scoring':scoring,'score_policy':'subtasks' if contest.extra.get('score_policy') == 'subtasks' else 'latest' if scoring == 'OI' else 'best',
                         'problem_max_scores':maxima,'contest_format':contest.extra.get('contest_format', 'ICPC'),
                         'problem_reveal_count':contest.rules.problem_reveal_count}},
-               'mode':mode,'status':state.get('status','running'),'rank':str(rank),'solved':solved,
+               'mode':mode,'status':state.get('status','running'),'rank':str(rank),'rankSource':rank_source,'solved':solved,
                'penalty':0 if mode == 'bt' or scoring != 'ICPC' else _penalty(own.get('penalty'), score.penalty),'cells':cells,
                'submissions':[{'id':str(e['id']),'problem':e['problem'],'submittedAt':_iso(state['start_time']+e['time']),
                               'verdict':e['verdict'],'practice':e['practice'],
@@ -371,9 +379,28 @@ def sync_payload(path, state):
         points = own.get('points', score.points)
         if points is not None:
             payload['points'] = points
-    if state.get('public_statistics') is not None and state.get('statistics_at') is not None:
+    payload['statisticsSource'] = ('original' if mode == 'vp' and state.get('statistics_source') == 'original'
+                                   else 'native' if mode == 'live' else 'unavailable')
+    if (state.get('public_statistics') is not None and state.get('statistics_at') is not None
+            and payload['statisticsSource'] != 'unavailable'):
         payload.update(publicStatistics=state['public_statistics'], revealedProblems=state.get('revealed_problems', []),
                        statisticsAt=_iso(state['statistics_at']))
+    if mode == 'live':
+        snapshot = state.get('snapshot') or {}
+        native_statistics = snapshot.get('stats')
+        if isinstance(native_statistics, dict):
+            public_statistics = {}
+            for kind in ('submitted', 'attempted', 'accepted'):
+                values = native_statistics.get(kind)
+                if kind == 'accepted' and values is None and scoring in ('ICPC', 'CF'):
+                    values = native_statistics.get('scored')
+                public_statistics[kind] = {label: count for label, count in (values.items() if isinstance(values, dict) else [])
+                                           if label in contest.problems and type(count) in (int, float)
+                                           and math.isfinite(count) and count >= 0 and int(count) == count}
+            at = snapshot.get('at')
+            if type(at) in (int, float) and math.isfinite(at) and any(public_statistics.values()):
+                payload.update(publicStatistics=public_statistics, revealedProblems=list(contest.problems),
+                               statisticsAt=_iso(at), statisticsSource='native')
     if mode != 'bt':
         payload['startedAt'] = _iso(state['start_time'])
         natural_end = state['start_time'] + duration

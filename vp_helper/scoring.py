@@ -214,10 +214,10 @@ def medal_lines(original: list[TeamScore], medals: Medals | None, *, complete: b
     return result
 
 
-def statistics(rows: list[TeamScore], problems: list[str]) -> dict[str, dict[str, int]]:
+def statistics(rows: list[TeamScore], problems: list[str], *, include_unofficial: bool = False) -> dict[str, dict[str, int]]:
     result = {key: dict.fromkeys(problems, 0) for key in ("submitted", "attempted", "accepted")}
     for row in rows:
-        if not row.eligible:
+        if not include_unofficial and not row.eligible:
             continue
         for p in problems:
             c = row.cells.get(p, Cell())

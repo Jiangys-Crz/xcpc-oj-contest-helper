@@ -42,19 +42,24 @@ def _names(value) -> list[str]:
 
 def metadata(data: dict, contest: Contest, source: str) -> dict:
     try:
-        if data["sorter"]["algorithm"] != "ICPC" or data["sorter"]["config"].get("rankingTimePrecision") != "min":
+        config = data["sorter"]["config"]
+        modern_minutes = config.get("timePrecision") == "min" and config.get("timeRounding") == "floor"
+        legacy_minutes = config.get("rankingTimePrecision") == "min" and "timePrecision" not in config
+        if data["sorter"]["algorithm"] != "ICPC" or not (modern_minutes or legacy_minutes):
             raise ValueError("unsupported SRK scoring")
         duration = _seconds(data["contest"]["duration"])
         penalty = _seconds(data["sorter"]["config"]["penalty"])
         labels = [p["alias"] for p in data["problems"]]
         if (int(duration) != duration or penalty % 60 or labels != list(contest.problems)
+                or penalty // 60 != contest.rules.penalty_minutes
                 or duration < contest.rules.duration):
             raise ValueError("SRK rules do not match")
         # The archive must identify the exact judge problems, not just a city.
         for problem in data["problems"]:
             link = urlsplit(problem["link"])
             base = urlsplit(contest.url)
-            if (link.hostname != base.hostname or link.path != base.path + "/problem/" + contest.problems[problem["alias"]]):
+            if (link.scheme != "https" or link.username or link.password or link.port or link.query or link.fragment
+                    or link.hostname != base.hostname or link.path != base.path + "/problem/" + contest.problems[problem["alias"]]):
                 raise ValueError("SRK problems do not match this contest")
         teams = []
         groups = {}
@@ -119,7 +124,8 @@ def metadata(data: dict, contest: Contest, source: str) -> dict:
         raise VPError("The SRK archive does not match the contest, judge problem IDs, or explicit team eligibility.") from None
 
 
-def submissions(data: dict, metadata: dict, contest: Contest) -> list[Submission]:
+def results(data: dict, metadata: dict, contest: Contest) -> tuple[list[Submission], list[TeamScore]]:
+    """Validate the event history against every final cell and declared score."""
     events, expected = [], []
     teams = {team["id"]: team for team in metadata["teams"]}
     try:
@@ -140,12 +146,20 @@ def submissions(data: dict, metadata: dict, contest: Contest) -> list[Submission
                 if accepted:
                     if not tries:
                         raise ValueError("accepted SRK problem without attempt")
-                    raw_time += at + contest.rules.penalty_minutes * 60 * (tries - 1)
+                    counted_time = (int(at // 60) * 60
+                                    if data["sorter"]["config"].get("timePrecision") == "min" else at)
+                    raw_time += counted_time + contest.rules.penalty_minutes * 60 * (tries - 1)
                 for solution in status.get("solutions", []):
                     code = solution["result"]
-                    if code in ("NOUT", "UKE") and code in data["sorter"]["config"].get("noPenaltyResults", []):
-                        continue
-                    result = verdict({"FB": "AC", "RTE": "RE", "PE": "WA"}.get(code, code))
+                    ignored = data["sorter"]["config"].get("noPenaltyResults", ["FB", "AC", "?", "NOUT", "CE", "UKE", None])
+                    if code in ("NOUT", "UKE") and code in ignored:
+                        # Keep physical submissions for public submit/attempt
+                        # totals even when the source excludes them from score.
+                        result = "IGNORED"
+                    else:
+                        # SRK explicitly allows No Output to count as an
+                        # unsuccessful attempt when removed from noPenaltyResults.
+                        result = verdict({"FB": "AC", "RTE": "RE", "PE": "WA", "NOUT": "WA"}.get(code, code))
                     event_time = _seconds(solution["time"])
                     if result in ("PENDING", "TOO-LATE") or not 0 <= event_time < contest.rules.duration:
                         raise ValueError("nonfinal or out-of-window SRK event")
@@ -163,6 +177,10 @@ def submissions(data: dict, metadata: dict, contest: Contest) -> list[Submission
                                        contest.rules.duration, team_id=final.id)
             if actual.cells != final.cells:
                 raise ValueError("SRK histories do not reproduce every final cell")
-        return events
+        return events, expected
     except (KeyError, TypeError, ValueError, AttributeError, VPError):
         raise VPError("The SRK submission histories do not reproduce the original final scores.") from None
+
+
+def submissions(data: dict, metadata: dict, contest: Contest) -> list[Submission]:
+    return results(data, metadata, contest)[0]

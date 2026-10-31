@@ -91,6 +91,39 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(snapshot["stats"]["attempted"], {"A": 4, "B": 1})
         self.api.web.session.post.assert_not_called()
 
+    def test_global_rank_and_statistics_do_not_depend_on_own_row_position(self):
+        payload = board()
+        other = [{"type": "rank", "value": "1"}, {"type": "user", "value": "other", "raw": 99},
+                 {"type": "time", "value": "2\n0:10"},
+                 {"type": "record", "score": 100, "value": "+"},
+                 {"type": "record", "score": 100, "value": "+"}]
+        payload["rows"].insert(1, other)
+        self.api.get_json = Mock(return_value=payload)
+        first = self.api.snapshot(self.contest, details=details())
+        self.assertEqual(first["own"]["rank"], "7")
+        self.assertEqual(first["stats"]["submitted"], {"A": 10, "B": 2})
+        self.assertEqual(first["stats"]["accepted"], {"A": 3, "B": 0})
+        payload["rows"][2][0]["value"] = "17"
+        payload["ratingBoard"]["problems"][0].update(submitted=15, attempted=8, accepted=6)
+        second = self.api.snapshot(self.contest, details=details())
+        self.assertEqual(second["own"]["rank"], "17")
+        self.assertEqual(second["stats"]["attempted"]["A"], 8)
+        self.assertEqual(second["stats"]["accepted"]["A"], 6)
+        payload["rows"].pop(2)
+        without_own = self.api.snapshot(self.contest, details=details())
+        self.assertIsNone(without_own["own"])
+        self.assertEqual(without_own["stats"], second["stats"])
+
+    def test_native_contest_problem_statistics_remain_available_without_custom_view(self):
+        # Hydro resets pdict counters in scoreboardHeader and accumulates all
+        # contest participants' journals, independently of the selected user.
+        payload = board()
+        payload.pop("ratingBoard")
+        self.api.get_json = Mock(return_value=payload)
+        snapshot = self.api.snapshot(self.contest, details=details())
+        self.assertEqual(snapshot["stats"], {"submitted": {"A": 10, "B": 2},
+                                             "accepted": {"A": 3, "B": 0}})
+
     def test_wrong_user_and_unregistered_are_rejected(self):
         self.api.web.get.return_value = Mock(url=ORIGIN, text=page(uid=43))
         with self.assertRaisesRegex(VPError, "another account"):
