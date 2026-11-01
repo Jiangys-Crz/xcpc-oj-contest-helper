@@ -10,6 +10,7 @@ from rich.console import Console, Group
 from rich.measure import Measurement
 from rich.padding import Padding
 from rich.segment import Segment
+from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
@@ -30,6 +31,8 @@ class ProblemBox:
     width: int
     height: int
     content_height: int = 0
+    details_below: bool = False
+    detail_width: int = 0
 
     @property
     def plain(self):
@@ -39,28 +42,44 @@ class ProblemBox:
         return Measurement(self.width, self.width)
 
     def __rich_console__(self, console, options):
-        lines = self.value.wrap(console, self.width, overflow="fold", no_wrap=False)
+        text_width = (self.detail_width or self.width) if self.details_below else self.width
+        lines = self.value.wrap(console, text_width, overflow="fold", no_wrap=False)
         content = []
-        margin = max(0, options.max_width - self.width)
+        text_margin = max(0, options.max_width - text_width)
         for line in lines:
-            remaining = self.width - cell_len(line.plain)
-            left = (remaining + margin % 2) // 2
+            remaining = text_width - cell_len(line.plain)
+            left = (remaining + text_margin % 2) // 2
             content.append(" " * left + line.plain + " " * (remaining - left))
         # Reserve the same content band for every cell so a one-line pending
         # result aligns with the attempts line of a two-line accepted result.
-        content.extend([" " * self.width] * max(0, self.content_height - len(content)))
-        extra = max(0, self.height - len(content))
-        content = ([" " * self.width] * (extra // 2) + content
-                   + [" " * self.width] * (extra - extra // 2))
+        content.extend([" " * text_width] * max(0, self.content_height - len(content)))
+        if self.details_below:
+            body = [" " * self.width] * self.height
+        else:
+            extra = max(0, self.height - len(content))
+            body = ([" " * self.width] * (extra // 2) + content
+                    + [" " * self.width] * (extra - extra // 2))
+        margin = max(0, options.max_width - self.width)
         style = console.get_style(self.value.style)
-        for line in content:
+        for line in body:
             # Text's automatic justification extends its background into the
             # extra character assigned to some columns. Explicit plain margins
             # preserve equal colored widths when division has a remainder.
             yield Segment(" " * (margin // 2))
-            yield Segment(line, style)
+            # A single character column cannot contain a whole-cell square
+            # background. Its square glyph keeps the state marker square too.
+            if self.width == 1 and self.height == 1 and self.details_below:
+                colored = style.bgcolor is not None and not style.bgcolor.is_default
+                yield Segment("■" if colored else " ", Style(color=style.bgcolor) if colored else None)
+            else:
+                yield Segment(line, style)
             yield Segment(" " * (margin - margin // 2))
             yield Segment.line()
+        if self.details_below:
+            for line in content:
+                yield Segment(" " * (text_margin // 2) + line
+                              + " " * (text_margin - text_margin // 2))
+                yield Segment.line()
 
 
 def score_table(columns, problems, rows, width, *, separate_summary=False, _allow_split=True,
@@ -148,14 +167,20 @@ def score_table(columns, problems, rows, width, *, separate_summary=False, _allo
                 lines[0] = re.sub(r"\s+tr(?:y|ies)\b", "", lines[0]).replace(" ", "")
                 lines[0] = re.sub(r"pending\b", "?", lines[0])
                 values[index] = Text("\n".join(lines), style=value.style)
-        # Terminal glyphs are usually about twice as tall as they are wide.
-        # Keep the colored body near square, using plain column margins on a
-        # wide pane instead of making its height grow with the entire column.
-        box_width = min(problem_width, max(full_problem_width, 16))
+        # One terminal row is about twice one character column's width. Use
+        # exact 2:1 dimensions rather than rounding an odd width or stretching
+        # the background to accommodate the text. Narrow cells put the full
+        # count and time below the square, keeping every problem visible.
+        box_width = max(1, min(16, problem_width // 2 * 2))
+        height = max(1, box_width // 2)
         content_height = max(len(value.wrap(layout, box_width, overflow="fold", no_wrap=False))
                              for value in values)
-        height = max(_minimum_box_height, min(8, (box_width + 1) // 2), content_height)
-        rows = [[*rows[0][:len(columns)], *(ProblemBox(value, box_width, height, content_height) for value in values)],
+        details_below = content_height > height or box_width == 1
+        if details_below:
+            content_height = max(len(value.wrap(layout, problem_width, overflow="fold", no_wrap=False))
+                                 for value in values)
+        rows = [[*rows[0][:len(columns)], *(ProblemBox(value, box_width, height, content_height,
+                                                       details_below, problem_width) for value in values)],
                 *rows[1:]]
     for index, row in enumerate(rows):
         table.add_row(*row, end_section=separate_summary and index == 0)

@@ -697,13 +697,13 @@ class SubmissionDisplayTests(unittest.TestCase):
                 self.assertEqual(len(dimensions),5)
                 self.assertEqual(len(set(dimensions)),1)
                 for box_width,box_height in dimensions:
-                    self.assertLessEqual(abs(box_width-2*box_height),1,'Terminal cells are about twice as tall as wide')
+                    self.assertEqual(box_width,2*box_height,'Text must never stretch the square background')
                     self.assertLessEqual(box_width,16,'Wide columns keep a bounded colored body')
                     self.assertLessEqual(box_height,8)
 
     def test_square_problem_box_centers_both_content_lines_inside_plain_column_margins(self):
         value=Text('2 tries\n108',style='black on #60e760')
-        box=ProblemBox(value,11,6)
+        box=ProblemBox(value,12,6)
         console=Console(width=18,color_system='truecolor',legacy_windows=False)
         lines=console.render_lines(box,console.options,pad=False)
         plain=[''.join(segment.text for segment in line) for line in lines]
@@ -716,9 +716,26 @@ class SubmissionDisplayTests(unittest.TestCase):
         for line in lines:
             colored=[segment for segment in line if segment.style and segment.style.bgcolor
                      and segment.style.bgcolor.type.name!='DEFAULT']
-            self.assertEqual(sum(segment.cell_length for segment in colored),11)
+            self.assertEqual(sum(segment.cell_length for segment in colored),12)
             self.assertEqual(sum(segment.cell_length for segment in line),18)
         self.assertEqual(value.plain,'2 tries\n108')
+
+    def test_narrow_square_keeps_complete_details_below_without_stretching_background(self):
+        view=self.active_team_views(20)[0]
+        boxes=self.problem_boxes(view,76)
+        self.assertTrue(all(box.details_below for box in boxes))
+        self.assertTrue(all(box.width==2*box.height for box in boxes))
+        value=Text('1+1\n123456',style='white on #2563eb')
+        box=ProblemBox(value,2,1,content_height=3,details_below=True,detail_width=3)
+        console=Console(width=5,color_system='truecolor',legacy_windows=False)
+        lines=console.render_lines(box,console.options,pad=False)
+        self.assertEqual(len(lines),4)
+        for index,line in enumerate(lines):
+            colored=[segment for segment in line if segment.style and segment.style.bgcolor
+                     and not segment.style.bgcolor.is_default]
+            self.assertEqual(sum(segment.cell_length for segment in colored),2 if index==0 else 0)
+        self.assertEqual(''.join(segment.text.strip() for line in lines[1:] for segment in line),'1+1123456')
+        self.assertEqual(value.plain,'1+1\n123456')
 
     def test_practice_cells_are_purple_and_pending_cells_blue_without_recoloring_original_ac(self):
         contest=self.contest()
