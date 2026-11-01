@@ -57,7 +57,7 @@ class ProblemBox:
 
 
 def score_table(columns, problems, rows, width, *, separate_summary=False, _allow_split=True,
-                _allow_groups=True, _minimum_problem_width=1, _minimum_box_height=0):
+                _allow_viewport=True, _minimum_problem_width=1, _minimum_box_height=0):
     problems = list(problems)
 
     def content_width(value):
@@ -72,8 +72,8 @@ def score_table(columns, problems, rows, width, *, separate_summary=False, _allo
         sizes[index] = min(sizes[index], max(minimum[index], 24))
     count = len(columns) + len(problems)
     # Keep complete attempt labels and native per-problem values on their
-    # original lines. Narrow panes get consecutive groups, never abbreviated
-    # counts or "tries" split across lines.
+    # original lines. A narrow pane pans one logical row, never abbreviating
+    # counts, splitting "tries", or creating additional problem headers.
     first_cells = rows[0][len(columns):] if rows else []
     problem_minimum = max([_minimum_problem_width, *[content_width(label) for label in problems],
                            *[content_width(cell) for row in rows for cell in row[len(columns):]]])
@@ -105,9 +105,13 @@ def score_table(columns, problems, rows, width, *, separate_summary=False, _allo
         problem_table = score_table([""] if summaries else [], problems, problem_rows, width,
                                     separate_summary=separate_summary, _allow_split=False)
         return Group(metadata, Text(""), problem_table)
-    if _allow_groups and problems and rows and readable_width > width:
-        return score_groups(columns, problems, rows, width, problem_minimum,
-                            separate_summary=separate_summary)
+    if _allow_viewport and problems and rows and readable_width > width:
+        table = score_table(columns, problems, rows, readable_width, separate_summary=separate_summary,
+                            _allow_split=False, _allow_viewport=False)
+        first_problem = sum(sizes) + len(columns)
+        starts = tuple(first_problem + index * (problem_minimum + 1) for index in range(len(problems)))
+        return ProblemViewport(table, readable_width, column_starts=starts,
+                               problem_width=problem_minimum, problem_labels=tuple(problems))
     padding = 1 if sum(sizes) + problem_space + 2 * count <= width else 0
     available = width - problem_space - (2 * count if padding else max(0, count - 1))
     if available < sum(minimum):
@@ -146,37 +150,72 @@ def score_table(columns, problems, rows, width, *, separate_summary=False, _allo
     return table
 
 
-def score_groups(columns, problems, rows, width, problem_width, *, separate_summary=False):
-    """Keep whole problem labels, attempt lines and statistics in aligned groups."""
-    def content_width(value):
-        text = value.plain if isinstance(value, Text) else str(value)
-        return max((cell_len(line) for line in text.splitlines()), default=0)
+@dataclass
+class ProblemViewport:
+    """One complete problem matrix, displayed through a cell-safe viewport."""
+    table: Table
+    natural_width: int
+    offset: int = 0
+    column_starts: tuple[int, ...] = ()
+    problem_width: int = 0
+    problem_labels: tuple[str, ...] = ()
 
-    label_width = sum(max([content_width(label)] + [content_width(row[index]) for row in rows])
-                      for index, label in enumerate(columns))
-    capacity = (width - label_width - max(0, len(columns) - 1)) // (problem_width + 1)
-    if not columns:
-        capacity = (width + 1) // (problem_width + 1)
-    capacity = min(capacity, len(problems))
-    if capacity < 1:
-        required = label_width + problem_width + len(columns)
-        return Text(f"Enlarge the score pane to at least {required} columns to show a complete problem cell.",
-                    style="#555555", overflow="fold")
-    # The final group reserves the same slots as earlier groups, so every
-    # colored rectangle keeps the same width and height after resizing.
-    box_height = max((len((cell.plain if isinstance(cell, Text) else str(cell)).split("\n"))
-                      for cell in rows[0][len(columns):]), default=1)
-    groups = []
-    for start in range(0, len(problems), capacity):
-        selected = problems[start:start + capacity]
-        empty = capacity - len(selected)
-        labels = [*selected, *([""] * empty)]
-        grouped_rows = [[*row[:len(columns)], *row[len(columns) + start:len(columns) + start + len(selected)],
-                         *([Text("")] * empty)] for row in rows]
-        groups.append(score_table(columns, labels, grouped_rows, width, separate_summary=separate_summary,
-                                  _allow_split=False, _allow_groups=False,
-                                  _minimum_problem_width=problem_width, _minimum_box_height=box_height))
-    return Group(*groups)
+    def visible_count(self, width):
+        if not self.column_starts:
+            return 0
+        available = width - self.column_starts[0]
+        return min(len(self.column_starts), max(0, (available + 1) // (self.problem_width + 1)))
+
+    def max_offset(self, width):
+        if self.column_starts:
+            visible = self.visible_count(width)
+            return max(0, len(self.column_starts) - visible) if visible else 0
+        return max(0, self.natural_width - width)
+
+    @staticmethod
+    def slice_line(line, start, end):
+        parts = list(Segment.divide(line, [start, end]))
+        return parts[1] if len(parts) > 1 else []
+
+    def __rich_measure__(self, console, options):
+        return Measurement(options.max_width, options.max_width)
+
+    def __rich_console__(self, console, options):
+        width = options.max_width
+        offset = min(max(0, self.offset), self.max_offset(width))
+        full_options = options.update(width=self.natural_width, height=None)
+        if self.column_starts:
+            visible = self.visible_count(width)
+            if not visible:
+                required = self.column_starts[0] + self.problem_width
+                yield Text(f"Enlarge the score pane to at least {required} columns for a complete problem cell.",
+                           style="#777777", overflow="fold")
+                return
+            prefix = self.column_starts[0]
+            start = self.column_starts[offset]
+            end = start + visible * (self.problem_width + 1) - 1
+            for line in console.render_lines(self.table, full_options, pad=True):
+                yield from self.slice_line(line, 0, prefix)
+                yield from self.slice_line(line, start, end)
+                yield Segment(" " * max(0, width - prefix - (end - start)))
+                yield Segment.line()
+            hint = f"Problems {offset + 1}–{offset + visible} / {len(self.column_starts)} · ←/→ in dashboard"
+        else:
+            for line in console.render_lines(self.table, full_options, pad=True):
+                # Rich replaces a sliced half of a wide Unicode character with
+                # a space, preserving terminal positions and segment styles.
+                yield from self.slice_line(line, offset, offset + width)
+                yield Segment.line()
+            hint = f"Problems {offset + 1}–{min(offset + width, self.natural_width)} / {self.natural_width} columns · ←/→ in dashboard"
+        yield Text(hint, style="#777777", overflow="fold")
+
+
+def problem_viewports(renderable):
+    if isinstance(renderable, ProblemViewport):
+        yield renderable
+    elif isinstance(renderable, Group):
+        for item in renderable.renderables:
+            yield from problem_viewports(item)
 
 
 def participant_text(title: str, subtitle: str, fallback: str) -> Text:
@@ -560,6 +599,9 @@ class TerminalDashboard:
         self.offset = 0
         self.page_size = 1
         self.total_lines = 0
+        self.horizontal_offset = 0
+        self.horizontal_limit = 0
+        self.horizontal_stops = [0]
         self.pairs = {}
         self.continue_monitor = continue_monitor
 
@@ -642,7 +684,17 @@ class TerminalDashboard:
                 return True
             if key in (ord("q"), ord("Q")):
                 return False
-            if key in (c.KEY_UP, ord("k")):
+            if key in (c.KEY_LEFT, ord("h")):
+                self.horizontal_offset = next((value for value in reversed(self.horizontal_stops)
+                                               if value < self.horizontal_offset), 0)
+            elif key in (c.KEY_RIGHT, ord("l")):
+                self.horizontal_offset = next((value for value in self.horizontal_stops
+                                               if value > self.horizontal_offset), self.horizontal_limit)
+            elif key == ord("["):
+                self.horizontal_offset = 0
+            elif key == ord("]"):
+                self.horizontal_offset = self.horizontal_limit
+            elif key in (c.KEY_UP, ord("k")):
                 self.offset -= 1
             elif key in (c.KEY_DOWN, ord("j")):
                 self.offset += 1
@@ -664,6 +716,7 @@ class TerminalDashboard:
                 except c.error:
                     pass
             self.offset = max(0, min(self.offset, max(0, self.total_lines - self.page_size)))
+            self.horizontal_offset = max(0, min(self.horizontal_offset, self.horizontal_limit))
 
     def _lines(self, renderable, width: int):
         options = self.console.options.update(width=width, height=None)
@@ -695,7 +748,14 @@ class TerminalDashboard:
             return
         content_width = width - 4
         left = (width - content_width) // 2
-        fixed = self._lines(dashboard.fixed(content_width), content_width)
+        fixed_view = dashboard.fixed(content_width)
+        viewports = list(problem_viewports(fixed_view))
+        self.horizontal_limit = max((item.max_offset(content_width) for item in viewports), default=0)
+        self.horizontal_offset = max(0, min(self.horizontal_offset, self.horizontal_limit))
+        self.horizontal_stops = list(range(self.horizontal_limit + 1))
+        for item in viewports:
+            item.offset = self.horizontal_offset
+        fixed = self._lines(fixed_view, content_width)
         records = self._lines(dashboard.records(), content_width)
         # Wrapped names and results can make the scoreboard taller than the
         # pane. Keep every field reachable by scrolling the whole view then.
@@ -719,7 +779,9 @@ class TerminalDashboard:
         footer.add_row(Text(dashboard.message, style="#666666"),
                        Text(f"{len(dashboard.submissions)} submissions · {first}–{last} / {self.total_lines} lines", style="#666666"))
         self._draw(height - 2, self._lines(footer, content_width)[0], content_width, left)
-        keys = Text("q return · ↑/↓ scroll · PgUp/PgDn · Home/End", style="#999999", no_wrap=True, overflow="ellipsis")
+        help_text = ("q return · ←/→ h/l problems · [/] first/last · ↑/↓ logs" if self.horizontal_limit else
+                     "q return · ↑/↓ scroll · PgUp/PgDn · Home/End")
+        keys = Text(help_text, style="#999999", no_wrap=True, overflow="ellipsis")
         self._draw(height - 1, self._lines(keys, content_width)[0], content_width, left)
         self.screen.noutrefresh()
         self.curses.doupdate()
