@@ -3,6 +3,7 @@ from dataclasses import asdict, is_dataclass
 import time
 
 from .models import VPError
+from .submission_languages import merge_language
 
 
 def seed_pending(api, platform, records):
@@ -25,7 +26,7 @@ class PendingResults:
 
     def update(self, api, records, lookup):
         now = time.monotonic()
-        current = {str(e['id']): dict(e) for e in records}
+        current = {str(e['id']): merge_language(self.saved.get(str(e['id'])), e) for e in records}
         for sid, event in current.items():
             if event['verdict'] != 'PENDING':
                 self.confirmed.pop(sid, None)
@@ -43,6 +44,10 @@ class PendingResults:
                 continue
             if fields is None:
                 continue
+            # A still-judging detail response can already identify its compiler.
+            # Preserve that metadata without changing the selected verdict.
+            pending[sid] = merge_language(fields, pending[sid])
+            current[sid] = merge_language(fields, current.get(sid, pending[sid]))
             if fields['verdict'] == 'PENDING':
                 self.confirmed.pop(sid, None)
             else:

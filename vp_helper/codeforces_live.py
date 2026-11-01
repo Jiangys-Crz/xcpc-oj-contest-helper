@@ -10,6 +10,7 @@ from .portable import login_browser
 from .http import WebSession
 from .platform_clock import platform_now
 from .models import Contest, Rules, VPError
+from .submission_languages import language_fields
 from .accounts import refresh_api_credentials
 from .parsing import contest_url
 from .storage import file_lock, read_json, state_directory, write_json
@@ -257,7 +258,7 @@ class CodeforcesLive:
                 result[str(raw["id"])] = {
                     "id": str(raw["id"]), "team": "me", "problem": raw["problem"]["index"],
                     "time": relative, "verdict": value, "testset": raw.get("testset", ""),
-                    "points": raw.get("points"), "practice": kind == "PRACTICE",
+                    "points": raw.get("points"), "practice": kind == "PRACTICE", **language_fields(raw),
                 }
             if len(data) < 1000:
                 self.submissions_complete = True

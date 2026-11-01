@@ -6,6 +6,7 @@ import {ResultColumns} from './ResultColumns';
 import {TableFit} from './TableFit';
 import type {Cell,History,Submission} from './types';
 import {judgingState} from './judging';
+import {submissionLanguage} from '../lib/submission-language';
 
 const problemColors=[
   ['#a4b68b','#111827'],['#99c8e6','#111827'],['#f6e33e','#111827'],['#e9b8cd','#111827'],
@@ -83,7 +84,7 @@ export function SubmissionsTable({submissions,title='Submissions',participantLab
       <tbody>{records.map((submission,i)=>detailStyle?<tr key={submission.id+'-'+i} data-stage={submission.practice?'practice':'contest'}>
         <td className="time-value">{dateTime(submission.submittedAt)}</td>
         <td className="problem-letter"><ProblemBadge problem={submission.problem} order={order}/></td>
-        <td className="language-value">{typeof submission.language==='string'&&submission.language.trim()?submission.language:'—'}</td>
+        <td className="language-value">{submissionLanguage(submission.language)}</td>
         <td className="text-left"><span className={'judge-verdict judge-verdict-'+judgingState(submission.verdict)} title={submission.practice?'Practice submission':'Contest submission'}>{submission.verdict}</span></td>
         {showScore&&<td>{submission.practice?'—':submission.points??'—'}</td>}
         <td className="judge-record-cell">{submission.url?<a href={submission.url} target="_blank" rel="noreferrer" className="submission-link judge-submission-record" aria-label={'View submission #'+submission.id} title={'Submission #'+submission.id}><FileText size={15} aria-hidden="true"/><span>#{submission.id}</span></a>:<span className="judge-submission-record" title={'Submission #'+submission.id}><FileText size={15} aria-hidden="true"/><span>#{submission.id}</span></span>}</td>

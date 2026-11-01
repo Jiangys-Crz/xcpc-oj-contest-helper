@@ -15,6 +15,7 @@ from .portable import login_browser
 from .http import WebSession
 from .platform_clock import platform_now
 from .models import Contest, Rules, VPError
+from .submission_languages import language_fields
 from .parsing import CWNUOJ_HOST, contest_url, timestamp
 from .receipts import valid_submission_id
 from .pending_results import PendingResults
@@ -327,7 +328,7 @@ class HydroLive:
                 or record.get('contest') not in (None, '', self.id)):
             raise VPError('CWNUOJ pending record does not match this account, contest and problem.')
         value = VERDICTS.get(record.get('status'))
-        return {'verdict': value, 'points': awarded_score(contest, event['problem'], record.get('score'))} if value is not None else None
+        return {'verdict': value, 'points': awarded_score(contest, event['problem'], record.get('score')), **language_fields(record)} if value is not None else None
 
     def _submissions(self, contest: Contest, *, correction: bool = False) -> list[dict]:
         if not self._identified:
@@ -386,7 +387,7 @@ class HydroLive:
                 verdict = VERDICTS.get(raw.get("status"), "HIDDEN" if raw.get("status") is None else "UNAVAILABLE")
                 result[sid] = {"id": sid, "team": "me", "problem": label, "time": relative,
                                "verdict": verdict, "points": awarded_score(contest, label, raw.get("score")),
-                               "practice": correction or created >= contest.extra["end_time"]}
+                               "practice": correction or created >= contest.extra["end_time"], **language_fields(raw)}
             if correction and not contest.extra.get("practice") and records and all(valid_submission_id(str(r.get("_id", "")), "cwnuoj")
                                                and int(str(r["_id"])[:8], 16) < contest.original_start for r in records):
                 break

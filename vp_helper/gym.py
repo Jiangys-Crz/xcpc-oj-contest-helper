@@ -11,6 +11,7 @@ from .http import WebSession, form_values
 from .accounts import refresh_api_credentials
 from .platform_clock import platform_now
 from .models import Cell, Contest, Medals, Reference, Rules, Submission, TeamScore, VPError, StartRejected
+from .submission_languages import record_language
 from .originals import OriginalReplay, classify, load_metadata
 from .parsing import ccpc_reveal_count, medals_from_html
 from .scoring import codeforces_verdict, verdict
@@ -305,7 +306,7 @@ class Gym:
                 relative = (raw["relativeTimeSeconds"] + native_start - self.start_time if native and not local
                             else raw["creationTimeSeconds"] - self.start_time)
                 parsed = codeforces_verdict(raw.get('verdict'))
-                result[sid] = Submission(sid, "me", label, float(relative), 'UNAVAILABLE' if parsed == 'PARTIAL' else parsed)
+                result[sid] = Submission(sid, "me", label, float(relative), 'UNAVAILABLE' if parsed == 'PARTIAL' else parsed, language=record_language(raw))
             if len(data) < 1000 or reached_start:
                 self.submissions_complete = True
                 break
@@ -480,7 +481,8 @@ class Gym:
                 relative = float(raw["relativeTimeSeconds"])
                 if not 0 <= relative < contest.rules.duration:
                     continue
-                submissions.append(Submission(str(raw["id"]), ident, raw["problem"]["index"], relative, verdict(raw.get("verdict"))))
+                submissions.append(Submission(str(raw["id"]), ident, raw["problem"]["index"], relative,
+                                              verdict(raw.get("verdict")), language=record_language(raw)))
             if len(data) < 1000:
                 break
             offset += 1000

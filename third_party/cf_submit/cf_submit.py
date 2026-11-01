@@ -154,6 +154,7 @@ def submit_problem(browser, contest, lang, source, guru, expected_problem=None):
         print("No compatible compiler is offered by this contest")
         return False
     submission["programTypeId"] = langcode
+    browser.vp_submission_language = available[langcode]
 
     # check acmsguru
     if guru != -1:
@@ -259,7 +260,8 @@ def submit(browser, handle, contest, problem, lang, source, show, guru):
                 config = Path('contest.json')
                 if config.is_file():
                     try:
-                        record_receipt(json.loads(config.read_text(encoding='utf8')), sid, problem.upper(), submitted_at)
+                        record_receipt(json.loads(config.read_text(encoding='utf8')), sid, problem.upper(), submitted_at,
+                                       language=getattr(browser, 'vp_submission_language', None))
                     except (VPError, OSError) as exc:
                         print('Submitted, but the monitor notification failed: ' + str(exc))
         if not guru:

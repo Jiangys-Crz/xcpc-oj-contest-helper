@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 
 from .accounts import same_handle
 from .models import Submission, VPError
+from .submission_languages import language_name
 from .storage import file_lock, read_json, state_directory, write_json
 
 
@@ -21,7 +22,7 @@ def valid_submission_id(value: str, platform: str) -> bool:
     return bool(re.fullmatch(r"[a-f0-9]{24}" if platform == "cwnuoj" else r"[0-9]+", value))
 
 
-def record_receipt(config: dict, submission_id: str, problem: str, submitted_at: float) -> bool:
+def record_receipt(config: dict, submission_id: str, problem: str, submitted_at: float, *, language: str | None = None) -> bool:
     context = config.get("vp_context")
     if not isinstance(context, dict):
         return False  # A standalone upstream submit need not be attached to a VP.
@@ -32,10 +33,10 @@ def record_receipt(config: dict, submission_id: str, problem: str, submitted_at:
     if path.resolve().parent != state_directory().resolve():
         raise VPError("The submission context is outside the VP state directory.")
     with file_lock(path.with_suffix('.save.lock')):
-        return _record_locked(path, context, sid, problem, submitted_at)
+        return _record_locked(path, context, sid, problem, submitted_at, language=language)
 
 
-def _record_locked(path: Path, context: dict, sid: str, problem: str, submitted_at: float) -> bool:
+def _record_locked(path: Path, context: dict, sid: str, problem: str, submitted_at: float, *, language=None) -> bool:
     state = read_json(path)
     if (context.get("start_time") not in [state.get("start_time"), *state.get('start_time_aliases', [])]
             or state.get("url") != context.get("url")
@@ -53,6 +54,7 @@ def _record_locked(path: Path, context: dict, sid: str, problem: str, submitted_
         "id": sid, "team": "me", "problem": problem, "time": relative,
         "verdict": "PENDING", "start_time": state["start_time"], "url": state["url"],
         "handle": state["handle"], "practice": practice,
+        **({'language': language_name(language)} if language_name(language) else {}),
     })
     return True
 
@@ -82,7 +84,7 @@ class ReceiptReader:
                     and isinstance(data.get("time"), (int, float)) and math.isfinite(data["time"])
                     and data["time"] >= 0):
                 result.append(Submission(**{key: data[key] for key in ("id", "team", "problem", "time", "verdict")},
-                                         practice=bool(data.get("practice"))))
+                                         practice=bool(data.get("practice")), language=language_name(data.get('language'))))
         self.stamp = stamp
         return result
 

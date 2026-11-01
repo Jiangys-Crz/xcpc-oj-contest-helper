@@ -17,7 +17,7 @@ from vp_helper.models import Contest, Medals, Rules, Submission
 from vp_helper.practice import PracticeDashboard
 from vp_helper.scoring import score_submissions
 from vp_helper.submission_results import judging_url
-from vp_helper.tui import Dashboard, LiveDashboard, TerminalDashboard, ProblemViewport, problem_viewports
+from vp_helper.tui import Dashboard, LiveDashboard, TerminalDashboard, ProblemBox, ProblemViewport, problem_viewports
 
 
 class SubmissionDisplayTests(unittest.TestCase):
@@ -56,6 +56,18 @@ class SubmissionDisplayTests(unittest.TestCase):
                  else TerminalDashboard().console)
         return [''.join(segment.text for segment in line)
                 for line in self.logical_segments(view.fixed(width),console,width)]
+
+    def problem_boxes(self, view, width):
+        def tables(item):
+            if isinstance(item,Table):
+                yield item
+            elif isinstance(item,Group):
+                for child in item.renderables:
+                    yield from tables(child)
+        table=next(item for item in tables(view.fixed(width)) if all(label in [str(c.header) for c in item.columns]
+                                                                   for label in view.contest.problems))
+        return [table.columns[[str(c.header) for c in table.columns].index(label)]._cells[0]
+                for label in view.contest.problems]
 
     def fixed_lines(self, view, width):
         renderer=TerminalDashboard()
@@ -179,12 +191,13 @@ class SubmissionDisplayTests(unittest.TestCase):
                                     self.assertNotIn('…','\n'.join(lines))
                                     self.assertTrue(all(cell_len(line)<=self.logical_width for line in lines))
 
-    def test_narrow_panes_pan_one_logical_problem_header_without_changing_metadata_or_logs(self):
+    def test_all_problem_headers_are_simultaneously_visible_without_panning_or_mutation(self):
         for count in (13,20):
-            for width in (76,96,116,160,240,360):
+            for width in (76,80,96,100,116,160,240,320,360):
                 view=self.active_team_views(count)[0]
                 before=copy.deepcopy(vars(view));fixed=view.fixed(width)
                 viewports=list(problem_viewports(fixed))
+                self.assertEqual(viewports,[],'All problem columns must fit the actual pane')
                 logical=self.logical_fixed_lines(view,width,'curses')
                 self.assertEqual(len(self.problem_headers(logical,view.contest.problems)),1)
                 for item in viewports:
@@ -212,6 +225,8 @@ class SubmissionDisplayTests(unittest.TestCase):
                 snapshots=[];drawn=[]
                 renderer._draw=lambda row,segments,size,left=0:drawn.append((row,''.join(segment.text for segment in segments)))
                 renderer.update(view)
+                self.assertEqual(renderer.horizontal_limit,0)
+                self.assertNotIn('←/→','\n'.join(line for _,line in drawn))
                 records=[(row,line) for row,line in drawn if '#' in line or 'submission' in line]
                 header_row=next(row for row,line in drawn if any(re.search(r'(?:^|\s)'+label+r'(?:\s|$)',line) for label in view.contest.problems))
                 metadata=[(row,line) for row,line in drawn if row<header_row]
@@ -382,7 +397,7 @@ class SubmissionDisplayTests(unittest.TestCase):
                             self.assertLessEqual(max(gaps)-min(gaps),1)
                 self.assertNotIn('…','\n'.join(second))
                 self.assertGreaterEqual(len(second),len(first))
-                self.assertIn('tries','\n'.join(second))
+                self.assertIn(self.problem_boxes(after,width)[0].plain,('1 + 1 tries','1+1'))
 
     def test_summary_edge_padding_keeps_rank_and_prize_complete(self):
         contest=self.contest()
@@ -497,7 +512,9 @@ class SubmissionDisplayTests(unittest.TestCase):
                         self.problem_header(lines,contest.problems)
                         self.assertEqual(sum('rank' in line and 'team' in line for line in lines),1)
                         self.assertNotIn('public',header)
-                        self.assertEqual(rendered.count('2 + 1 tries' if isinstance(view,LiveDashboard) else '2 tries'),20)
+                        boxes=self.problem_boxes(view,width)
+                        expected=('2 + 1 tries','2+1') if isinstance(view,LiveDashboard) else ('2 tries','2')
+                        self.assertTrue(all(cell.plain in expected for cell in boxes))
 
     def test_long_titles_use_the_whole_line_and_keep_timer_without_mutation(self):
         for name in ('The 2026 ICPC Northern Eurasia Regional Programming Contest',
@@ -576,19 +593,13 @@ class SubmissionDisplayTests(unittest.TestCase):
                     with self.subTest(count=count,width=width,engine=engine):
                         before=copy.deepcopy(vars(view));lines=self.logical_fixed_lines(view,width,engine)
                         groups=self.problem_headers(lines,contest.problems)
-                        for row,header,labels in groups:
-                            attempts,minutes=lines[row+2:row+4]
-                            position=0
-                            for label in labels:
-                                index=list(contest.problems).index(label)
-                                expected='2 tries' if index%2 else '1 try'
-                                center,position=self.cell_center(attempts,expected,position)
-                                self.assertLessEqual(abs(center-self.cell_center(header,label)[0]),0.5)
-                                # Match the minute in this column, not a digit
-                                # contained in another problem's later minute.
-                                candidates=[cell_len(minutes[:match.start()])+cell_len(match[0])/2
-                                            for match in re.finditer(r'(?<!\d)'+str(index+1)+r'(?!\d)',minutes)]
-                                self.assertTrue(any(abs(value-center)<=0.5 for value in candidates))
+                        boxes=self.problem_boxes(view,width)
+                        for index,cell in enumerate(boxes):
+                            attempts,minutes=cell.plain.split('\n')
+                            self.assertIn(attempts,('2 tries','2') if index%2 else ('1 try','1'))
+                            self.assertEqual(minutes,str(index+1))
+                            if width>=360:
+                                self.assertEqual(attempts,'2 tries' if index%2 else '1 try')
                         self.assertEqual(vars(view),before)
                         self.assertNotIn('…','\n'.join(lines))
 
@@ -602,12 +613,14 @@ class SubmissionDisplayTests(unittest.TestCase):
         for width in (76,80,100,160):
             view=Dashboard(contest,600,score,'87','',None,records)
             lines=self.logical_fixed_lines(view,width,'rich')
-            self.assertIn('1 + 1 tries','\n'.join(lines))
-            self.assertNotIn('1+1','\n'.join(lines))
+            self.assertIn(self.problem_boxes(view,width)[0].plain,('1 + 1 tries','1+1'))
             practice=PracticeDashboard(contest,19000,records,handle='native-handle',restored=True)
             original=copy.deepcopy(vars(practice));rendered=self.logical_fixed_lines(practice,width,'rich')
-            for row,_,_ in self.problem_headers(rendered,contest.problems):
-                self.assertNotRegex(rendered[row+3],r'\d','BT has no second-line problem clock')
+            restored=self.problem_boxes(practice,width)
+            self.assertEqual(restored[1].plain.split('\n')[-1],'3','Restored original AC keeps its native minute')
+            pure=PracticeDashboard(contest,19000,records,handle='native-handle')
+            self.assertTrue(all('\n' not in cell.plain for cell in self.problem_boxes(pure,width)),
+                            'Pure BT does not add a problem clock')
             self.assertEqual(vars(practice),original)
 
     def test_unavailable_awards_never_show_unknown_or_a_false_no_prize(self):
@@ -634,6 +647,17 @@ class SubmissionDisplayTests(unittest.TestCase):
             self.assertIn('127',rendered)
             self.assertNotIn('=127',rendered)
 
+    def test_problem_boxes_share_attempt_baseline_with_one_or_two_content_lines(self):
+        for height in (3, 5, 6, 7):
+            first_rows = []
+            for value in ('1 try\n60', '2', '1+1'):
+                output = io.StringIO()
+                Console(file=output, width=8, color_system=None).print(
+                    ProblemBox(Text(value), 5, height, content_height=2))
+                lines = output.getvalue().splitlines()
+                first_rows.append(next(i for i, line in enumerate(lines) if line.strip()))
+            self.assertEqual(len(set(first_rows)), 1)
+
     def test_colored_problem_boxes_have_the_same_complete_rectangle(self):
         contest=self.contest()
         records=[Submission('1','me','A',60,'CORRECT'),
@@ -642,7 +666,7 @@ class SubmissionDisplayTests(unittest.TestCase):
                  Submission('5','me','G',60,'WRONG-ANSWER'),Submission('6','me','G',120,'PENDING')]
         me=score_submissions(records,list(contest.problems),contest.rules,18000,name='Example Team')
         practice=[{'id':'7','problem':'M','time':19000,'verdict':'CORRECT','practice':True}]
-        for width in (80,100,130,156,160):
+        for width in (76,80,100,130,156,160,360,800):
             with self.subTest(width=width):
                 view=Dashboard(contest,19000,me,'3','Unknown',None,practice)
                 console=Console(width=width,color_system='truecolor',legacy_windows=False)
@@ -672,6 +696,29 @@ class SubmissionDisplayTests(unittest.TestCase):
                         dimensions.append(size)
                 self.assertEqual(len(dimensions),5)
                 self.assertEqual(len(set(dimensions)),1)
+                for box_width,box_height in dimensions:
+                    self.assertLessEqual(abs(box_width-2*box_height),1,'Terminal cells are about twice as tall as wide')
+                    self.assertLessEqual(box_width,16,'Wide columns keep a bounded colored body')
+                    self.assertLessEqual(box_height,8)
+
+    def test_square_problem_box_centers_both_content_lines_inside_plain_column_margins(self):
+        value=Text('2 tries\n108',style='black on #60e760')
+        box=ProblemBox(value,11,6)
+        console=Console(width=18,color_system='truecolor',legacy_windows=False)
+        lines=console.render_lines(box,console.options,pad=False)
+        plain=[''.join(segment.text for segment in line) for line in lines]
+        self.assertEqual(len(lines),6)
+        visible=[i for i,line in enumerate(plain) if line.strip()]
+        self.assertEqual(visible,[2,3])
+        for row,label in ((2,'2 tries'),(3,'108')):
+            center,_=self.cell_center(plain[row],label)
+            self.assertLessEqual(abs(center-9),0.5)
+        for line in lines:
+            colored=[segment for segment in line if segment.style and segment.style.bgcolor
+                     and segment.style.bgcolor.type.name!='DEFAULT']
+            self.assertEqual(sum(segment.cell_length for segment in colored),11)
+            self.assertEqual(sum(segment.cell_length for segment in line),18)
+        self.assertEqual(value.plain,'2 tries\n108')
 
     def test_practice_cells_are_purple_and_pending_cells_blue_without_recoloring_original_ac(self):
         contest=self.contest()

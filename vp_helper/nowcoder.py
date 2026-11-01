@@ -14,6 +14,7 @@ from .portable import login_browser
 from .http import WebSession
 from .platform_clock import platform_now
 from .models import Contest, Rules, VPError
+from .submission_languages import language_fields
 from .parsing import NOWCODER_HOST, contest_url, js_value
 from .scoring import verdict as parse_verdict
 from .pending_results import PendingResults
@@ -389,7 +390,7 @@ class NowcoderLive:
         if not isinstance(data, dict) or data.get('code') != 0 or str(data.get('id')) != sid:
             raise VPError('Nowcoder pending status does not match the requested submission.')
         value = judging_verdict(data.get('judgeReplyDesc'))
-        return {'verdict': value} if value not in ('HIDDEN', 'UNAVAILABLE') else None
+        return {'verdict': value, **language_fields(data, 'nowcoder')} if value not in ('HIDDEN', 'UNAVAILABLE') else None
 
     def submissions(self, contest: Contest) -> list[dict]:
         if not self._identified:
@@ -439,7 +440,8 @@ class NowcoderLive:
                     verdict = "PARTIAL"
                 result[sid] = {"id": sid, "team": "me", "problem": label, "time": submitted_at - contest.original_start,
                                "verdict": verdict, "points": raw.get("score"),
-                               "practice": bool(contest.extra.get('practice_set') or submitted_at >= contest.extra["end_time"])}
+                               "practice": bool(contest.extra.get('practice_set') or submitted_at >= contest.extra["end_time"]),
+                               **language_fields(raw, "nowcoder")}
             if page >= basic.get("pageCount", 0):
                 self.submissions_complete = True
                 break

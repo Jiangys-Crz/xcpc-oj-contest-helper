@@ -133,7 +133,7 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     print("Submission #" + sid + ": PENDING", flush=True)
     print_judging_link(api.url, sid)
     try:
-        record_receipt(config, sid, label, submitted_at)
+        record_receipt(config, sid, label, submitted_at, language=language_name)
     except (VPError, OSError) as exc:
         print("Submitted; the panel will recover it from Codeforces. Notification: " + str(exc))
     return sid

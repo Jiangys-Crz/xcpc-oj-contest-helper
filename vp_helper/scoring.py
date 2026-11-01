@@ -161,7 +161,8 @@ def submission_history(submissions: list[Submission], problems: list[str], rules
     ordered = sorted(unique.values(), key=lambda s: (s.time, s.id.zfill(24)), reverse=True)
     return [{"id": s.id, "problem": s.problem, "time": s.time, "verdict": s.verdict,
              "practice": s.practice or s.time >= rules.duration,
-             **({"score": s.score} if s.score is not None else {})} for s in ordered]
+             **({"score": s.score} if s.score is not None else {}),
+             **({"language": s.language} if s.language else {})} for s in ordered]
 
 
 def recent_submissions(submissions: list[Submission], problems: list[str], rules: Rules,

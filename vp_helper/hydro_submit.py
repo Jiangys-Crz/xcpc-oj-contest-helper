@@ -153,7 +153,7 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
         raise VPError("The returned record does not match this submission. Check CWNUOJ before retrying.")
     print("Submission #" + sid + ": PENDING", flush=True)
     try:
-        record_receipt(config, sid, label, submitted_at)
+        record_receipt(config, sid, label, submitted_at, language=str(options[payload['lang']]))
     except (VPError, OSError) as exc:
         print("Submitted; the panel will recover it from CWNUOJ. Notification: " + str(exc))
     return sid

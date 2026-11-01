@@ -15,6 +15,7 @@ from .http import WebSession, form_values
 from .platform_clock import platform_now
 from .pending_results import PendingResults
 from .models import Cell, Contest, Reference, Rules, Submission, TeamScore, VPError, StartRejected
+from .submission_languages import html_language
 from .originals import OriginalReplay, cache_archive_submissions, classify, eligibility_lookup, identity, load_archive_submissions, load_metadata, lookup_team
 from .parsing import ccpc_reveal_count, js_value, medals_from_html, seconds, timestamp
 from .scoring import verdict
@@ -447,6 +448,7 @@ class QOJ:
                 headers = [h.get_text(" ", strip=True).lower() for h in table.select("thead th")]
                 if not headers:
                     headers = [h.get_text(" ", strip=True).lower() for h in table.select("tr th")]
+                language = html_language(row, headers)
                 column = next((i for i, h in enumerate(headers) if h in ("result", "score", "status")), 3)
                 node = cells[column] if column < len(cells) else None
                 if node is None:
@@ -459,12 +461,12 @@ class QOJ:
                         and platform_now(self.url) < self.start_time + contest.rules.duration):
                     # OI publishes sample-test feedback during participation;
                     # it is not the final full-dataset score or acceptance.
-                    result[sid] = Submission(sid, "me", label, at, "HIDDEN", practice=practice)
+                    result[sid] = Submission(sid, "me", label, at, "HIDDEN", practice=practice, language=language)
                     continue
                 if graded and score is not None and score > 0:
                     maximum = self.graded_submission_maximum(node, contest, label)
                     parsed = "CORRECT" if maximum is not None and score >= maximum else "PARTIAL"
-                    result[sid] = Submission(sid, "me", label, at, parsed, practice=practice, score=score)
+                    result[sid] = Submission(sid, "me", label, at, parsed, practice=practice, score=score, language=language)
                     continue
                 judging = bool(row.select_one('[id^="status_details_"]') or
                                re.search(r"update_judgement_status_details\s*\(", str(row)))
@@ -473,7 +475,7 @@ class QOJ:
                 except VPError:
                     named = 'UNAVAILABLE'
                 if judging and score is None and named in ('PENDING', 'UNAVAILABLE'):
-                    result[sid] = Submission(sid, "me", label, at, "PENDING", practice=practice)
+                    result[sid] = Submission(sid, "me", label, at, "PENDING", practice=practice, language=language)
                     self._verdict_cache.pop(sid, None)
                     self._detail_retry.pop(sid, None)
                     continue
@@ -496,6 +498,7 @@ class QOJ:
                                                        params={"locale": "en"}, headers={'Cache-Control': 'no-cache'},
                                                        timeout=(5, 8), retry=False)
                                 parsed = self.detail_verdict(detail, score)
+                                language = language or html_language(detail)
                             except VPError:
                                 # A zero score is final, but can mean WA, CE or
                                 # another failure. Do not invent a scored WA or
@@ -509,7 +512,7 @@ class QOJ:
                                     self._verdict_cache[sid] = (score, parsed, time.monotonic() + 10 + int(sid) % 3)
                         if parsed == "UNAVAILABLE":
                             unresolved.append(sid)
-                            result[sid] = Submission(sid, "me", label, at, parsed, practice=practice, score=score if graded else None)
+                            result[sid] = Submission(sid, "me", label, at, parsed, practice=practice, score=score if graded else None, language=language)
                             continue
                         status = parsed
                 try:
@@ -517,7 +520,7 @@ class QOJ:
                 except VPError:
                     parsed = 'UNAVAILABLE'
                     unresolved.append(sid)
-                result[sid] = Submission(sid, "me", label, at, parsed, practice=practice, score=score if graded else None)
+                result[sid] = Submission(sid, "me", label, at, parsed, practice=practice, score=score if graded else None, language=language)
             pages = [int(m[1]) for a in soup.select("a[href]") if (m := re.search(r"[?&]page=(\d+)", a["href"]))]
             if before or not found or page >= max(pages, default=page):
                 self.submissions_complete = True
@@ -569,6 +572,8 @@ class QOJ:
             if node is None:
                 continue
             text = node.get_text(' ', strip=True)
+            language = html_language(row, headers) or html_language(detail)
+            compiler = {'language': language} if language else {}
             score = float(text) if re.fullmatch(r'\d+(?:\.\d+)?', text) else None
             if contest.extra.get("scoring", "ICPC") in ("OI", "IOI") and score is not None:
                 if not math.isfinite(score):
@@ -578,13 +583,13 @@ class QOJ:
                     return None
                 maximum = self.graded_submission_maximum(node, contest, event["problem"])
                 parsed = ("CORRECT" if maximum is not None and score >= maximum else "PARTIAL") if score > 0 else self.detail_verdict(detail, score)
-                return {"verdict": parsed, "score": score}
+                return {"verdict": parsed, "score": score, **compiler}
             if score == 100:
-                return {'verdict': 'CORRECT'}
+                return {'verdict': 'CORRECT', **compiler}
             if score is not None:
-                return {'verdict': self.detail_verdict(detail, score)}
+                return {'verdict': self.detail_verdict(detail, score), **compiler}
             try:
-                return {'verdict': verdict(text)}
+                return {'verdict': verdict(text), **compiler}
             except VPError:
                 continue
         raise VPError('QOJ did not expose a matching pending record summary; retrying.')

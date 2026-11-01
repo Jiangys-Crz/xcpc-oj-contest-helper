@@ -77,8 +77,8 @@ test('detail records retain full timestamps, submission IDs, actual judging link
     assert(row.includes(record.verdict));
   }
   for(const stamp of ['2026-10-31 09:02:03','2026-10-31 09:03:04','2026-10-31 09:04:05','2026-10-31 09:05:06'])assert(html.includes(stamp),stamp);
-  assert(rowWith(html,'396538368').includes('GNU G++20'));
-  assert.match(rowWith(html,'3302287'),/<td(?:\s[^>]*)?>—<\/td>/,'Missing language remains unknown');
+  assert.match(rowWith(html,'396538368'),/<td class="language-value">cpp<\/td>/);
+  assert.match(rowWith(html,'3302287'),/<td class="language-value">other<\/td>/,'Missing language is grouped as other');
   const filter=[...html.matchAll(/<button\b[^>]*>[\s\S]*?<\/button>/g)].map(match=>match[0]).find(button=>button.includes('Filter submissions'))||'';
   assert.match(filter,/aria-expanded="false"/);assert.match(filter,/aria-controls="[^"]+"/);
   assert.match(filter,/aria-label="Filter submissions"/);

@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 from bs4 import BeautifulSoup
 
 from .models import VPError
+from .submission_languages import merge_language, html_language
 from .scoring import codeforces_verdict
 
 
@@ -30,9 +31,11 @@ def web_verdicts(html: str, url: str, handle: str, expected: dict[str, dict]) ->
         if (cell is None or cell.get('submissionid', sid) != sid
                 or wrapper is not None and wrapper.get('submissionid') != sid):
             continue
+        language = html_language(row)
+        compiler = {'language': language} if language else {}
         if (cell.get('waiting', '').casefold() == 'true'
                 or wrapper is not None and wrapper.get('waiting', '').casefold() == 'true'):
-            result[sid] = {'verdict': 'PENDING'}
+            result[sid] = {'verdict': 'PENDING', **compiler}
             continue
         text = cell.get_text(' ', strip=True)
         raw = (wrapper.get('submissionverdict') if wrapper else None) or cell.get('verdict') or (wrapper.get('verdict') if wrapper else None) or text
@@ -40,7 +43,7 @@ def web_verdicts(html: str, url: str, handle: str, expected: dict[str, dict]) ->
         parsed = 'CORRECT' if pretests else codeforces_verdict(raw)
         if parsed == 'UNAVAILABLE' and raw not in ('FAILED', 'CRASHED', 'INPUT_PREPARATION_CRASHED', 'SKIPPED', 'REJECTED'):
             continue
-        result[sid] = {'verdict': parsed}
+        result[sid] = {'verdict': parsed, **compiler}
         if pretests and 'testset' in event:
             result[sid]['testset'] = 'PRETESTS'
     return result
@@ -59,7 +62,7 @@ class PendingJudgements:
 
     def update(self, api, records: list[dict]) -> list[dict]:
         now = time.monotonic()
-        current = {str(e['id']): dict(e) for e in records}
+        current = {str(e['id']): merge_language(self.saved.get(str(e['id'])), e) for e in records}
         for sid, event in current.items():
             if event['verdict'] != 'PENDING':
                 self.confirmed.pop(sid, None)
@@ -93,6 +96,8 @@ class PendingJudgements:
             api.submission_message = (api.submission_message + ' · ' if api.submission_message else '') + str(exc)
             return resolved()
         for sid, fields in confirmed.items():
+            pending[sid] = merge_language(fields, pending[sid])
+            current[sid] = merge_language(fields, current.get(sid, pending[sid]))
             if fields['verdict'] == 'PENDING':
                 self.confirmed.pop(sid, None)
             else:

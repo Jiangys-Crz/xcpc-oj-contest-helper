@@ -24,12 +24,11 @@ from .submit_context import submission_configuration
 from .submission_confirmation import confirm_submission
 from .submission_results import print_judging_link
 from .session_cookies import honor_judge_response_cookies
+from .submission_languages import NOWCODER_LANGUAGES
 
 # Standard input/output judge (codeJudgeType 0). These IDs and names are also
 # present in the site's editor. Other judge types need their own templates.
-LANGUAGES = {"2": "C++（clang++18）", "38": "C++(g++ 13)", "39": "C(gcc 10)",
-             "1": "C", "4": "Java", "11": "Python3", "25": "pypy3",
-             "17": "Go", "27": "Rust", "29": "Kotlin"}
+LANGUAGES = NOWCODER_LANGUAGES
 
 
 def language_id(source: Path, requested: str | None) -> str:
@@ -139,7 +138,7 @@ def submit(source: Path, problem: str | None = None, language: str | None = None
     print("Submission #" + sid + ": PENDING", flush=True)
     print_judging_link(api.url, sid)
     try:
-        record_receipt(config, sid, label, submitted_at)
+        record_receipt(config, sid, label, submitted_at, language=LANGUAGES[lang])
     except (VPError, OSError) as exc:
         print("Submitted; the panel will recover it from Nowcoder. Notification: " + str(exc))
     return sid

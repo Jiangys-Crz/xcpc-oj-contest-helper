@@ -75,8 +75,9 @@ class PracticeDisplayTests(unittest.TestCase):
                    for i, v in enumerate(('COMPILER-ERROR', 'CORRECT', 'WRONG-ANSWER'), 1)]
         view = PracticeDashboard(self.contest, 1000, records, handle='tester')
         table = next(item for item in view.fixed(180).renderables if isinstance(item, Table) and item.columns[0].header == 'rank')
-        self.assertEqual([c.header for c in table.columns], ['rank', 'team', 'A', 'B'])
-        self.assertEqual(table.columns[2]._cells[0].plain, '3 tries')
+        self.assertEqual([c.header for c in table.columns], ['rank', 'team', 'solved', 'penalty', 'A', 'B'])
+        self.assertEqual(table.columns[2]._cells[0],'—');self.assertEqual(table.columns[3]._cells[0],'—')
+        self.assertEqual(table.columns[4]._cells[0].plain, '3 tries')
         self.assertIsNone(view.me.points)
         self.assertEqual(view.me.penalty, 0)
 
@@ -87,8 +88,9 @@ class PracticeDisplayTests(unittest.TestCase):
                                list(self.contest.problems), self.contest.rules, 18000)
         view = Dashboard(self.contest,19000,me,'5','',None,self.records,practice=True)
         table = next(item for item in view.fixed(180).renderables if isinstance(item, Table) and item.columns[0].header == 'rank')
-        self.assertEqual(table.columns[2]._cells[0].plain, '3 tries')
-        self.assertEqual(table.columns[3]._cells[0].plain, '2 tries')
+        self.assertEqual(table.columns[4]._cells[0].plain, '3 tries\n1')
+        self.assertEqual(table.columns[5]._cells[0].plain, '2 tries')
+        self.assertEqual(table.columns[2]._cells[0],'1');self.assertEqual(table.columns[3]._cells[0],'1')
         self.assertEqual(me.cells['A'].tries, 1)
 
     def test_scored_live_bt_does_not_turn_partial_points_into_an_original_ac(self):
@@ -99,8 +101,9 @@ class PracticeDisplayTests(unittest.TestCase):
                    {'id':'2','problem':'A','time':18100,'verdict':'CORRECT','practice':True}]
         view = LiveDashboard(self.contest,19000,{'own':own},records,practice=True,practice_rank='5')
         table = next(item for item in view.fixed(180).renderables if isinstance(item, Table))
-        self.assertEqual([c.header for c in table.columns], ['rank','team','A','B'])
-        self.assertEqual(table.columns[2]._cells[0].plain, '2 tries')
+        self.assertEqual([c.header for c in table.columns], ['rank','team','points','A','B'])
+        self.assertEqual(table.columns[2]._cells[0],'30')
+        self.assertEqual(table.columns[3]._cells[0].plain, '2 tries')
         self.assertIn((139,92,246), self.colors(view.fixed(180),background=True))
 
     def test_saved_live_ac_remains_visible_when_official_row_is_unavailable(self):
@@ -109,6 +112,45 @@ class PracticeDisplayTests(unittest.TestCase):
         backgrounds=self.colors(view.fixed(180),background=True)
         self.assertIn((96,231,96),backgrounds)
         self.assertIn((139,92,246),backgrounds)
+
+    def test_resumed_vp_keeps_original_summary_and_minutes_without_timing_new_practice_ac(self):
+        me=score_submissions([Submission('1','me','A',60,'CORRECT')],
+                             list(self.contest.problems),self.contest.rules,18000)
+        me.known_penalty=137
+        view=Dashboard(self.contest,19000,me,'5','',None,self.records,practice=True)
+        before=deepcopy(me)
+        table=next(item for item in view.fixed(180).renderables if isinstance(item,Table)
+                   and item.columns[0].header=='rank')
+        self.assertEqual([c.header for c in table.columns],['rank','team','solved','penalty','A','B'])
+        self.assertEqual(table.columns[2]._cells[0],'1')
+        self.assertEqual(table.columns[3]._cells[0],'137')
+        self.assertEqual(table.columns[4]._cells[0].plain,'1 try\n1')
+        self.assertEqual(table.columns[5]._cells[0].plain,'2 tries')
+        self.assertEqual(me,before)
+
+    def test_restored_practice_records_do_not_claim_a_synthetic_zero_penalty_as_original_score(self):
+        view=PracticeDashboard(self.contest,19000,self.records,handle='tester',restored=True,practice_rank='5')
+        self.assertEqual(view.me.scoring,'PRACTICE')
+        self.assertFalse(view.contest.extra['practice'])
+        table=next(item for item in view.fixed(180).renderables if isinstance(item,Table)
+                   and item.columns[0].header=='rank')
+        self.assertEqual(table.columns[2]._cells[0],'—')
+        self.assertEqual(table.columns[3]._cells[0],'—')
+        self.assertEqual(table.columns[4]._cells[0].plain,'1 try\n1')
+        self.assertEqual(table.columns[5]._cells[0].plain,'2 tries')
+
+    def test_live_practice_keeps_native_snapshot_penalty_and_original_ac_minute(self):
+        self.contest.extra.update(scoring='ICPC',phase='FINISHED')
+        own={'party':{'members':[{'handle':'tester'}]},'rank':5,'points':1,'penalty':137,
+             'problemResults':[{'points':1,'accepted':True,'bestSubmissionTimeSeconds':60},{'points':0}]}
+        view=LiveDashboard(self.contest,19000,{'own':own},self.records,practice=True)
+        before=deepcopy(own)
+        table=next(item for item in view.fixed(180).renderables if isinstance(item,Table))
+        self.assertEqual(table.columns[2]._cells[0],'1')
+        self.assertEqual(table.columns[3]._cells[0],'137')
+        self.assertEqual(table.columns[4]._cells[0].plain,'1 try\n1')
+        self.assertEqual(table.columns[5]._cells[0].plain,'2 tries')
+        self.assertEqual(own,before)
 
     def test_manual_live_freeze_hides_native_counts_that_may_include_later_attempts(self):
         self.contest.extra.update(scoring='ICPC', phase='CODING', freeze_source='manual')

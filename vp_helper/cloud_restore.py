@@ -13,6 +13,7 @@ import re
 from uuid import uuid4
 
 from .models import Contest, VPError
+from .submission_languages import language_fields, merge_language
 from .parsing import contest_url
 from .platform_clock import platform_now
 from .storage import file_lock, read_json, write_json
@@ -53,7 +54,7 @@ def _records(snapshot: dict, started: float, problems: dict) -> list[dict]:
             raise VPError('云端提交记录格式无效，原本地记录未修改。')
         event = {'id': sid, 'team': 'me', 'problem': row['problem'],
                  'time': _stamp(row.get('submittedAt')) - started,
-                 'verdict': verdict, 'practice': row.get('practice') is True}
+                 'verdict': verdict, 'practice': row.get('practice') is True, **language_fields(row)}
         points = row.get('points')
         if type(points) in (int, float) and math.isfinite(points):
             event['score'] = points
@@ -68,8 +69,9 @@ def _merge(previous: list[dict], incoming: list[dict]) -> list[dict]:
     for row in incoming:
         old = values.get(row['id'])
         if old and old.get('verdict') not in pending and row['verdict'] in pending:
+            values[row['id']] = merge_language(row, old)
             continue
-        values[row['id']] = row
+        values[row['id']] = merge_language(old, row)
     return list(values.values())
 
 

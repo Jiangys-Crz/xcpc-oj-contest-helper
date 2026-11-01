@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime
+import re
 
 from rich import box
 from rich.cells import cell_len, set_cell_size
@@ -28,6 +29,7 @@ class ProblemBox:
     value: Text
     width: int
     height: int
+    content_height: int = 0
 
     @property
     def plain(self):
@@ -44,7 +46,12 @@ class ProblemBox:
             remaining = self.width - cell_len(line.plain)
             left = (remaining + margin % 2) // 2
             content.append(" " * left + line.plain + " " * (remaining - left))
-        content.extend([" " * self.width] * (self.height - len(content)))
+        # Reserve the same content band for every cell so a one-line pending
+        # result aligns with the attempts line of a two-line accepted result.
+        content.extend([" " * self.width] * max(0, self.content_height - len(content)))
+        extra = max(0, self.height - len(content))
+        content = ([" " * self.width] * (extra // 2) + content
+                   + [" " * self.width] * (extra - extra // 2))
         style = console.get_style(self.value.style)
         for line in content:
             # Text's automatic justification extends its background into the
@@ -71,17 +78,18 @@ def score_table(columns, problems, rows, width, *, separate_summary=False, _allo
         index = columns.index("team")
         sizes[index] = min(sizes[index], max(minimum[index], 24))
     count = len(columns) + len(problems)
-    # Keep complete attempt labels and native per-problem values on their
-    # original lines. A narrow pane pans one logical row, never abbreviating
-    # counts, splitting "tries", or creating additional problem headers.
+    # Every problem header stays visible on one row. Full attempt wording is
+    # retained when it fits; narrow cells keep exact counts and fold their
+    # native time/score beneath them without hiding another problem.
     first_cells = rows[0][len(columns):] if rows else []
-    problem_minimum = max([_minimum_problem_width, *[content_width(label) for label in problems],
-                           *[content_width(cell) for row in rows for cell in row[len(columns):]]])
+    problem_minimum = max([_minimum_problem_width, *[content_width(label) for label in problems]])
+    full_problem_width = max([problem_minimum, *[content_width(cell) for row in rows
+                                                for cell in row[len(columns):]]])
     problem_space = len(problems) * problem_minimum
     active = _minimum_box_height > 0 or any(
         (cell.plain if isinstance(cell, Text) else str(cell)).strip() not in ("", "—")
         for cell in first_cells)
-    readable_width = sum(sizes) + problem_space + max(0, count - 1)
+    readable_width = sum(sizes) + len(problems) * full_problem_width + max(0, count - 1)
     if _allow_split and columns and problems and rows and readable_width > width:
         # Stack only the presentation. The first block retains every native
         # summary value; the second gets the full pane for the problem cells.
@@ -105,14 +113,7 @@ def score_table(columns, problems, rows, width, *, separate_summary=False, _allo
         problem_table = score_table([""] if summaries else [], problems, problem_rows, width,
                                     separate_summary=separate_summary, _allow_split=False)
         return Group(metadata, Text(""), problem_table)
-    if _allow_viewport and problems and rows and readable_width > width:
-        table = score_table(columns, problems, rows, readable_width, separate_summary=separate_summary,
-                            _allow_split=False, _allow_viewport=False)
-        first_problem = sum(sizes) + len(columns)
-        starts = tuple(first_problem + index * (problem_minimum + 1) for index in range(len(problems)))
-        return ProblemViewport(table, readable_width, column_starts=starts,
-                               problem_width=problem_minimum, problem_labels=tuple(problems))
-    padding = 1 if sum(sizes) + problem_space + 2 * count <= width else 0
+    padding = 1 if sum(sizes) + len(problems) * full_problem_width + 2 * count <= width else 0
     available = width - problem_space - (2 * count if padding else max(0, count - 1))
     if available < sum(minimum):
         required = sum(minimum) + problem_space + max(0, count - 1)
@@ -141,9 +142,20 @@ def score_table(columns, problems, rows, width, *, separate_summary=False, _allo
         problem_width = min(widths[index] - table._get_padding_width(index)
                             for index in range(len(columns), count))
         values = [cell if isinstance(cell, Text) else Text(str(cell)) for cell in first_cells]
-        height = max(_minimum_box_height, max(
-            len(value.wrap(layout, problem_width, overflow="fold", no_wrap=False)) for value in values))
-        rows = [[*rows[0][:len(columns)], *(ProblemBox(value, problem_width, height) for value in values)],
+        for index, value in enumerate(values):
+            if content_width(value) > problem_width:
+                lines = value.plain.split("\n")
+                lines[0] = re.sub(r"\s+tr(?:y|ies)\b", "", lines[0]).replace(" ", "")
+                lines[0] = re.sub(r"pending\b", "?", lines[0])
+                values[index] = Text("\n".join(lines), style=value.style)
+        # Terminal glyphs are usually about twice as tall as they are wide.
+        # Keep the colored body near square, using plain column margins on a
+        # wide pane instead of making its height grow with the entire column.
+        box_width = min(problem_width, max(full_problem_width, 16))
+        content_height = max(len(value.wrap(layout, box_width, overflow="fold", no_wrap=False))
+                             for value in values)
+        height = max(_minimum_box_height, min(8, (box_width + 1) // 2), content_height)
+        rows = [[*rows[0][:len(columns)], *(ProblemBox(value, box_width, height, content_height) for value in values)],
                 *rows[1:]]
     for index, row in enumerate(rows):
         table.add_row(*row, end_section=separate_summary and index == 0)
@@ -310,19 +322,24 @@ class Dashboard:
         corrections = recorded_cells(self.contest, self.submissions, practice=True)
         originals = recorded_cells(self.contest, self.submissions, practice=False, all_attempts=True) if self.practice else {}
         scoring = self.me.scoring
+        saved_originals = recorded_cells(self.contest, self.submissions, practice=False) if self.practice else {}
         for label in self.contest.problems:
             c = self.me.cells[label]
+            original_time = c.solve_time
             correction = corrections[label]
             if self.practice:
                 # A standalone BT has no original competition cells.
                 original = Cell() if self.contest.extra.get('practice') else c
+                original_time = (original.solve_time if original.solve_time is not None else
+                                 saved_originals[label].solve_time if original.solved else None)
                 c, blue = practice_cell(original, correction, originals[label])
             else:
                 blue = correction.solved and not c.solved
             if blue and not self.practice:
                 c = correction
             tries = attempt_text(c, practice=self.practice)
-            detail = ("" if self.practice else f"\n{c.score:g}" if scoring != 'ICPC' and c.score is not None
+            detail = (f"\n{original_time}" if self.practice and original_time is not None else
+                      "" if self.practice else f"\n{c.score:g}" if scoring != 'ICPC' and c.score is not None
                       else f"\n{c.solve_time}" if c.solved and c.solve_time is not None else "")
             if c.solved:
                 cells.append(Text(tries + detail, style=PRACTICE_ACCEPTED if blue else "black on #60e760"))
@@ -337,13 +354,14 @@ class Dashboard:
         columns = ["rank", "team"]
         values = [Text(result, style="bold default"),
                   participant_text(self.participant_title, self.participant_subtitle, self.me.name)]
-        if not self.practice:
-            columns.append('solved' if scoring == 'ICPC' else 'points')
-            values.append(str(self.me.solved) if scoring == 'ICPC' else
-                          f'{self.me.points:g}' if self.me.points is not None else '?')
-            if scoring == 'ICPC':
-                columns.append('penalty')
-                values.append(str(self.me.penalty) if self.me.results_complete else '?')
+        known_summary = not self.contest.extra.get('practice') and scoring != 'PRACTICE'
+        shown_scoring = 'ICPC' if scoring == 'PRACTICE' else scoring
+        columns.append('solved' if shown_scoring == 'ICPC' else 'points')
+        values.append('—' if self.practice and not known_summary else str(self.me.solved) if scoring == 'ICPC' else
+                      f'{self.me.points:g}' if self.me.points is not None else '?')
+        if shown_scoring == 'ICPC':
+            columns.append('penalty')
+            values.append('—' if self.practice and not known_summary else str(self.me.penalty) if self.me.results_complete else '?')
         rows = [[*values, *cells]]
         if not self.practice and not self.contest.rules.problem_reveal_count:
             for key in ("submitted", "attempted", "accepted"):
@@ -504,11 +522,10 @@ class LiveDashboard:
         scoring = self.contest.extra["scoring"]
         own = self.snapshot.get("own")
         columns = ["rank", "team"]
-        if not self.practice:
-            columns.append("solved" if scoring == "ICPC" else "points")
-        if not self.practice and scoring == "ICPC":
+        columns.append("solved" if scoring == "ICPC" else "points")
+        if scoring == "ICPC":
             columns.append("penalty")
-        elif not self.practice and self.contest.platform == "cf":
+        elif self.contest.platform == "cf":
             columns.append("hacks +/−")
         results = own["problemResults"] if own else []
         cells = []
@@ -527,10 +544,14 @@ class LiveDashboard:
                 if type(attempts) is not int:
                     attempts = result.get('rejectedAttemptCount', 0) + int(bool(accepted))
                 original = replace(original, tries=max(original.tries, attempts), solved=bool(accepted))
+                native_time = result.get('bestSubmissionTimeSeconds')
+                original_time = (int(native_time // 60) if type(native_time) in (int, float) and native_time >= 0 else
+                                 original_cells[label].solve_time)
                 c, blue = practice_cell(original, corrections[label], original_attempts[label])
                 color = PRACTICE_ACCEPTED if blue else 'black on #60e760' if c.solved else (
                     PENDING_STYLE if c.pending else 'black on #e87272' if c.tries else 'default')
-                cells.append(Text(attempt_text(c, practice=True), style=color))
+                detail = f"\n{original_time}" if original.solved and original_time is not None else ""
+                cells.append(Text(attempt_text(c, practice=True) + detail, style=color))
                 continue
             if index >= len(results) and original_cells[label].solved:
                 c = original_cells[label]
@@ -562,11 +583,10 @@ class LiveDashboard:
         rank = self.practice_rank if self.practice else str(own['rank']) if own else '—'
         values = [str(rank).lstrip('=') if rank is not None else '—',
                   participant_text(self.participant_title, self.participant_subtitle, name)]
-        if not self.practice:
-            values.append(value)
-        if not self.practice and scoring == "ICPC":
+        values.append(value)
+        if scoring == "ICPC":
             values.append(str(own["penalty"]) if own else "—")
-        elif not self.practice and self.contest.platform == "cf":
+        elif self.contest.platform == "cf":
             values.append(f"{own.get('successfulHackCount', 0)}/{own.get('unsuccessfulHackCount', 0)}" if own else "—")
         rows = [[*values, *cells]]
         stats = self.snapshot.get("stats", {})

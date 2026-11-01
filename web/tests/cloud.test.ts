@@ -563,3 +563,41 @@ test('room formats follow native platform VP support and graded QOJ snapshots ma
   const fractional=snapshot('native-fractional-freeze');fractional.contest.rules={duration:7200,freeze_minutes:15.5};
   const hid=(await api('POST','client/sync',fractional,user.token)).data.id;assert.equal((await api('GET',`history/${hid}`,undefined,user.token)).data.rules.freeze_minutes,15.5);
 });
+
+test('submission language categories survive ingestion and are identical in history and room My submissions',async(t)=>{
+  const {api,login,room,invite,service}=fixture(t),user=await login('captain');
+  const r=await room(user.token),notice=await invite(r.id,user.token,{userId:user.user.id});
+  await api('POST',`notifications/${notice}/respond`,{accept:true},user.token);
+  const data=snapshot('language-room');data.roomId=r.id;
+  const labels=['GNU C11','GNU G++20 13.2','PyPy 3','Java 21','Rust 1.75',undefined];
+  data.submissions=labels.map((language,index)=>({id:'language-'+index,problem:'A',submittedAt:new Date(Date.now()-60000-index).toISOString(),verdict:'CORRECT',practice:false,language,url:'https://qoj.ac/submission/'+index}));
+  const hid=(await api('POST','client/sync',data,user.token)).data.id;
+  const history=(await api('GET',`history/${hid}`,undefined,user.token)).data;
+  const own=(await api('GET',`rooms/${r.id}/mysubmit`,undefined,user.token)).data;
+  const languages=(records:Data[])=>labels.map((_,index)=>records.find(s=>s.id==='language-'+index)!.language);
+  assert.deepEqual(languages(history.submissions),['c','cpp','py','java','other','other']);
+  assert.deepEqual(own.history.submissions,history.submissions);assert.deepEqual(own.submissions,history.submissions);
+  const stored=JSON.parse(service.store.one('SELECT submissions_json FROM histories WHERE id=?',hid)!.submissions_json);
+  assert.equal(stored.find((s:Data)=>s.id==='language-1').language,'cpp');
+  // Pre-upgrade records can still contain a raw name: both DTOs normalize it.
+  stored.find((s:Data)=>s.id==='language-1').language='GNU G++17';
+  service.store.run('UPDATE histories SET submissions_json=? WHERE id=?',JSON.stringify(stored),hid);
+  assert.equal((await api('GET',`history/${hid}`,undefined,user.token)).data.submissions.find((s:Data)=>s.id==='language-1').language,'cpp');
+  assert.equal((await api('GET',`rooms/${r.id}/mysubmit`,undefined,user.token)).data.submissions.find((s:Data)=>s.id==='language-1').language,'cpp');
+});
+
+test('language enrichment preserves final verdicts and known categories through older-client refreshes and restore',async(t)=>{
+  const {api,login}=fixture(t),user=await login('captain');
+  const first=snapshot('language-merging');first.mode='bt';
+  first.submissions[1].language='Python 3';
+  const hid=(await api('POST','client/sync',first,user.token)).data.id;
+  const update=snapshot('language-merging',2);update.mode='bt';update.submissions[0].verdict='PENDING';update.submissions[0].language='GNU C17';update.submissions[1].verdict='CORRECT';
+  await api('POST','client/sync',update,user.token);
+  const late=snapshot('language-merging',3);late.mode='bt';late.submissions[1].language='Rust 1.75';
+  await api('POST','client/sync',late,user.token);
+  const records=(await api('GET',`history/${hid}`,undefined,user.token)).data.submissions;
+  assert.equal(records.find((s:Data)=>s.id==='123').verdict,'CORRECT');assert.equal(records.find((s:Data)=>s.id==='123').language,'c');
+  assert.equal(records.find((s:Data)=>s.id==='124').verdict,'CORRECT');assert.equal(records.find((s:Data)=>s.id==='124').language,'py');
+  const restored=(await api('POST','client/restore',{contestUrl:first.contest.url},user.token)).data.snapshot;
+  assert.deepEqual(restored.submissions.map((s:Data)=>s.language),['c','py']);
+});

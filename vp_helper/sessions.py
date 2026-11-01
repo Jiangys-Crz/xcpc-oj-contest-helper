@@ -9,6 +9,7 @@ import time
 from .platform_clock import platform_now
 from .accounts import same_handle
 from .models import Contest, Submission, VPError
+from .submission_languages import merge_language, language_fields
 from .storage import file_lock, read_json, state_directory, write_json
 
 
@@ -64,11 +65,12 @@ def merge_records(path: Path, state: dict, incoming: list[dict]) -> list[dict]:
     owners = receipt_owners(path, state)
     values = {str(e["id"]): dict(e) for e in state.get("submissions", [])}
     for event in incoming:
-        values[str(event["id"])] = dict(event)
+        values[str(event["id"])] = merge_language(values.get(str(event["id"])), event)
     contest = Contest.from_dict(state["contest"])
     for sid, (owner, receipt) in owners.items():
         if owner == path and sid not in values:
-            values[sid] = {k: receipt[k] for k in ("id", "team", "problem", "time", "verdict")}
+            values[sid] = {**{k: receipt[k] for k in ("id", "team", "problem", "time", "verdict")},
+                           **language_fields(receipt)}
     result = []
     for sid, event in values.items():
         at = state["start_time"] + event["time"]
@@ -187,14 +189,15 @@ def save_state(path: Path, state: dict) -> None:
         previous_records = {str(e["id"]): e for e in previous.get("submissions", [])}
         combined = {str(e["id"]): e for e in state.get("submissions", [])}
         if previous.get('sync_revision', 0) > state.get('sync_revision', 0):
-            combined.update(previous_records)
+            combined.update({sid: merge_language(combined.get(sid), event) for sid, event in previous_records.items()})
             state['sync_revision'] = previous['sync_revision']
             if 'last_sync_time' in previous:
                 state['last_sync_time'] = previous['last_sync_time']
             if 'summary' in previous:
                 state['summary'] = previous['summary']
         else:
-            combined = {**previous_records, **combined}
+            combined = {**previous_records, **{sid: merge_language(previous_records.get(sid), event)
+                                              for sid, event in combined.items()}}
         state["submissions"] = merge_records(path, state, list(combined.values()))
         cutoff = boundary(path)
         if state.get("mode", "vp") == "vp" and cutoff is not None and platform_now(state) >= cutoff:

@@ -325,6 +325,7 @@ def sync_payload(path, state):
     """Strict allowlist: judge credentials, local paths and source never leave the PC."""
     from .scoring import score_submissions, score_practice_submissions
     from .submission_results import judging_url
+    from .submission_languages import language_fields
     contest = Contest.from_dict(state['contest'])
     duration = contest.rules.duration
     imported = {str(item['id']) for item in state.get('restored_submissions', [])} if state.get('cloud_restore') and state.get('mode') == 'practice' else set()
@@ -387,7 +388,8 @@ def sync_payload(path, state):
                'submissions':[{'id':str(e['id']),'problem':e['problem'],'submittedAt':_iso(state['start_time']+e['time']),
                               'verdict':e['verdict'],'practice':e['practice'],
                               'url':judging_url(contest.url, str(e['id'])),
-                              **({'points':_event_points(e)} if _event_points(e) is not None else {})} for e in records]}
+                              **({'points':_event_points(e)} if _event_points(e) is not None else {}),
+                              **language_fields(e)} for e in records]}
     created = state.get('created_at')
     if type(created) in (int, float) and math.isfinite(created) and created >= 0:
         try:

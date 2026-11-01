@@ -190,7 +190,7 @@ def submit_with_session(web, url: str, lang: str, code: str, problem: str) -> No
         raise SystemExit('QOJ did not confirm this submission (HTTP ' + str(submit_response.status_code) + '): ' + redact(detail, [dynamic_token, cookie])[:500])
     print(f'Submission #{sid}: PENDING', flush=True)
     try:
-        record_receipt(contest, sid, problem, submitted_at)
+        record_receipt(contest, sid, problem, submitted_at, language=lang)
     except (VPError, OSError) as exc:
         print('Submitted, but the monitor notification failed: ' + str(exc))
     print_judging_link(contest_base_url, sid)

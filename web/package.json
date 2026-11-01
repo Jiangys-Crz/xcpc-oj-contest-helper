@@ -1,5 +1,5 @@
 {
-  "name":"xcpc-vp-cloud","version":"0.9.16","private":true,
+  "name":"xcpc-vp-cloud","version":"0.9.18","private":true,
   "scripts":{"dev":"next dev --hostname 127.0.0.1 --port 3100","build":"next build","start":"next start --hostname 127.0.0.1 --port 3100","typecheck":"tsc --noEmit","test":"tsx --test tests/*.test.ts"},
   "dependencies":{"next":"16.4.3","react":"19.3.1","react-dom":"19.3.1","lucide-react":"^0.468.0"},
   "devDependencies":{"@types/node":"^24","@types/react":"^19","@types/react-dom":"^19","tsx":"^4.21.0","typescript":"^5.9.3"}

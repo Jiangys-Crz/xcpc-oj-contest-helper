@@ -86,6 +86,7 @@ class Submission:
     # Native awarded points, when the judge exposes them. Never infer a CF
     # points formula from the submission time or from a binary verdict.
     score: float | None = None
+    language: str | None = None
 
 
 @dataclass

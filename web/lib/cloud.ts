@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { Store, type Row } from './db';
 import { roomTiming, publicScore, historyRank, pointScoring } from './scoreboard';
+import { submissionLanguage } from './submission-language';
 
 export class ApiError extends Error { constructor(public status: number, message: string) { super(message); } }
 const fail = (status: number, message: string): never => { throw new ApiError(status, message); };
@@ -320,7 +321,7 @@ export class CloudService {
     else if(frozen && filtered && (filtered.points===undefined || row.freeze_event_points===null) && row.freeze_points!==null && row.freeze_points!==undefined)filtered.points=row.freeze_points;
     const value={id:row.id,participantType,...this.historyIdentity(row),contestName:room?.name||row.contest_name,contestUrl:row.contest_url,platform:row.platform,mode:row.mode,rank:historyRank(row,room,frozen),rankSource:row.mode==='bt'?'unavailable':frozen?(row.freeze_rank_source==='original'?'original':'unavailable'):row.rank_source||'legacy',solved:filtered?.solved??row.solved,penalty:row.mode==='bt'?0:filtered?.penalty??row.penalty,points:row.mode==='bt'?null:filtered?filtered.points??null:row.points??null,scoring:rules.scoring||'ICPC',problems:JSON.parse(row.problems_json),cells:filtered?.cells??JSON.parse(row.cells_json),startedAt:row.mode==='bt'?null:row.started_at,endedAt:row.mode==='bt'?null:row.ended_at,participantLabel:row.participant_label,roomId:row.room_id,status:row.status,createdAt:row.created_at,updatedAt:row.updated_at,rules,...(timing?{...timing,freezeActive:timing.frozen,frozen}: {frozen:false})};
     const statistics=row.mode!=='bt' || row.statistics_json?this.statisticsView(room||{starts_at:row.started_at||now(),duration_seconds:rules.duration,freeze_minutes:rules.freeze_minutes,scoring_system:rules.contest_format},[row],JSON.parse(row.problems_json),at):{};
-    return details?{...value,...statistics,submissions:filtered?.submissions??submissions.filter(s=>Date.parse(s.submittedAt)<=at)}:value;
+    return details?{...value,...statistics,submissions:(filtered?.submissions??submissions.filter(s=>Date.parse(s.submittedAt)<=at)).map(s=>({...s,language:submissionLanguage(s.language)}))}:value;
   }
   private restoreEnded(row:Row):boolean {
     if(['failed','cancelled','scheduled'].includes(row.status))return false;
@@ -342,7 +343,7 @@ export class CloudService {
     const saved=JSON.parse(row.rules_json||'{}'),rules:Row={};
     for(const key of ['duration','penalty_minutes','compile_penalty','freeze_minutes','scoring','score_policy','problem_max_scores','contest_format','problem_reveal_count'])if(saved[key]!==undefined)rules[key]=saved[key];
     const room=row.room_id?this.room(row.room_id):undefined;
-    const recordView=(history:Row):Row[]=>JSON.parse(history.submissions_json).filter((s:Row)=>Date.parse(s.submittedAt)<=Date.now()).map((s:Row)=>({id:s.id,problem:s.problem,submittedAt:s.submittedAt,verdict:s.verdict,practice:s.practice===true,...(s.points===undefined?{}:{points:s.points})}));
+    const recordView=(history:Row):Row[]=>JSON.parse(history.submissions_json).filter((s:Row)=>Date.parse(s.submittedAt)<=Date.now()).map((s:Row)=>({id:s.id,problem:s.problem,submittedAt:s.submittedAt,verdict:s.verdict,practice:s.practice===true,language:submissionLanguage(s.language),...(s.points===undefined?{}:{points:s.points})}));
     // Explicit outbound allowlist: no judge credentials, local paths, source
     // files, association passwords, or other teams' records can be restored.
     const submissions=recordView(row),personal=this.store.one("SELECT * FROM histories WHERE owner_id=? AND contest_url=? AND mode='bt' AND room_id IS NULL AND id<>? ORDER BY created_at DESC,id DESC LIMIT 1",user.id,row.contest_url,row.id);
@@ -409,6 +410,7 @@ export class CloudService {
     const submissions=body.submissions.map((s:Row)=>{
       if(!s || !problems.includes(s.problem))return fail(400,'提交记录题号不属于此比赛');
       const value:Row={id:text(String(s.id??''),'提交ID',120),problem:s.problem,submittedAt:iso(s.submittedAt,'提交时间'),verdict:text(s.verdict,'判题状态',100),practice:mode==='bt'||s.practice===true};
+      if(s.language!==undefined)value.language=submissionLanguage(s.language);
       if(s.points!==undefined)value.points=number(s.points,'提交得分');
       if(s.url) {let link:URL;try{link=new URL(s.url);}catch{return fail(400,'提交记录链接无效');} if(link.protocol==='https:' && !link.username && !link.password && link.hostname.replace(/^www\./,'')===new URL(url).hostname)value.url=link.href;}
       return value;
@@ -478,8 +480,14 @@ export class CloudService {
       if(old)for(const s of JSON.parse(old.submissions_json))records.set(s.id,s);
       for(const s of data.submissions) {
         const prior=records.get(s.id);
-        if(prior && !pendingVerdicts.has(prior.verdict) && pendingVerdicts.has(s.verdict))continue;
-        records.set(s.id,data.mode==='bt' && prior && !prior.practice && s.practice?{...s,practice:false}:s);
+        // Older clients and judge refreshes may omit language metadata. Keep
+        // an existing known category without changing final-verdict precedence.
+        const language=submissionLanguage(s.language),previousLanguage=submissionLanguage(prior?.language);
+        const languageInfo=language!=='other'?{language}:previousLanguage!=='other'?{language:previousLanguage}:{};
+        if(prior && !pendingVerdicts.has(prior.verdict) && pendingVerdicts.has(s.verdict)) {
+          records.set(s.id,{...prior,...languageInfo});continue;
+        }
+        records.set(s.id,{...s,...languageInfo,...(data.mode==='bt' && prior && !prior.practice && s.practice?{practice:false}:{})});
       }
       if(records.size>20000)return fail(400,'单场比赛提交记录超出上限');
       const submissions=[...records.values()].sort((a,b)=>a.submittedAt.localeCompare(b.submittedAt));
