@@ -45,6 +45,7 @@ class MidContestEntryTests(Isolated):
                     cli.start(url, live=True)
                     path, state = opened.call_args.args
                     self.assertEqual((state['mode'], state['status']), ('live','running'))
+                    self.assertFalse(state['submissions_complete'])
                     self.assertEqual(state['start_time'],1000)
                     self.assertEqual(state['contest']['original_start'],1000)
                     self.assertEqual(state['contest']['rules']['duration'],7200)

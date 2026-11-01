@@ -187,6 +187,23 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(events[-1]["verdict"], "CHALLENGED")
         self.assertEqual(self.api.api.call_args_list[-1].kwargs["from"], 1001)
 
+    def test_repeated_or_shifting_history_pages_are_retried_without_losing_received_records(self):
+        first=[submission(i,at=1100) for i in range(1,1001)]
+        self.api.api.side_effect=[first,first]
+        events=self.api.submissions(contest())
+        self.assertEqual(len(events),1000)
+        self.assertFalse(self.api.submissions_complete)
+        self.assertEqual(self.api.api.call_count,2)
+        self.assertIn('repeated a page',self.api.submission_message)
+        self.api.api.side_effect=[first,[submission(1000,at=1100),submission(1001,at=1200)]]
+        self.assertEqual(len(self.api.submissions(contest())),1001)
+        self.assertFalse(self.api.submissions_complete)
+        self.assertIn('changed while paging',self.api.submission_message)
+        self.api.api.side_effect=[first,[submission(1001,at=1200)]]
+        self.assertEqual(len(self.api.submissions(contest())),1001)
+        self.assertTrue(self.api.submissions_complete)
+        self.assertEqual(self.api.submission_message,'')
+
     def test_statement_error_does_not_discard_official_snapshot(self):
         self.api.save_statements = Mock(side_effect=VPError("download failed"))
         result, error = live.fetch(self.api, contest().to_dict(), Path("/unused"))
@@ -329,6 +346,20 @@ class LocalStateTests(IsolatedState):
         self.assertIn("Scoreboard frozen", rendered)
         self.assertNotIn("Gold", rendered)
 
+    def test_live_partial_points_only_show_accepted_when_the_native_board_confirms_it(self):
+        c=contest();c.extra.update(scoring='IOI',problem_max_scores={'A':100,'B':100})
+        own={'party':{'members':[{'handle':'tester'}]},'rank':17,'points':75,'penalty':0,
+             'problemResults':[{'points':75,'accepted':False,'type':'FINAL'}, {'points':0,'accepted':False}]}
+        console=Console(width=160,color_system='truecolor')
+        def colors():
+            return {tuple(segment.style.color.get_truecolor()) for segment in console.render(
+                LiveDashboard(c,1800,{'own':own},[]).fixed(160))
+                if segment.style and segment.style.color and not segment.style.color.is_default}
+        self.assertNotIn((0,128,0),colors())
+        self.assertIn((184,134,11),colors())
+        own['problemResults'][0]['accepted']=True
+        self.assertIn((0,128,0),colors())
+
     def test_installed_submit_dispatch_selects_live_entry_and_keeps_private_config(self):
         native = self.root / "venv/bin/vp-submit"
         native.parent.mkdir(parents=True)
@@ -394,6 +425,48 @@ class LocalStateTests(IsolatedState):
         rows = read_history(Path(self.state["history_path"]), fields=live.HISTORY_FIELDS)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["points"], "100")
+
+    def test_monitor_marks_backfill_incomplete_and_keeps_native_board_until_all_pages_arrive(self):
+        class ImmediatePool:
+            def __init__(self,**kwargs):pass
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def submit(self,fn,*args):
+                result=Future();result.set_result(fn(*args));return result
+        directory=self.root/'contest'
+        directory.mkdir()
+        write_json(directory/'contest.json',{})
+        self.state.update(directory=str(directory),submissions=[],snapshot={})
+        write_json(self.path,self.state)
+        write_json(self.root/'config/vp/config.json',{'cf':{'handle':'tester'}})
+        received=[{'id':'1','team':'me','problem':'A','time':100,'verdict':'CORRECT'}]
+        for complete in (False,True):
+            with self.subTest(complete=complete):
+                submission_api=Mock(submissions_complete=complete)
+                submission_api.submissions.return_value=copy.deepcopy(received)
+                reference_api=CodeforcesLive(URL,{'handle':'tester'})
+                reference_api.api=Mock(return_value=standings())
+                view=Mock()
+                view.__enter__=Mock(return_value=view);view.__exit__=Mock(return_value=None)
+                view.input.side_effect=[True,True,False]
+                with patch('vp_helper.live.CodeforcesLive',side_effect=[submission_api,reference_api]), \
+                        patch('vp_helper.live.ThreadPoolExecutor',ImmediatePool), \
+                        patch('vp_helper.live.TerminalDashboard',return_value=view), \
+                        patch('vp_helper.live.time.monotonic',side_effect=[100,101]), \
+                        patch('vp_helper.live.time.time',return_value=2800),patch('vp_helper.live.time.sleep'):
+                    live.monitor_live(self.path)
+                saved=read_json(self.path)
+                self.assertIs(saved['submissions_complete'],complete)
+                self.assertEqual(len(saved['submissions']),len(received))
+                self.assertEqual(saved['start_time'],1000)
+                first,last=[call.args[0] for call in view.update.call_args_list]
+                self.assertIn('Syncing submission history from the contest start',first.message)
+                self.assertEqual(last.snapshot['own']['rank'],17)
+                self.assertEqual(last.snapshot['own']['penalty'],42)
+                self.assertEqual(last.elapsed,1800)
+                if complete:self.assertNotIn('history incomplete',last.message)
+                else:self.assertIn('history incomplete',last.message)
+                received.append({'id':'2','team':'me','problem':'B','time':200,'verdict':'WRONG-ANSWER'})
 
 
 class SubmitTests(IsolatedState):

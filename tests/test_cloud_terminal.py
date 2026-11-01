@@ -193,6 +193,22 @@ class CloudTerminalTests(unittest.TestCase):
         self.assertEqual(payload['penalty'],0)
         self.assertEqual(payload['submissions'][0]['submittedAt'],cloud._iso(self.state['start_time']-100))
 
+    def test_live_native_rejudge_and_fractional_penalty_override_older_local_history(self):
+        self.state['mode']='live'
+        self.state['submissions']=[{'id':'1','team':'me','problem':'A','time':10,'verdict':'CORRECT'}]
+        self.state['snapshot']={'own':{'rank':17,'points':1,'penalty':'20.5',
+            'problemResults':[{'points':0,'accepted':False},
+                              {'points':1,'accepted':True,'bestSubmissionTimeSeconds':600}]}}
+        payload=cloud.sync_payload(self.path,self.state)
+        self.assertEqual((payload['rank'],payload['solved'],payload['penalty']),('17',1,20.5))
+        self.assertFalse(payload['cells']['A']['solved'])
+        self.assertNotIn('solveTime',payload['cells']['A'])
+        self.assertTrue(payload['cells']['B']['solved'])
+        self.assertEqual(payload['cells']['B']['solveTime'],10)
+        for value,expected in (('0:25:30',25.5),('0:25',25),(42,42),('nan',99),(-1,99),(True,99)):
+            with self.subTest(value=value):
+                self.assertEqual(cloud._penalty(value,99),expected)
+
     def test_resumed_bt_counts_all_attempts_without_altering_original_score(self):
         self.state['practice_view']=True
         self.state['submissions']=[{'id':str(i),'team':'me','problem':'A','time':10+i,'verdict':v}

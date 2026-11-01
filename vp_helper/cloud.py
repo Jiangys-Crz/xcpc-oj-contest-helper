@@ -310,11 +310,14 @@ def _iso(value):
 def _penalty(value, fallback=0):
     if isinstance(value, str) and re.fullmatch(r'\d+:\d{2}(?::\d{2})?', value):
         from .parsing import seconds
-        return int(seconds(value) // 60)
+        value = seconds(value) / 60
     try:
-        return int(float(value))
+        numeric = float(value)
     except (TypeError, ValueError, OverflowError):
         return fallback
+    if isinstance(value, bool) or not math.isfinite(numeric) or numeric < 0:
+        return fallback
+    return int(numeric) if numeric.is_integer() else numeric
 
 
 def _event_points(event):
@@ -368,13 +371,26 @@ def sync_payload(path, state):
         if index < len(native):
             cell = native[index]
             accepted = cell.get('accepted', cell.get('points', 0) > 0 if scoring in ('ICPC', 'CF') else False)
-            if accepted:
+            if mode == 'live' and not state.get('practice_view') and type(cell.get('accepted')) is bool:
+                # A board can reflect a rejudge before an older status page.
+                # Native acceptance is authoritative for live standings.
+                cells[label]['solved'] = accepted
+                if not accepted:
+                    cells[label].pop('solveTime', None)
+                elif (type(cell.get('bestSubmissionTimeSeconds')) in (int, float)
+                      and math.isfinite(cell['bestSubmissionTimeSeconds']) and cell['bestSubmissionTimeSeconds'] >= 0):
+                    cells[label]['solveTime'] = int(cell['bestSubmissionTimeSeconds'] // 60)
+            elif accepted:
                 cells[label]['solved'] = True
             native_tries = int(cell.get('rejectedAttemptCount', 0)) + int(bool(accepted))
             cells[label]['tries'] = max(original_attempts.cells[label].tries, native_tries) + practice_score.cells[label].tries
             if scoring != 'ICPC' and type(cell.get('points')) in (int, float):
                 cells[label]['points'] = cell['points']
     solved = practice_score.solved if mode == 'bt' else sum(c['solved'] for c in cells.values())
+    if (mode == 'live' and not state.get('practice_view') and scoring == 'ICPC'
+            and type(own.get('points')) in (int, float) and math.isfinite(own['points'])
+            and float(own['points']).is_integer() and 0 <= own['points'] <= len(contest.problems)):
+        solved = int(own['points'])
     payload = {'localId':path.stem,'contest':{'platform':contest.platform,'contestId':contest.contest_id,
                'url':contest.url,'name':contest.name,'problems':list(contest.problems),
                'rules':{'duration':duration,'penalty_minutes':contest.rules.penalty_minutes,

@@ -110,6 +110,7 @@ def prepare_live(url: str) -> tuple[Path, dict]:
         state = {**saved, "mode": "live", "contest": contest.to_dict(), "url": canonical,
                  "start_time": contest.original_start, "handle": api.handle, "directory": str(directory),
                  "tmux_session": name, "status": "running", "submissions": saved.get("submissions", []),
+                 "submissions_complete": saved.get("submissions_complete", False),
                  "snapshot": snapshot, "history_path": saved.get("history_path") or str(desktop() / PLATFORMS[platform][2])}
         state.setdefault("created_at", platform_now(canonical))
         if directory != target:
@@ -220,7 +221,8 @@ def monitor_live(path: Path) -> None:
                         from .sessions import apply_submission_sync
                         state["submissions"] = list(events.values())
                         events = {e['id']: e for e in apply_submission_sync(path, state, incoming, poll_revision)}
-                        state['submissions_complete'] = getattr(api, 'submissions_complete', True) is not False
+                        state['submissions_complete'] = (getattr(api, 'submissions_complete', True) is not False
+                                                         and bool(contest.problems))
                         submissions_at = platform_now(contest.url)
                         changed = True
                     pending = any(e["verdict"] == "PENDING" for e in events.values())
@@ -268,6 +270,10 @@ def monitor_live(path: Path) -> None:
                 phase = snapshot.get("phase", contest.extra["phase"])
                 age = platform_now(contest.url) - snapshot.get("at", 0)
                 message = submission_error or reference_error or snapshot.get("message", "")
+                if phase != "BEFORE" and (not submissions_at or state.get('submissions_complete') is False):
+                    history_message = ("Syncing submission history from the contest start..." if not submissions_at else
+                                       "Submission history incomplete; retrying older pages.")
+                    message = history_message + (" · " + message if message else "")
                 if age > 45 and phase != "BEFORE":
                     message = "Standings stale · " + (message or "reconnecting")
                 if submissions_at and platform_now(contest.url) - submissions_at > 15:

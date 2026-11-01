@@ -600,7 +600,9 @@ class LiveDashboard:
             if when is not None:
                 value += "\n" + clock(when)
             pending = preliminary or result.get('pending') or result.get('frozen') or original_cells[label].pending
-            color = "#b8860b" if preliminary and points else "#008000" if points else PENDING_STYLE if pending else "#ff0000" if rejected else "default"
+            accepted = result.get('accepted', bool(points) if scoring in ('ICPC', 'CF') else False)
+            color = ("#b8860b" if points and (preliminary or not accepted) else "#008000" if points else
+                     PENDING_STYLE if pending else "#ff0000" if rejected else "default")
             cells.append(Text(value, style=color))
         name = (own["party"].get("teamName") or ";".join(m["handle"] for m in own["party"]["members"])) if own else self.handle
         name = self.participant_label or name

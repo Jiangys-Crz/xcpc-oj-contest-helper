@@ -255,6 +255,8 @@ class CodeforcesLive:
         self.submissions_complete = False
         self.submission_message = ''
         offset = 1
+        seen = set()
+        changed_while_paging = False
         while True:
             try:
                 data = self.api("contest.status", contestId=self.id, handle=self.handle,
@@ -264,6 +266,13 @@ class CodeforcesLive:
                     raise
                 self.submission_message = 'Recent submissions synced; older history will be retried: ' + str(exc)
                 break
+            ids = {str(raw["id"]) for raw in data}
+            if ids & seen:
+                changed_while_paging = True
+            if ids and ids <= seen:
+                self.submission_message = 'Submission history repeated a page; recent results synced, retrying older history.'
+                break
+            seen.update(ids)
             for raw in data:
                 author = raw["author"]
                 kind = author.get("participantType")
@@ -282,7 +291,9 @@ class CodeforcesLive:
                     "points": raw.get("points"), "practice": kind == "PRACTICE", **language_fields(raw),
                 }
             if len(data) < 1000:
-                self.submissions_complete = True
+                self.submissions_complete = not changed_while_paging
+                if changed_while_paging:
+                    self.submission_message = 'Submission history changed while paging; recent results synced, retrying history.'
                 break
             offset += 1000
         return self.pending_judgements.update(self, list(result.values()))
