@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 import math
 import time
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from .portable import login_browser
 from .http import WebSession
@@ -162,9 +162,23 @@ class CodeforcesLive:
             raise VPError("This contest is not available in the public Codeforces contest list.")
         contest = Contest(self.platform, self.id, self.url, raw["name"], f"{self.platform.upper()} {self.id}", {}, Rules(1))
         apply_metadata(contest, raw)
-        snapshot = self.snapshot(contest) if raw["phase"] != "BEFORE" else {}
+        snapshot = self.snapshot(contest, allow_unavailable=True) if raw["phase"] != "BEFORE" else {}
         if not snapshot.get("own"):
             self.verify_registration(page, contest)
+        if not contest.problems:
+            # A temporarily unavailable public board must not prevent an
+            # authenticated, registered contestant from joining mid-contest.
+            # Read only this contest's published problem links; later board
+            # polls will populate full native problem/scoring metadata.
+            prefix = urlsplit(self.url).path + "/problem/"
+            for link in page.select("table.problems a[href]"):
+                target = urlsplit(urljoin(self.url + "/", link["href"]))
+                if (target.scheme != "https" or target.netloc.removeprefix("www.") != "codeforces.com"
+                        or not target.path.startswith(prefix)):
+                    continue
+                label = target.path[len(prefix):]
+                if re.fullmatch(r"[A-Z][A-Z0-9]*", label):
+                    contest.problems[label] = label
         return contest, snapshot
 
     def contest_name(self) -> str:
@@ -201,8 +215,15 @@ class CodeforcesLive:
                 return
         raise VPError("Cannot verify an existing registration for this contest. Register on Codeforces first, then retry; no registration was changed.")
 
-    def snapshot(self, contest: Contest) -> dict:
-        data = self.api("contest.standings", contestId=self.id)
+    def snapshot(self, contest: Contest, *, allow_unavailable: bool = False) -> dict:
+        try:
+            data = self.api("contest.standings", contestId=self.id)
+        except VPError as exc:
+            if not allow_unavailable:
+                raise
+            return {"own": None, "stats": {}, "phase": contest.extra["phase"],
+                    "frozen": contest.extra["frozen"], "at": platform_now(self.url),
+                    "available": False, "message": "Scoreboard unavailable; retrying: " + str(exc)}
         apply_metadata(contest, data["contest"], data["problems"])
         row = own_row(data["rows"], self.handle)
         if row is not None:

@@ -627,7 +627,9 @@ class LiveDashboard:
         note = ("Official public standings · scored = positive points · * preliminary" if self.contest.platform == "cf"
                 else f"{'Nowcoder' if self.contest.platform == 'nowcoder' else 'CWNUOJ'} scoreboard · original scores, ranks and public statistics")
         if own is None:
-            note = "Your participation is absent from the public official standings; points and rank unavailable."
+            note = ("Official standings are temporarily unavailable; retrying with the original contest schedule."
+                    if self.snapshot.get("available") is False else
+                    "Your participation is absent from the public official standings; points and rank unavailable.")
         if self.practice:
             note = ""
         labels = Dashboard.record_heading(width, Dashboard.record_rows(self))

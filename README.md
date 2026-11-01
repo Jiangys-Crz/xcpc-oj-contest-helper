@@ -2,7 +2,7 @@
 
 线上组队、多队虚拟赛、训练历史与队内虚拟打印，配合原有终端完成原站参赛和提交。网站使用 Next.js 全栈，终端继续支持 Ubuntu、macOS 和 Windows。
 
-当前版本：**0.9.19**。线上地址：[CWNU XCPC Vp System](https://vp.cwnupaa.com)。
+当前版本：**0.9.20**。线上地址：[CWNU XCPC Vp System](https://vp.cwnupaa.com)。
 
 一键安装教程：[网站安装教程](https://vp.cwnupaa.com/install)。Ubuntu / macOS 在终端运行：
 
@@ -319,6 +319,8 @@ live https://codeforces.com/contest/2272
 live https://oj.cwnupaa.com/contest/6adb59680b835c39ff13486c
 live https://ac.nowcoder.com/acm/contest/142115
 ```
+
+比赛进行中也可以首次执行 `live`。计时沿用原站开始时间和结束时间：例如比赛已经进行了 30 分钟，进入面板后仍显示已进行 30 分钟；重连也不会重置时间。Codeforces 榜单暂时不可读时，确认登录和报名后可先进入面板，后台继续同步榜单。
 
 `live` 接入已有参赛资格，不代替原站报名。CWNUOJ 的限时参赛场次需要先在原站开始。BT 和 live 不下载或保存题面。
 

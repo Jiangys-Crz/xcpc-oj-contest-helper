@@ -112,6 +112,51 @@ class PlatformTests(unittest.TestCase):
         self.assertIsNone(snapshot["own"])
         self.assertEqual(prepared.original_start, 1000)
 
+    def test_mid_contest_entry_keeps_official_schedule_when_public_board_is_unavailable(self):
+        page = html('<div class="contest-registration">You are registered</div>'
+                    '<table class="problems"><tr><td><a href="/contest/1234/problem/A">A</a></td></tr>'
+                    '<tr><td><a href="https://www.codeforces.com/contest/1234/problem/B">B</a></td></tr>'
+                    '<tr><td><a href="https://evil.example/contest/1234/problem/C">C</a></td></tr>'
+                    '<tr><td><a href="/contest/999/problem/D">D</a></td></tr></table>')
+        self.api.web.soup.return_value = page
+        raw = standings()["contest"]
+        self.api.api.side_effect = [[raw], VPError("temporary API failure"), standings()]
+        with patch("vp_helper.codeforces_live.platform_now", return_value=2800):
+            prepared, snapshot = self.api.prepare()
+        self.assertEqual((prepared.original_start, prepared.rules.duration), (1000, 7200))
+        self.assertEqual(prepared.problems, {"A": "A", "B": "B"})
+        self.assertEqual(snapshot["phase"], "CODING")
+        self.assertIsNone(snapshot["own"])
+        self.assertFalse(snapshot["available"])
+        self.assertEqual(snapshot["at"]-prepared.original_start, 1800)
+        recovered = self.api.snapshot(prepared)
+        self.assertEqual(recovered["own"]["rank"], 17)
+        self.assertEqual((prepared.original_start, prepared.rules.duration), (1000, 7200))
+        self.api.web.post.assert_not_called()
+        self.api.web.session.post.assert_not_called()
+        output=io.StringIO()
+        Console(file=output,width=160,color_system=None).print(LiveDashboard(prepared,1800,snapshot,[]))
+        self.assertIn('00:30:00 / 02:00:00',output.getvalue())
+        self.assertIn('temporarily unavailable',output.getvalue())
+        self.assertNotIn('participation is absent',output.getvalue())
+
+    def test_unavailable_board_does_not_skip_login_or_registration_validation(self):
+        self.api.web.soup.return_value = html()
+        self.api.api.side_effect = [[standings()["contest"]], VPError("temporary API failure")]
+        with self.assertRaisesRegex(VPError,"existing registration"):
+            self.api.prepare()
+        self.api.web.post.assert_not_called()
+
+    def test_monitor_board_failure_stays_an_error_and_invalid_metadata_is_not_ignored(self):
+        self.api.api.side_effect = VPError("temporary API failure")
+        with self.assertRaisesRegex(VPError,"temporary API failure"):
+            self.api.snapshot(contest())
+        wrong=standings();wrong['contest']['id']=999
+        self.api.api.side_effect = [[standings()["contest"]],wrong]
+        self.api.web.soup.return_value=html()
+        with self.assertRaisesRegex(VPError,"invalid contest timing"):
+            self.api.prepare()
+
     def test_virtual_manager_and_other_handles_cannot_become_own_row(self):
         for kind in ("VIRTUAL", "MANAGER", "PRACTICE", "OUT_OF_COMPETITION"):
             rows = standings()["rows"]
