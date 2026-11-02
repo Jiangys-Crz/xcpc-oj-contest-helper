@@ -307,6 +307,84 @@ class QojContinuousSubmissionTests(unittest.TestCase):
         self.url = self.config['base_url'] + '/problem/10'
         self.receipt = self.stack.enter_context(patch.object(self.module, 'record_receipt'))
 
+    @staticmethod
+    def answer_form(url, token='fixture-token'):
+        return ('<form id="form-answer" method="post" action="' + url + '">'
+                '<input name="_token" value="' + token + '">'
+                '<button name="submit-answer" value="answer">Submit</button></form>')
+
+    def test_linux_vp_language_redirect_posts_the_native_contest_form_once(self):
+        base = 'https://qoj.ac/contest/4613'
+        requested = base + '/problem/23631'
+        target = requested + '/statement/zh_cn'
+        self.config.update(base_url=base, mode='vp', cookie_source='firefox')
+        def router(method, url, cookie, options):
+            if url.endswith('/submissions'):
+                return response(url, cookies=[('sid', 'after-baseline', '.qoj.ac', '/')])
+            if method == 'GET':
+                return response(target, body=self.answer_form(target, 'answer-token'),
+                                cookies=[('sid', 'after-form', '.qoj.ac', '/')])
+            self.assertEqual(url, target)
+            self.assertIn('sid=after-form', cookie)
+            self.assertEqual(options['data']['_token'], 'answer-token')
+            return response(url, status=302, location='/submission/12345')
+        backend = OfflineSession(router)
+        with patch('sys.platform', 'linux'), patch.object(self.module, 'contest_base_url', base), \
+             patch('vp_helper.browser_login.refresh_browser_account', return_value=False), \
+             patch('vp_helper.http._requests.Session', return_value=backend), \
+             patch.object(self.module, 'post_form', side_effect=lambda session, url, fields: session.post(url, data={name:spec[1] for name,spec in fields.items()})), \
+             patch('sys.stdout', io.StringIO()) as output:
+            self.module.submit(requested, 'C++20', 'int main(){}', 'A')
+        self.assertEqual([call[0] for call in backend.calls], ['GET', 'GET', 'POST'])
+        self.receipt.assert_called_once()
+        self.assertEqual(self.receipt.call_args.args[2], 'A')
+        self.assertIn('Submission #12345', output.getvalue())
+        self.assertTrue(backend.closed)
+
+    def test_statement_form_submission_list_receipt_uses_the_original_problem_id(self):
+        target = self.url + '/statement/en'
+        listing = self.config['base_url'] + '/submissions'
+        old = '<table><tr><td><a href="/submission/12344">12344</a></td></tr></table>'
+        current = ('<table><tr><td><a href="/submission/12345">12345</a></td>'
+                   '<td><a href="/user/profile/tester">tester</a></td>'
+                   '<td><a href="/contest/123/problem/10">A</a></td></tr></table>')
+        web = SimpleNamespace(session=SimpleNamespace(), get=Mock(side_effect=[
+            response(listing, body=old), response(target, body=self.answer_form(target)),
+            response(listing, body=current)]))
+        with patch.object(self.module, 'post_form', return_value=response(target, status=302, location='/submissions')) as upload, \
+             patch('sys.stdout', io.StringIO()) as output:
+            self.module.submit_with_session(web, self.url, 'C++20', 'int main(){}', 'A')
+        self.assertEqual(upload.call_args.args[1], target)
+        upload.assert_called_once()
+        self.receipt.assert_called_once()
+        self.assertEqual(self.receipt.call_args.args[1:3], ('12345', 'A'))
+        self.assertIn('Submission #12345', output.getvalue())
+
+    def test_unrelated_redirect_never_uploads_code(self):
+        wrong_urls = [
+            'https://qoj.ac/problem/10',  # Would bypass the active VP.
+            'https://qoj.ac/contest/124/problem/10',
+            'https://qoj.ac/contest/123/problem/11/statement/en',
+            'https://contest.ucup.ac/contest/123/problem/10',
+            'https://qoj.ac.evil.example/contest/123/problem/10',
+            'http://qoj.ac/contest/123/problem/10',
+        ]
+        for wrong in wrong_urls:
+            with self.subTest(url=wrong):
+                backend = OfflineSession(lambda method, url, cookie, options: response(
+                    url if url.endswith('/submissions') else wrong + '?_token=private-query',
+                    body=self.answer_form(wrong)))
+                with patch('vp_helper.http._requests.Session', return_value=backend), \
+                     patch.object(self.module, 'post_form') as upload, patch('sys.stdout', io.StringIO()):
+                    with self.assertRaises(VPError) as error:
+                        self.module.submit(self.url, 'C++20', 'int main(){}', 'A')
+                upload.assert_not_called()
+                self.assertNotIn('private-query', str(error.exception))
+                self.assertIn('No code was submitted', str(error.exception))
+                self.assertIn(wrong, str(error.exception))
+                self.assertTrue(backend.closed)
+        self.receipt.assert_not_called()
+
     def test_repeated_submission_uses_fresh_cookie_and_token_and_never_repeats_rejection(self):
         submitted = []
         transports = []

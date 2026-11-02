@@ -16,19 +16,25 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 
 
 class InstalledEntries(unittest.TestCase):
-    def test_actual_qoj_practice_script_and_cf_absolute_path_parser(self):
+    def test_qoj_linux_dispatcher_language_redirect_and_cf_absolute_path_parser(self):
         for platform in ("qoj", "gym"):
             with self.subTest(platform=platform), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 bundle = root / 'bundle'
                 for submitter in ('qoj', 'cf_submit'):
                     shutil.copytree(REPOSITORY / 'third_party' / submitter, bundle / 'third_party' / submitter)
+                dispatcher_platform = 'darwin'
+                if platform == 'qoj' and os.name == 'posix':
+                    # Linux executes the installed script's shebang directly.
+                    dispatcher_platform = 'linux'
+                    script = bundle / 'third_party/qoj/submit'
+                    script.write_text('#!' + sys.executable + '\n' + script.read_text().split('\n', 1)[1])
                 # Exercise this checkout's real dispatcher and bundled parsers,
                 # independently of an unrelated installed XCPC release.
                 entry = root / 'dispatcher.py'
                 entry.write_text('import sys\nfrom types import SimpleNamespace\n'
                     'from vp_helper import submit\n'
-                    'submit.sys=SimpleNamespace(argv=sys.argv,prefix=' + repr(str(bundle / 'venv')) + ',executable=sys.executable,platform="darwin")\n'
+                    'submit.sys=SimpleNamespace(argv=sys.argv,prefix=' + repr(str(bundle / 'venv')) + ',executable=sys.executable,platform=' + repr(dispatcher_platform) + ')\n'
                     'submit.main()\n')
                 source = root/"A.cpp"
                 source.write_text("int main() {}\n")
@@ -63,14 +69,16 @@ else:
     class Response:
         status_code=200
         headers={}
-        text='<input name="_token" value="fixture">'
-        def __init__(self,url): self.url=url
+        def __init__(self,url):
+            self.url=url + '/statement/zh_cn' if '/problem/' in url and '/statement/' not in url else url
+            self.text='<form id="form-answer" method="post" action="'+self.url+'"><input name="_token" value="fixture"></form>'
         def raise_for_status(self): pass
     class Session:
         def __init__(self,**kwargs): self.headers={}; self.cookies=RequestsCookieJar()
         def get(self,url,**kwargs): return Response(url)
         def close(self): pass
         def post(self,url,**kwargs):
+            assert url.endswith('/problem/10/statement/zh_cn'), url
             response=Response(url)
             response.status_code=302
             response.headers={"Location":"/submission/12345"}

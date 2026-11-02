@@ -32,6 +32,7 @@ except ImportError:
     _IMPERSONATE = None
 
 import time
+import re
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 from selectolax.lexbor import LexborHTMLParser
@@ -140,8 +141,15 @@ def submit_with_session(web, url: str, lang: str, code: str, problem: str) -> No
     # Read the form last: a baseline GET can itself rotate the session and
     # invalidate a token read before it. Every command gets fresh native data.
     response = web.get(url)
-    if urlsplit(response.url).netloc != urlsplit(url).netloc or urlsplit(response.url).path != urlsplit(url).path:
-        raise VPError('QOJ did not return the requested submission page. No code was submitted.')
+    requested, returned = urlsplit(url), urlsplit(response.url)
+    statement_page = re.fullmatch(re.escape(requested.path) + r'/statement/[A-Za-z0-9_-]+/?', returned.path)
+    if (returned.netloc != requested.netloc or returned.scheme != requested.scheme
+            or returned.path != requested.path and not statement_page):
+        address = f'{returned.scheme}://{returned.hostname or ""}{returned.path}'
+        raise VPError(f'QOJ did not return the requested submission page (received {address!r}). No code was submitted.')
+    # Language pages use their own URL as the native answer form action.
+    # Keep the original problem URL for receipt matching below.
+    post_url = response.url if statement_page else url
     parser = LexborHTMLParser(response.text)
     token_node = parser.css_first('input[name="_token"]')
     dynamic_token = token_node.attributes.get('value', '') if token_node else ''
@@ -160,14 +168,14 @@ def submit_with_session(web, url: str, lang: str, code: str, problem: str) -> No
 
     submitted_at = platform_now(contest["base_url"])
     try:
-        submit_response = post_form(session, url, payload_files)
+        submit_response = post_form(session, post_url, payload_files)
     except _RequestException:
         print_judging_link(contest_base_url)
         raise SystemExit('Server confirmation unavailable. Check the submissions page before retrying.') from None
     honor_judge_response_cookies(session, submit_response)
     origin = 'https://' + urlsplit(contest_base_url).netloc
     sid = qoj_submission_id(submit_response, origin)
-    target = urljoin(url, submit_response.headers.get('Location', ''))
+    target = urljoin(post_url, submit_response.headers.get('Location', ''))
     destination = urlsplit(target)
     if (sid is None and previous is not None and submit_response.status_code in (302, 303)
             and destination.netloc == urlsplit(origin).netloc and destination.scheme == 'https'

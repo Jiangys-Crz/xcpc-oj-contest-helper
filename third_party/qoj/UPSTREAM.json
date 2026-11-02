@@ -13,6 +13,7 @@
     "Use the shared judge clock for submission receipt timestamps",
     "Print a shared English judging-result link after submission, including unconfirmed outcomes",
     "Use the Chromium transport and actual browser User-Agent for native Chrome/Edge extension sessions",
-    "Use a scoped native cookie jar for rotating QOJ sessions, read the CSRF form after baseline requests, close the session, and report one-shot submission failures without secrets"
+    "Use a scoped native cookie jar for rotating QOJ sessions, read the CSRF form after baseline requests, close the session, and report one-shot submission failures without secrets",
+    "Allow native statement-language redirects for the same contest problem and submit to the language page while retaining the original problem ID for receipt matching"
   ]
 }
