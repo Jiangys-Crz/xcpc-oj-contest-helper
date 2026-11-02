@@ -603,6 +603,7 @@ def monitor(path: Path) -> None:
         from .windows_terminal import view_options
         with ThreadPoolExecutor(max_workers=2) as network, TerminalDashboard(**view_options(path)) as view:
             while view.input():
+                state['practice_view'] = bool(state.get('practice_view') or read_json(path).get('practice_view'))
                 elapsed = platform_now(state) - state["start_time"]
                 cutoff = boundary(path)
                 interrupted = cutoff is not None and cutoff < state["start_time"] + contest.rules.duration
@@ -699,16 +700,23 @@ def monitor(path: Path) -> None:
                 if stats is not None and hasattr(current_reference.replay, 'statistics_at'):
                     stats = current_reference.replay.statistics_at(contest, contest.rules.duration if manual_final else scoring_elapsed,
                                                                    released=current_reference.released)
-                revealed = revealed_problems(contest, scoring_elapsed, current_reference)
+                reference_elapsed = contest.rules.duration if manual_final and manual_reference is not None else scoring_elapsed
+                revealed = revealed_problems(contest, reference_elapsed, current_reference)
                 reference_changed = False
-                if not state.get('practice_view') and not frozen and state.get('reference_rank') != proof:
+                # BT keeps the VP score (practice submissions are excluded above),
+                # but an old placeholder or mid-VP rank is not its final rank.
+                practice_rank = rank if state['practice_view'] and finished and proof is not None else None
+                if (not frozen and (not state['practice_view'] or practice_rank is not None)
+                        and state.get('reference_rank') != proof):
                     state['reference_rank'] = proof
+                    reference_changed = True
+                if practice_rank is not None and state.get('practice_rank') != practice_rank:
                     reference_changed = True
                 if stats is not None:
                     if (state.get('public_statistics') != stats or state.get('revealed_problems') != sorted(revealed)
                             or state.get('statistics_source') != 'original'):
                         state.update(public_statistics=stats, revealed_problems=sorted(revealed), statistics_source='original',
-                                     statistics_at=state['start_time'] + max(0, min(scoring_elapsed, contest.rules.freeze_at if frozen else contest.rules.duration)))
+                                     statistics_at=state['start_time'] + max(0, min(reference_elapsed, contest.rules.freeze_at if frozen else contest.rules.duration)))
                         reference_changed = True
                 elif state.get('statistics_source') not in ('original', 'unavailable'):
                     for key in ('public_statistics', 'revealed_problems', 'statistics_at'):
@@ -716,7 +724,18 @@ def monitor(path: Path) -> None:
                     state['statistics_source'] = 'unavailable'
                     reference_changed = True
                 if reference_changed:
-                    save_state(path, state)
+                    save_state(path, state, practice_rank=practice_rank)
+                if state['practice_view']:
+                    from .practice import saved_rank
+                    state.setdefault('practice_rank', read_json(path).get('practice_rank', saved_rank(state)))
+                    if manual_reference is not None:
+                        shown_rank = rank
+                    elif (state.get('reference_rank') or {}).get('externalRankUrl'):
+                        # Clearing an external board invalidates its cached
+                        # rank until an original native board is available.
+                        shown_rank = '—'
+                    else:
+                        shown_rank = state['practice_rank']
                 shown_message = submission_error or reference_error or current_reference.message
                 if finalized and current_reference.replay is not None and not submission_error and not reference_error:
                     shown_message = "Finished"
@@ -731,12 +750,7 @@ def monitor(path: Path) -> None:
                 if boundary(path) is not None and platform_now(state) >= boundary(path):
                     shown_message = "Archived VP · new submissions from this directory are practice"
                 if now >= next_render:
-                    state["practice_view"] = bool(state.get("practice_view") or read_json(path).get("practice_view"))
-                    if state['practice_view']:
-                        from .practice import saved_rank
-                        state.setdefault('practice_rank', read_json(path).get('practice_rank', saved_rank(state)))
-                        shown_rank = state['practice_rank']
-                    elif shown_rank not in ('', '?', '—') and state.get('last_rank') != shown_rank:
+                    if not state['practice_view'] and shown_rank not in ('', '?', '—') and state.get('last_rank') != shown_rank:
                         state['last_rank'] = shown_rank
                         save_state(path, state)
                     private.name = state.get('cloud', {}).get('label', private.name)
@@ -761,11 +775,11 @@ def monitor(path: Path) -> None:
                     state["summary"] = {"solved": private.solved,
                                         "points": private.points if private.scoring != 'ICPC' else None,
                                         "penalty": private.penalty if private.results_complete else "",
-                                        "rank": state.get('practice_rank', '—') if state['practice_view'] else rank if finalized else "", "prize": prize}
+                                        "rank": shown_rank if state['practice_view'] else rank if finalized else "", "prize": prize}
                     save_state(path, state)
                     row = {"start_time": datetime.fromtimestamp(state["start_time"], timezone.utc).isoformat(),
                            "contest": contest.name, "url": contest.url, "solved": private.solved,
-                           "penalty": private.penalty if private.results_complete else "", "rank": state.get('practice_rank', '—') if state['practice_view'] else rank if finalized else "", "prize": prize}
+                           "penalty": private.penalty if private.results_complete else "", "rank": shown_rank if state['practice_view'] else rank if finalized else "", "prize": prize}
                     if finalized or not preserve_final:
                         aliases = [(datetime.fromtimestamp(at, timezone.utc).isoformat(), state['url'])
                                    for at in state.get('start_time_aliases', [])]

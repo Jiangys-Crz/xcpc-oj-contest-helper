@@ -137,6 +137,13 @@ def promote(path: Path, state: dict) -> None:
                     state[key] = current[key]
             if current.get('practice_view'):
                 state['practice_view'] = True
+                if current.get('mode', 'vp') == 'vp' and 'practice_rank' in current:
+                    # A title refresh must preserve the latest cached rank's
+                    # provenance just like an ordinary session save.
+                    if 'reference_rank' in current:
+                        state['reference_rank'] = current['reference_rank']
+                    else:
+                        state.pop('reference_rank', None)
             if current.get('status') in ('archived', 'cancelled', 'failed'):
                 state['status'] = current['status']
             write_json(path, state)

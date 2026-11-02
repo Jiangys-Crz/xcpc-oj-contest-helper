@@ -149,7 +149,7 @@ def reconcile_native_start(path: Path, state: dict, started: float) -> dict:
         return saved
 
 
-def save_state(path: Path, state: dict) -> None:
+def save_state(path: Path, state: dict, *, practice_rank: str | None = None) -> None:
     # Only submission data is shared with independent history refreshes. Writers
     # merge IDs under a separate lock, so a slow GET cannot erase new receipts.
     with file_lock(path.with_suffix(".save.lock")):
@@ -188,8 +188,20 @@ def save_state(path: Path, state: dict) -> None:
                 state[key] = previous[key]
         if previous.get("practice_view"):
             state["practice_view"] = True
-        if 'practice_rank' in previous:
+        # Only a freshly verified final reference may replace the BT rank.
+        # Ordinary refreshes still preserve it against stale monitor writes.
+        if practice_rank is not None:
+            state['practice_rank'] = practice_rank
+        elif 'practice_rank' in previous:
             state['practice_rank'] = previous['practice_rank']
+            if previous.get('practice_view') and previous.get('mode', 'vp') == 'vp':
+                # Keep a cached VP rank and its provenance together. Otherwise
+                # a stale writer can hide that the rank needs an external board,
+                # or resurrect an old source after a verified recalculation.
+                if 'reference_rank' in previous:
+                    state['reference_rank'] = previous['reference_rank']
+                else:
+                    state.pop('reference_rank', None)
         previous_records = {str(e["id"]): e for e in previous.get("submissions", [])}
         combined = {str(e["id"]): e for e in state.get("submissions", [])}
         if previous.get('sync_revision', 0) > state.get('sync_revision', 0):
