@@ -67,6 +67,6 @@ runuser -u xcpc-vp -- env PM2_HOME=/home/paa/xcpc-vp-system/shared/pm2 \
 
 `shared/terminal-latest.json` 是公开版本清单的服务器文件，内容为 `version`、Git `revision`、源码包 `sha256` 和固定域名 `sourceUrl`。源码包在本地从已提交的文件生成，包含 Python 模块、安装器、第三方提交器和 wheels，排除个人配置、凭据、数据库、node_modules、构建输出。
 
-后续代码提交和发布统一使用 [GitHub 仓库](https://github.com/Jiangys-Crz/xcpc-oj-contest-helper)的 `main` 分支；本地 `origin` 和默认推送目标均指向该仓库。原 Gitee 仓库已删除，不再作为源码、推送或更新来源。
+后续代码提交统一使用 [GitHub 仓库](https://github.com/Jiangys-Crz/xcpc-oj-contest-helper)的 `main` 分支，终端更新包发布到公网服务器；本地 `origin` 和默认推送目标均指向该仓库。原 Gitee 仓库已删除，不再作为源码、推送或更新来源。
 
-新终端的 `xcpc update` 默认从 GitHub `main` 更新。源码包仍上传到 `shared/public/downloads/terminal/REVISION.tar.gz`，验证散列后再原子切换清单，供旧终端首次迁移、一键安装及显式 `xcpc update --cloud` 使用；包一旦发布不要改变内容。公开清单必须引用已经推送到 GitHub 的提交。Caddy 只公开这个下载目录，账号配置和数据库不在公开目录中。
+终端的 `xcpc update` 和 `xcpc update --cloud` 默认从公网服务器下载已发布的源码包，不自动回退到 GitHub。仅显式 `xcpc update --github` 使用 GitHub `main`。源码包上传到 `shared/public/downloads/terminal/REVISION.tar.gz`，验证散列后再原子切换清单，供终端默认更新、旧版迁移及一键安装使用；包一旦发布不要改变内容。公开清单必须引用已经推送到 GitHub 的提交。Caddy 只公开这个下载目录，账号配置和数据库不在公开目录中。

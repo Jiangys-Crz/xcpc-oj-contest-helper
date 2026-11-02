@@ -76,7 +76,7 @@ function Invoke-XcpcOnlineSetupCore {
     # Legacy per-user installs are preserved. The standard online installer now
     # installs the shared program instead of silently upgrading the private copy.
     if ((Test-Path -LiteralPath $xcpcGlobalCommand -PathType Leaf) -and $xcpcMachineEntries -contains $xcpcGlobalBin.TrimEnd('\','/')) {
-        & $xcpcGlobalCommand update
+        & $xcpcGlobalCommand update --cloud
         if ($LASTEXITCODE -eq 0) {
             Set-XcpcOnlineCommandPath $xcpcGlobalBin
             Initialize-XcpcOnlineUserBridge $xcpcGlobalBin

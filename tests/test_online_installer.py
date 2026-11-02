@@ -198,7 +198,7 @@ exit "$FIXTURE_INSTALL_EXIT"
         preserved.write_text('keep existing configuration\n')
         result = self.run_bootstrap(operating_system='Darwin')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.xcpc_log.read_bytes(), b'update\0--help\0')
+        self.assertEqual(self.xcpc_log.read_bytes(), b'update\0--cloud\0--help\0')
         self.assertFalse(self.installer_log.exists())
         self.assertFalse(self.curl_log.exists())
         self.assertEqual(preserved.read_text(), 'keep existing configuration\n')

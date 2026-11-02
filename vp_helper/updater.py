@@ -106,7 +106,7 @@ CLOUD_SERVER = "https://vp.cwnupaa.com"
 
 
 class CloudUnavailable(VPError):
-    """A connectivity failure permits fallback; integrity failures never do."""
+    """A server connection failure leaves the installed release intact."""
 
 
 def _download(url, *, stream=False):
@@ -114,10 +114,10 @@ def _download(url, *, stream=False):
         result = requests.get(url, timeout=(4, 30), allow_redirects=False, stream=stream,
                               headers={'User-Agent':'XCPC-Updater/0.9','Accept':'application/json' if not stream else 'application/gzip'})
     except requests.RequestException:
-        raise CloudUnavailable('云端更新连接失败。') from None
+        raise CloudUnavailable('公网更新服务器连接失败，请检查网络后重试；原版本未修改。') from None
     if result.status_code != 200:
         result.close()
-        raise CloudUnavailable('云端更新暂不可用。')
+        raise CloudUnavailable('公网更新服务器暂不可用，请稍后重试；原版本未修改。')
     return result
 
 
@@ -152,7 +152,7 @@ def safe_extract(archive, destination):
 
 
 def cloud_update(data):
-    print('正在检查 VP 云端最新版本…', flush=True)
+    print('正在检查公网服务器最新版本…', flush=True)
     response = _download(CLOUD_SERVER + '/api/client/releases/latest')
     try:
         manifest = response.json()['data']
@@ -211,14 +211,11 @@ def cloud_update(data):
         print('更新完成（' + revision[:8] + '）。查看帮助：xcpc --help')
 
 
-def update(*, repository: str = REPOSITORY, cloud: bool = False, gitee: bool = False) -> None:
+def update(*, repository: str = REPOSITORY, cloud: bool = True, gitee: bool = False) -> None:
     data = installation()
-    if cloud and not gitee and repository == REPOSITORY:
-        try:
-            cloud_update(data)
-            return
-        except CloudUnavailable:
-            print("云端更新暂不可用，正在尝试 GitHub…", flush=True)
+    if cloud and repository == REPOSITORY:
+        cloud_update(data)
+        return
     ensure_git()
     key = hashlib.sha256(data["install_root"].encode()).hexdigest()[:16]
     cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home()/".cache"))/"vp/updates"/key
@@ -272,9 +269,11 @@ def main() -> None:
             raise VPError("Usage: xcpc update [--github | --cloud]")
         if args == ["--cloud"]:
             update(cloud=True)
+        elif args == ["--github"]:
+            update(cloud=False)
         elif args == ["--gitee"]:
-            print("更新源已迁移到 GitHub，正在使用 GitHub 更新。", flush=True)
-            update(gitee=True)
+            print("旧更新参数已迁移，正在从公网服务器更新。", flush=True)
+            update(cloud=True)
         else:
             update()
     except (VPError, OSError) as exc:

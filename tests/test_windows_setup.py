@@ -75,14 +75,14 @@ $bin = Join-Path $env:ProgramFiles 'XCPC/bin'
 $command = Join-Path $bin 'xcpc.exe'
 function Test-Path { param($LiteralPath, $PathType); return $true }
 function Get-XcpcOnlineEnvironmentPath { param($Scope); return $bin }
-function Invoke-FixtureXcpc { param($Operation); $script:calls += $Operation; $global:LASTEXITCODE=0 }
+function Invoke-FixtureXcpc { param($Operation); $script:calls += (@($Operation) + @($args) -join ' '); $global:LASTEXITCODE=0 }
 Set-Alias -Name $command -Value Invoke-FixtureXcpc
 function Set-XcpcOnlineCommandPath { param($Bin); $script:repaired += $Bin }
 function Initialize-XcpcOnlineUserBridge {param($Bin);$script:initialized=$Bin}
 Invoke-XcpcOnlineSetup
 Write-Output ('__RESULT__' + (@{ Calls = $script:calls; Repaired = $script:repaired; Bin=$bin;Initialized=$script:initialized } | ConvertTo-Json -Compress))
 ''')
-        self.assertEqual(data['Calls'], ['update'])
+        self.assertEqual(data['Calls'], ['update --cloud'])
         self.assertEqual(data['Repaired'], [data['Bin']])
         self.assertEqual(data['Initialized'],data['Bin'])
 

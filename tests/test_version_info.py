@@ -55,6 +55,7 @@ class VersionInfoTests(unittest.TestCase):
                     self.assertIn('整台电脑（所有用户）', text)
                     self.assertIn('运行用户：', text)
                     self.assertIn('https://github.com/Jiangys-Crz/xcpc-oj-contest-helper', text)
+                    self.assertIn('更新来源：https://vp.cwnupaa.com', text)
                     self.assertIn('Chrome / Edge 扩展' if system != 'linux' else 'Firefox 普通窗口', text)
                     if system != 'linux':
                         self.assertIn('Chrome 已同步配置数：1', text)

@@ -4,7 +4,7 @@
 
 线上组队、多队虚拟赛、训练历史与队内虚拟打印，配合原有终端完成原站参赛和提交。网站使用 Next.js 全栈，终端继续支持 Ubuntu、macOS 和 Windows。
 
-当前版本：**0.9.26**。源码与后续提交：[GitHub 仓库](https://github.com/Jiangys-Crz/xcpc-oj-contest-helper)。线上地址：[CWNU XCPC Vp System](https://vp.cwnupaa.com)。
+当前版本：**0.9.27**。源码与后续提交：[GitHub 仓库](https://github.com/Jiangys-Crz/xcpc-oj-contest-helper)。线上地址：[CWNU XCPC Vp System](https://vp.cwnupaa.com)。
 
 一键安装教程：[网站安装教程](https://vp.cwnupaa.com/install)。Ubuntu / macOS 在终端运行：
 
@@ -412,13 +412,13 @@ xcpc update --cloud
 xcpc --version
 ```
 
-原 Gitee 仓库已删除，后续源码提交和更新统一使用 [GitHub 仓库](https://github.com/Jiangys-Crz/xcpc-oj-contest-helper)。默认从 GitHub 的 `main` 分支更新，`--github` 与默认方式相同。已有 Gitee 或旧 GitHub 用户名的更新缓存会自动迁移到新 GitHub 地址，保留旧源码目录中的本地改动。原安装位置、账号、比赛保存路径、代码和历史均保留。
+代码提交统一使用 [GitHub 仓库](https://github.com/Jiangys-Crz/xcpc-oj-contest-helper)。终端的 `xcpc update` 默认从 `https://vp.cwnupaa.com` 获取已发布的更新包，校验 SHA256 后安装；`--cloud` 与默认方式相同。原安装位置、账号、比赛保存路径、代码和历史均保留。
 
-`--cloud` 使用 `vp.cwnupaa.com` 的兼容下载入口，校验源码包 SHA256 后安装；入口不可用时回退到 GitHub，校验失败时停止安装。旧的 `--gitee` 参数仍可调用，但实际从 GitHub 更新，不再访问 Gitee。
+服务器连接或校验失败时停止更新并保留原版本，不自动切换到 GitHub。需要从源码仓库更新时，显式运行 `xcpc update --github`；已有 Gitee 或旧 GitHub 用户名的源码更新缓存会自动迁移到新 GitHub 地址。旧的 `--gitee` 参数保留为服务器更新的兼容别名。
 
 `xcpc --version` 在离线状态下显示当前版本、源码版本、安装与命令目录、Python 和依赖命令路径、比赛保存路径、云端账号资料及各原站配置状态。密码、Cookie、API key / secret 和令牌只显示是否配置，不显示具体值；在线登录验证仍使用 `xcpc doctor`。
 
-0.9.x 中支持公网更新入口的旧版可先运行原来的 `xcpc update` 迁移到新版，以后默认使用 GitHub。仍只支持 Gitee 的更早版本，请重新运行官网一键安装命令，或从 GitHub 下载源码后按对应系统的安装步骤安装。不要手动删除安装目录中的旧 release；原生命令入口和 Windows 本地连接会通过初始启动环境转到当前版本。
+此前默认从 GitHub 更新的版本，请先运行一次 `xcpc update --cloud` 迁移到新版，以后直接使用 `xcpc update` 从服务器更新。仍只支持 Gitee 的更早版本，请重新运行官网一键安装命令，或从 GitHub 下载源码后按对应系统的安装步骤安装。不要手动删除安装目录中的旧 release；原生命令入口和 Windows 本地连接会通过初始启动环境转到当前版本。
 
 **macOS / Windows 更新后，还需要重新加载扩展：**
 

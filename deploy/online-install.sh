@@ -85,7 +85,7 @@ if [[ -x "$shared_command" ]]; then
     fi
 fi
 if [[ -n "$existing_command" ]]; then
-    if interactive "$existing_command" update; then
+    if interactive "$existing_command" update --cloud; then
         configure_command_path "/usr/local/bin" "$platform"
         export PATH="/usr/local/bin:$PATH"
         "$existing_command" --help >/dev/null

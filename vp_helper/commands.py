@@ -66,9 +66,9 @@ Codeforces API 设置
   xcpc api gym          配置 Gym 使用的 Codeforces 账号
 
 更新
-  xcpc update           从 GitHub 更新，保留原安装位置及个人数据
-  xcpc update --github  使用 GitHub main 更新（与默认方式相同）
-  xcpc update --cloud   使用公网兼容下载入口，不可用时回退 GitHub
+  xcpc update           从公网服务器更新，保留原安装位置及个人数据
+  xcpc update --github  显式使用 GitHub main 源码更新
+  xcpc update --cloud   从公网服务器更新（与默认方式相同）
 
 帮助
   xcpc --help

@@ -111,7 +111,7 @@ class UpdateTests(unittest.TestCase):
                 args=[*args[:-2],str(self.repo),"main"]
             return original_git(args,cwd=cwd)
         with patch.object(updater,"_git",side_effect=local_fetch),patch.object(updater,"cloud_update") as cloud:
-            updater.update()
+            updater.update(cloud=False)
         cloud.assert_not_called()
         self.assertEqual(original_git(["--git-dir",str(bare),"remote","get-url","origin"]),updater.REPOSITORY)
         self.assertEqual((old_source/"install.sh").read_text(),"local cached edit")
@@ -125,7 +125,7 @@ class UpdateTests(unittest.TestCase):
         unexpected="https://gitee.com/unrelated/project.git"
         subprocess.run(["git","--git-dir",str(bare),"remote","set-url","origin",unexpected],check=True)
         with self.assertRaisesRegex(VPError,"仓库地址不匹配"):
-            updater.update()
+            updater.update(cloud=False)
         self.assertEqual(updater._git(["--git-dir",str(bare),"remote","get-url","origin"]),unexpected)
 
     def test_installer_command_preserves_mode_targets_and_custom_submitter(self):
