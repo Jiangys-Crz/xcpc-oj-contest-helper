@@ -412,7 +412,7 @@ xcpc update --cloud
 xcpc --version
 ```
 
-默认从 [GitHub 仓库](https://github.com/Zyihan-Crz/xcpc-oj-contest-helper)的 `main` 分支更新，`--github` 与默认方式相同。已有 Gitee 更新缓存会自动迁移到同一项目的 GitHub 地址，保留旧源码目录中的本地改动。原安装位置、账号、比赛保存路径、代码和历史均保留。
+原 Gitee 仓库已删除，后续源码提交和更新统一使用 [GitHub 仓库](https://github.com/Zyihan-Crz/xcpc-oj-contest-helper)。默认从 GitHub 的 `main` 分支更新，`--github` 与默认方式相同。已有 Gitee 更新缓存会自动迁移到同一项目的 GitHub 地址，保留旧源码目录中的本地改动。原安装位置、账号、比赛保存路径、代码和历史均保留。
 
 `--cloud` 使用 `vp.cwnupaa.com` 的兼容下载入口，校验源码包 SHA256 后安装；入口不可用时回退到 GitHub，校验失败时停止安装。旧的 `--gitee` 参数仍可调用，但实际从 GitHub 更新，不再访问 Gitee。
 
