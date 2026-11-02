@@ -115,7 +115,7 @@ class CloudUpdaterTests(unittest.TestCase):
                 updater.update()
         git.assert_called_once()
         cloud.assert_not_called()
-        self.assertEqual(updater.REPOSITORY,'https://github.com/Zyihan-Crz/xcpc-oj-contest-helper.git')
+        self.assertEqual(updater.REPOSITORY,'https://github.com/Jiangys-Crz/xcpc-oj-contest-helper.git')
 
     def test_new_update_options_dispatch_without_browser_login_setup(self):
         for options,kwargs in (([],{}),(['--github'],{}),(['--cloud'],{'cloud':True})):

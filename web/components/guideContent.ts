@@ -470,7 +470,7 @@ export const guideSections: GuideSection[] = [
       { label: '更新后核对版本和实际路径', command: 'xcpc --version' },
     ],
     paragraphs: [
-      '默认从 github.com/Zyihan-Crz/xcpc-oj-contest-helper 的 main 分支更新。公网入口用于旧版首次迁移、一键安装和显式 --cloud 更新；原安装位置、账号、保存路径、代码和比赛记录均保留。',
+      '默认从 github.com/Jiangys-Crz/xcpc-oj-contest-helper 的 main 分支更新。公网入口用于旧版首次迁移、一键安装和显式 --cloud 更新；原安装位置、账号、保存路径、代码和比赛记录均保留。',
       '公共程序更新可能再次请求管理员授权。结束后重新打开终端再恢复比赛面板，让新启动的进程使用新版本。',
       '如果连 xcpc 命令本身都无法运行，重新执行本页对应系统的一键安装命令；已有个人文件和账号会保留，不要手动删除安装目录或配置目录。',
     ],

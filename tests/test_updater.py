@@ -90,6 +90,12 @@ class UpdateTests(unittest.TestCase):
             updater.update(repository=str(self.root/"another repo"))
 
     def test_legacy_gitee_cache_moves_to_github_without_overwriting_old_edits(self):
+        self.assert_legacy_cache_migrates(updater.LEGACY_REPOSITORY)
+
+    def test_renamed_github_cache_moves_to_new_owner_without_overwriting_old_edits(self):
+        self.assert_legacy_cache_migrates(updater.LEGACY_GITHUB_REPOSITORY)
+
+    def assert_legacy_cache_migrates(self, previous_repository):
         updater.update(repository=str(self.repo))
         bare=next((self.root/"cache/vp/updates").glob("*/repository.git"))
         old_source=next((bare.parent/"sources").iterdir())
@@ -97,7 +103,7 @@ class UpdateTests(unittest.TestCase):
         self.script.write_text(self.script.read_text()+"# GitHub release\n")
         self.git("add","install.sh")
         self.git("commit","-m","next release")
-        subprocess.run(["git","--git-dir",str(bare),"remote","set-url","origin",updater.LEGACY_REPOSITORY],check=True)
+        subprocess.run(["git","--git-dir",str(bare),"remote","set-url","origin",previous_repository],check=True)
         original_git=updater._git
         def local_fetch(args,*,cwd=None):
             if "fetch" in args:

@@ -75,7 +75,7 @@ def print_version_info():
     except (VPError, OSError, ValueError):
         workspace = '配置无效；运行 xcpc path 重新设置'
     print('比赛保存目录：' + workspace)
-    print('更新来源：https://github.com/Zyihan-Crz/xcpc-oj-contest-helper（main）')
+    print('更新来源：https://github.com/Jiangys-Crz/xcpc-oj-contest-helper（main）')
     print('兼容下载入口：https://vp.cwnupaa.com（xcpc update --cloud）')
 
     print('\n云端账号')

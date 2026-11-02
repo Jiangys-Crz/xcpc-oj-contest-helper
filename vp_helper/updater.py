@@ -17,8 +17,9 @@ import sys
 from .models import VPError
 from .storage import read_json
 
-REPOSITORY = "https://github.com/Zyihan-Crz/xcpc-oj-contest-helper.git"
+REPOSITORY = "https://github.com/Jiangys-Crz/xcpc-oj-contest-helper.git"
 LEGACY_REPOSITORY = "https://gitee.com/Zyihan_Crz/xcpc-vp-system.git"
+LEGACY_GITHUB_REPOSITORY = "https://github.com/Zyihan-Crz/xcpc-oj-contest-helper.git"
 
 
 def installation() -> dict:
@@ -228,7 +229,7 @@ def update(*, repository: str = REPOSITORY, cloud: bool = False, gitee: bool = F
             _git(["--git-dir", str(bare), "remote", "add", "origin", repository])
         previous_repository = _git(["--git-dir", str(bare), "remote", "get-url", "origin"])
         if previous_repository != repository:
-            if repository == REPOSITORY and previous_repository == LEGACY_REPOSITORY:
+            if repository == REPOSITORY and previous_repository in (LEGACY_REPOSITORY, LEGACY_GITHUB_REPOSITORY):
                 # Preserve existing worktrees and local edits while moving only
                 # this project's verified legacy cache to its new official origin.
                 _git(["--git-dir", str(bare), "remote", "set-url", "origin", repository])
