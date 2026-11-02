@@ -35,6 +35,25 @@ function freeze<T>(value:T):T {
   return value;
 }
 
+test('detail submissions show ten newest records per page and paginate only above ten',()=>{
+  for(const count of [0,10,11,23]){
+    const history=fixture();
+    history.submissions=Array.from({length:count},(_,i)=>({...history.submissions![0],id:String(1000+i),
+      submittedAt:new Date(Date.UTC(2026,9,31,1,i)).toISOString()}));
+    const html=render(history);
+    const table=html.match(/<table class="data-table judge-submissions-table fit-table">([\s\S]*?)<\/table>/)?.[1]||'';
+    assert.equal([...table.matchAll(/<tr[^>]*data-stage=/g)].length,Math.min(10,count));
+    assert.equal(html.includes('aria-label="Submission pagination"'),count>10);
+    if(count>10){
+      assert(html.includes(`#${1000+count-1}`),'Newest submission appears first');
+      assert(!rowWith(table,'1000'),'Older records wait for the next page');
+      assert.match(html,/<button[^>]*disabled=""[^>]*aria-label="Previous page"/);
+      assert.doesNotMatch(html,/<button[^>]*disabled=""[^>]*aria-label="Next page"/);
+      assert(html.includes(`1–10 of ${count} submissions`));
+    }
+  }
+});
+
 test('history details and room My submissions use the shared detail renderer',()=>{
   for(const filename of ['History.tsx','Rooms.tsx']){
     const source=readFileSync(new URL('../components/'+filename,import.meta.url),'utf8');

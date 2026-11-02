@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 
 from bs4 import BeautifulSoup
 
-from vp_helper.models import Contest, Rules, Submission
+from vp_helper.models import Contest, Rules, Submission, VPError
 from vp_helper.qoj import QOJ
 from vp_helper.scoring import rank_of, score_submissions, statistics
 
@@ -45,6 +45,7 @@ class QOJPointModes(unittest.TestCase):
     def setUp(self):
         self.api = QOJ(URL, {"handle": "tester"})
         self.api.web = Mock()
+        self.api.web.get.side_effect = VPError('No detail metadata in this fixture')
         self.api.start_time = 1000
 
     def test_prepare_native_oi_ioi_rules_and_maxima(self):
@@ -94,6 +95,7 @@ class QOJPointModes(unittest.TestCase):
         self.assertEqual((item.verdict, item.score), ("HIDDEN", None))
 
     def test_graded_pending_details_include_awarded_points(self):
+        self.api.web.get.side_effect = None
         self.api.web.get.return_value = Mock(url="https://qoj.ac/submission/77", text=str(submission_table(35)))
         with patch("vp_helper.qoj.platform_now", return_value=9000):
             result = self.api.pending_detail(contest(), {"id": "77", "problem": "A"})

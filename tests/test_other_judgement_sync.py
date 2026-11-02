@@ -36,6 +36,7 @@ class OtherJudgementSyncTests(Isolated):
         api.start_time=1000
         api._page=Mock(return_value=qoj_table(rows))
         api.web=Mock()
+        api.web.get.side_effect=VPError('No detail metadata in this fixture')
         c=Contest('qoj','123',api.url,'Fixture','Fixture',{'A':'10'},Rules(18000))
         return api,c
 
@@ -113,6 +114,7 @@ class OtherJudgementSyncTests(Isolated):
 
     def test_qoj_pending_detail_and_same_account_checks(self):
         api,c=self.qoj([qoj_row(status='Judging',marker=True)])
+        api.web.get.side_effect=None
         api.web.get.return_value=Mock(url='https://qoj.ac/submission/100',text=str(qoj_table([qoj_row()])))
         with patch('time.monotonic',return_value=0): api.submissions(c)
         with patch('time.monotonic',return_value=6):

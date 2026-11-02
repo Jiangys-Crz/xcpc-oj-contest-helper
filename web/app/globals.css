@@ -270,6 +270,12 @@ input,select,textarea,label,.button,.filter-form select,.detail-grid dd,.team-me
 .judge-contest-detail .domjudge-submissions .judge-submission-record:hover{color:#1d4ed8}
 .judge-contest-detail .domjudge-submissions .judge-submission-record svg{flex-shrink:0}
 .judge-contest-detail .domjudge-submissions .judge-table-footer{padding:7px 3px;border-top:0;gap:10px;flex-wrap:wrap;font-size:12px}
+.judge-contest-detail .domjudge-submissions .judge-pagination{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-basis:100%;color:#526985;font-size:12px}
+.judge-contest-detail .domjudge-submissions .judge-pagination button{display:inline-flex;align-items:center;justify-content:center;gap:3px;min-height:28px;padding:4px 8px;border:1px solid #b9c6dd;border-radius:2px;background:#f3f7ff;color:#284c83;font:inherit;cursor:pointer}
+.judge-contest-detail .domjudge-submissions .judge-pagination button:hover:not(:disabled){border-color:#8ba7d5;background:#c5d8fc}
+.judge-contest-detail .domjudge-submissions .judge-pagination button:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+.judge-contest-detail .domjudge-submissions .judge-pagination button:disabled{background:#f7f8fa;color:#9aa5b5;cursor:default}
+.judge-contest-detail .domjudge-submissions .judge-pagination>span{min-width:42px;text-align:center;font-variant-numeric:tabular-nums}
 .judge-contest-detail .domjudge-submissions .judge-filters{gap:10px;margin:0 0 8px;padding:10px}
 @media(max-width:900px){.judge-contest-detail .judge-detail-columns{grid-template-columns:minmax(0,1fr)}}
 .judge-contest-detail .judge-score-scroll{padding:0}

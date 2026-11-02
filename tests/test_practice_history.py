@@ -4,7 +4,7 @@ import unittest
 
 from bs4 import BeautifulSoup
 
-from vp_helper.models import Contest, Rules
+from vp_helper.models import Contest, Rules, VPError
 from vp_helper.practice import Practice, PracticeDashboard
 from vp_helper.qoj import QOJ
 
@@ -30,6 +30,7 @@ class PracticeHistoryTests(unittest.TestCase):
         contest = Contest('qoj', '123', url, 'Practice', 'Practice', {'A':'10'}, Rules(1),
                           original_start=2000, extra={'practice':True, 'scoring':'ICPC'})
         client = QOJ(url, {'handle':'tester'})
+        client.web.get = Mock(side_effect=VPError('No detail metadata in this fixture'))
         stamp = datetime.fromtimestamp(1000, timezone.utc).isoformat()
         client._page = Mock(return_value=BeautifulSoup(
             '<table><thead><tr><th>#</th><th>Problem</th><th>Submitter</th><th>Score</th><th>Time</th></tr></thead>'

@@ -173,6 +173,7 @@ class ExistingNativeHistoryTests(unittest.TestCase):
         c = contest("qoj")
         c.extra["practice"] = True
         api = QOJ(c.url, {"handle": "tester"})
+        api.web.get = Mock(side_effect=VPError('No detail metadata in this fixture'))
         api.start_time = 2000
         def page(sid, at, pages=""):
             return BeautifulSoup('<table><thead><tr><th>ID</th><th>User</th><th>Problem</th><th>Result</th><th>Time</th></tr></thead><tbody>'

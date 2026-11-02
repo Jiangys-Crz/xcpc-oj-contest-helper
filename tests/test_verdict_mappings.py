@@ -10,7 +10,7 @@ import test_nowcoder_live as nk
 from vp_helper.codeforces_live import CodeforcesLive
 from vp_helper.gym import Gym
 from vp_helper.hydro import HydroLive
-from vp_helper.models import Contest, Rules, Submission
+from vp_helper.models import Contest, Rules, Submission, VPError
 from vp_helper.nowcoder import NowcoderLive
 from vp_helper.qoj import QOJ
 from vp_helper.scoring import codeforces_verdict, score_submissions
@@ -54,6 +54,7 @@ class VerdictMappingTests(unittest.TestCase):
     def test_qoj_unknown_result_does_not_block_known_or_pending_rows(self):
         url = 'https://qoj.ac/contest/123'
         api = QOJ(url, {'handle': 'tester'})
+        api.web.get = Mock(side_effect=VPError('No detail metadata in this fixture'))
         api.start_time = 1000
         labels = ['Dangerous Syscalls', 'Judgement Failed', 'Compiling', 'Presentation Error', 'future result', 'Accepted']
         rows = [f'<tr><td><a href="/submission/{i}">{i}</a></td>'

@@ -15,7 +15,7 @@ from .http import WebSession, form_values
 from .platform_clock import platform_now
 from .pending_results import PendingResults
 from .models import Cell, Contest, Reference, Rules, Submission, TeamScore, VPError, StartRejected
-from .submission_languages import html_language
+from .submission_languages import html_language, language_name
 from .originals import OriginalReplay, cache_archive_submissions, classify, eligibility_lookup, identity, load_archive_submissions, load_metadata, lookup_team
 from .parsing import ccpc_reveal_count, js_value, medals_from_html, seconds, timestamp
 from .scoring import verdict
@@ -35,6 +35,8 @@ class QOJ:
         self._relative_start_verified: float | None = None
         self._verdict_cache = {}
         self._detail_retry = {}
+        self._language_cache = {}
+        self._language_retry = {}
         self.submission_message = ""
         self.pending_results = PendingResults()
         self._replay = None
@@ -380,6 +382,7 @@ class QOJ:
         unresolved = []
         warnings = []
         detail_reads = 0
+        detail_ids = set()
         self.submissions_complete = False
         self.submission_message = ''
         graded = contest.extra.get("scoring", "ICPC") in ("OI", "IOI")
@@ -448,7 +451,7 @@ class QOJ:
                 headers = [h.get_text(" ", strip=True).lower() for h in table.select("thead th")]
                 if not headers:
                     headers = [h.get_text(" ", strip=True).lower() for h in table.select("tr th")]
-                language = html_language(row, headers)
+                language = html_language(row, headers) or self._language_cache.get(sid)
                 column = next((i for i, h in enumerate(headers) if h in ("result", "score", "status")), 3)
                 node = cells[column] if column < len(cells) else None
                 if node is None:
@@ -493,12 +496,14 @@ class QOJ:
                             parsed = cached[1] if cached and cached[0] in (None, score) else 'UNAVAILABLE'
                         else:
                             detail_reads += 1
+                            detail_ids.add(sid)
                             try:
                                 detail = self.web.soup(self.origin + f"/submission/{sid}",
                                                        params={"locale": "en"}, headers={'Cache-Control': 'no-cache'},
                                                        timeout=(5, 8), retry=False)
+                                language = language or self._detail_language(detail, contest, {'id': sid, 'problem': label})
+                                self._remember_language(sid, language)
                                 parsed = self.detail_verdict(detail, score)
-                                language = language or html_language(detail)
                             except VPError:
                                 # A zero score is final, but can mean WA, CE or
                                 # another failure. Do not invent a scored WA or
@@ -531,7 +536,72 @@ class QOJ:
                             + " · retrying details; other submissions are synced")
         self.submission_message = ' · '.join(warnings)
         events = self.pending_results.update(self, [asdict(s) for s in result.values()], lambda event: self.pending_detail(contest, event))
+        # Final and graded list rows can omit the compiler altogether. Reuse
+        # verdict detail reads, then spend only the remaining detail budget on
+        # missing languages. Metadata never replaces the selected judgement.
+        for event in events:
+            sid = str(event['id'])
+            if language := language_name(event.get('language')):
+                self._language_cache[sid] = language
+                self._language_retry.pop(sid, None)
+            elif sid in self._language_cache:
+                event['language'] = self._language_cache[sid]
+        now = time.monotonic()
+        due = sorted((event for event in events if not event.get('language') and event['verdict'] != 'PENDING'
+                      and str(event['id']).isdigit() and str(event['id']) not in detail_ids
+                      and now >= self._language_retry.get(str(event['id']), (0, 0))[0]),
+                     key=lambda event: self._language_retry.get(str(event['id']), (0, 0))[0])
+        for event in due[:max(0, 2 - detail_reads)]:
+            sid = str(event['id'])
+            try:
+                detail = self._submission_detail(sid)
+                language = self._detail_language(detail, contest, event)
+            except VPError:
+                language = None
+            self._remember_language(sid, language)
+            if language:
+                event['language'] = language
         return [Submission(**event) for event in events]
+
+    def _remember_language(self, sid: str, language: str | None) -> None:
+        if language:
+            self._language_cache[sid] = language
+            self._language_retry.pop(sid, None)
+        else:
+            delay = min(300, max(30, self._language_retry.get(sid, (0, 0))[1] * 2))
+            self._language_retry[sid] = (time.monotonic() + delay, delay)
+
+    def _submission_detail(self, sid: str) -> BeautifulSoup:
+        if not re.fullmatch(r'[0-9]+', sid):
+            raise VPError('QOJ returned an invalid submission ID.')
+        response = self.web.get(self.origin + '/submission/' + sid, params={'locale': 'en'},
+                                headers={'Cache-Control': 'no-cache'}, timeout=(5, 8), retry=False)
+        target = urlsplit(response.url)
+        if target.scheme != 'https' or target.netloc != urlsplit(self.origin).netloc or target.path != '/submission/' + sid:
+            raise VPError('QOJ redirected the submission detail request.')
+        return BeautifulSoup(response.text, 'html.parser')
+
+    def _detail_rows(self, detail: BeautifulSoup, contest: Contest, event: dict):
+        pid = contest.problems[event['problem']]
+        for row in detail.select('table tr'):
+            user = row.select_one('.uoj-username, a[href*="/user/profile/"]')
+            if user is None:
+                continue
+            # Private QOJ submissions render the owner as a plain username
+            # span, followed by a lock icon, rather than a profile link.
+            handle = urlsplit(user['href']).path.rstrip('/').rsplit('/', 1)[-1] if user.get('href') else user.get_text(strip=True)
+            links = {urlsplit(a['href']).path.rstrip('/') for a in row.select('a[href]')}
+            submission_links = {path for path in links if re.fullmatch(r'/submission/[0-9]+', path)}
+            if (handle == self.handle
+                    and links.intersection({f'/contest/{self.id}/problem/{pid}', '/problem/' + pid})
+                    and (not submission_links or '/submission/' + str(event['id']) in submission_links)):
+                yield row
+
+    def _detail_language(self, detail: BeautifulSoup, contest: Contest, event: dict) -> str | None:
+        for row in self._detail_rows(detail, contest, event):
+            if language := html_language(row) or html_language(detail):
+                return language
+        return None
 
     @staticmethod
     def graded_submission_maximum(node, contest: Contest, label: str) -> float | None:
@@ -547,23 +617,17 @@ class QOJ:
         return contest.extra.get("problem_max_scores", {}).get(label)
 
     def seed_pending_submissions(self, records) -> None:
+        for record in records:
+            if language := language_name(record.get('language') if isinstance(record, dict) else record.language):
+                self._language_cache[str(record['id'] if isinstance(record, dict) else record.id)] = language
         self.pending_results.seed(records)
 
     def pending_detail(self, contest: Contest, event: dict) -> dict | None:
         sid = str(event['id'])
-        if not re.fullmatch(r'[0-9]+', sid):
-            raise VPError('QOJ returned an invalid pending submission ID.')
-        url = self.origin + '/submission/' + sid
-        response = self.web.get(url, params={'locale': 'en'}, headers={'Cache-Control': 'no-cache'}, timeout=(5, 8), retry=False)
-        if urlsplit(response.url).netloc != urlsplit(self.origin).netloc or urlsplit(response.url).path != '/submission/' + sid:
-            raise VPError('QOJ redirected the pending submission request.')
-        detail = BeautifulSoup(response.text, 'html.parser')
-        pid = contest.problems[event['problem']]
-        for row in detail.select('table tr'):
-            links = {urlsplit(a['href']).path.rstrip('/') for a in row.select('a[href]')}
-            if ('/user/profile/' + self.handle not in links
-                    or not links.intersection({f'/contest/{self.id}/problem/{pid}', '/problem/' + pid})):
-                continue
+        detail = self._submission_detail(sid)
+        language = self._detail_language(detail, contest, event)
+        self._remember_language(sid, language)
+        for row in self._detail_rows(detail, contest, event):
             table = row.find_parent('table')
             headers = [h.get_text(' ', strip=True).lower() for h in table.select('tr th')]
             cells = row.select('td')
@@ -572,7 +636,6 @@ class QOJ:
             if node is None:
                 continue
             text = node.get_text(' ', strip=True)
-            language = html_language(row, headers) or html_language(detail)
             compiler = {'language': language} if language else {}
             score = float(text) if re.fullmatch(r'\d+(?:\.\d+)?', text) else None
             if contest.extra.get("scoring", "ICPC") in ("OI", "IOI") and score is not None:
@@ -622,6 +685,8 @@ class QOJ:
 
     def seed_submissions(self, submissions: list[Submission]) -> None:
         for item in submissions:
+            if language := language_name(item.language):
+                self._language_cache[str(item.id)] = language
             if item.verdict not in ("PENDING", "CORRECT", "TOO-LATE", "UNAVAILABLE"):
                 self._verdict_cache[item.id] = (None, item.verdict, time.monotonic() + 10 + int(item.id) % 3)
 

@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 
 from vp_helper import cli
 from vp_helper.gym import Gym
-from vp_helper.models import Contest, Rules, Submission
+from vp_helper.models import Contest, Rules, Submission, VPError
 from vp_helper.qoj import QOJ
 from vp_helper.scoring import score_submissions
 from vp_helper.sessions import end_attempt, merge_submissions, save_state
@@ -17,6 +17,7 @@ from test_workflows import Isolated, URL
 class ExternalSubmissionTests(Isolated):
     def qoj(self, rows):
         client = QOJ(URL, {'handle': 'tester'})
+        client.web.get = Mock(side_effect=VPError('No detail metadata in this fixture'))
         client.start_time = self.clock
         client._page = Mock(return_value=BeautifulSoup(
             '<table><thead><tr><th>#</th><th>Problem</th><th>Submitter</th><th>Score</th><th>Submit time</th></tr></thead>'

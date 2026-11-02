@@ -1,6 +1,6 @@
 'use client';
 import {cloneElement,useId,useMemo,useState} from 'react';
-import {ArrowUpRight,ChevronDown,ExternalLink,FileText,Filter,LockKeyhole} from 'lucide-react';
+import {ArrowUpRight,ChevronDown,ChevronLeft,ChevronRight,ExternalLink,FileText,Filter,LockKeyhole} from 'lucide-react';
 import {Empty,ErrorBox,ModeBadge,ParticipationBadge,ProblemCell,dateTime} from './shared';
 import {ResultColumns} from './ResultColumns';
 import {TableFit} from './TableFit';
@@ -70,18 +70,21 @@ export function ContestLegend(){return <aside className="judge-legend" aria-labe
 
 export function SubmissionsTable({submissions,title='Submissions',participantLabel,historyHref,detailStyle=false,problemOrder}:{submissions:Submission[];title?:string;participantLabel?:string;historyHref?:string;detailStyle?:boolean;problemOrder?:string[]}){
   const [filters,setFilters]=useState(false),[problem,setProblem]=useState(''),[state,setState]=useState(''),[stage,setStage]=useState('');
+  const [page,setPage]=useState(1);
   const filterId=useId();
   const problems=useMemo(()=>Array.from(new Set(submissions.map(record=>record.problem))).sort((a,b)=>a.localeCompare(b,'en',{numeric:true})),[submissions]);
   const order=problemOrder?.length?problemOrder:problems;
   const records=useMemo(()=>[...submissions].filter(record=>(!problem||record.problem===problem)&&(!state||judgingState(record.verdict)===state)&&(!stage||record.practice===(stage==='practice'))).sort((a,b)=>new Date(b.submittedAt).getTime()-new Date(a.submittedAt).getTime()),[submissions,problem,state,stage]);
+  const pageCount=Math.max(1,Math.ceil(records.length/10)),currentPage=Math.min(page,pageCount);
+  const visibleRecords=detailStyle?records.slice((currentPage-1)*10,currentPage*10):records;
   const showScore=submissions.some(record=>!record.practice&&record.points!==undefined);
   return <section className={'judge-submissions'+(detailStyle?' domjudge-submissions':'')}>
     <div className="judge-section-heading"><div><h2>{title}{!detailStyle&&<span className="count-label">{submissions.length}</span>}</h2>{participantLabel&&<p>{participantLabel}</p>}</div><div className="judge-table-actions">{historyHref&&<a href={historyHref} className="text-button">History details<ArrowUpRight size={13}/></a>}<button className={'button button-secondary button-small '+(filters?'is-active':'')} onClick={()=>setFilters(!filters)} aria-label="Filter submissions" aria-controls={filterId} aria-expanded={filters}><Filter size={14} aria-hidden="true"/>{!detailStyle&&<>Filter<ChevronDown size={12} aria-hidden="true"/></>}</button></div></div>
-    {filters&&<div className="judge-filters" id={filterId}><label>Problem<select value={problem} onChange={event=>setProblem(event.target.value)}><option value="">All problems</option>{problems.map(value=><option key={value}>{value}</option>)}</select></label><label>Result<select value={state} onChange={event=>setState(event.target.value)}><option value="">All results</option><option value="accepted">Accepted</option><option value="rejected">Incorrect</option><option value="pending">Pending / unconfirmed</option><option value="ignored">Not counted</option></select></label><label>Stage<select value={stage} onChange={event=>setStage(event.target.value)}><option value="">All stages</option><option value="contest">Contest</option><option value="practice">Practice</option></select></label><button className="text-button" onClick={()=>{setProblem('');setState('');setStage('');}}>Reset</button></div>}
+    {filters&&<div className="judge-filters" id={filterId}><label>Problem<select value={problem} onChange={event=>{setProblem(event.target.value);setPage(1);}}><option value="">All problems</option>{problems.map(value=><option key={value}>{value}</option>)}</select></label><label>Result<select value={state} onChange={event=>{setState(event.target.value);setPage(1);}}><option value="">All results</option><option value="accepted">Accepted</option><option value="rejected">Incorrect</option><option value="pending">Pending / unconfirmed</option><option value="ignored">Not counted</option></select></label><label>Stage<select value={stage} onChange={event=>{setStage(event.target.value);setPage(1);}}><option value="">All stages</option><option value="contest">Contest</option><option value="practice">Practice</option></select></label><button className="text-button" onClick={()=>{setProblem('');setState('');setStage('');setPage(1);}}>Reset</button></div>}
     {!records.length?<Empty title={submissions.length?'No matching submissions':'No submissions yet'}/>:<TableFit widthFraction={detailStyle?1:0.5} fullHeader={!detailStyle} className="judge-submissions-fit"><table className="data-table judge-submissions-table fit-table">
       <caption className="sr-only">Submission history</caption>
       <thead><tr>{detailStyle?<><th scope="col">Time</th><th scope="col">Problem</th><th scope="col">Lang</th><th scope="col" className="text-left">Result</th>{showScore&&<th scope="col">Score</th>}<th scope="col" className="judge-record-heading"><span className="sr-only">Submission</span></th></>:<><th scope="col">Submission</th><th scope="col">Time</th><th scope="col">Problem</th><th scope="col" className="text-left">Result</th><th scope="col">Stage</th>{showScore&&<th scope="col">Score</th>}</>}</tr></thead>
-      <tbody>{records.map((submission,i)=>detailStyle?<tr key={submission.id+'-'+i} data-stage={submission.practice?'practice':'contest'}>
+      <tbody>{visibleRecords.map((submission,i)=>detailStyle?<tr key={submission.id+'-'+i} data-stage={submission.practice?'practice':'contest'}>
         <td className="time-value">{dateTime(submission.submittedAt)}</td>
         <td className="problem-letter"><ProblemBadge problem={submission.problem} order={order}/></td>
         <td className="language-value">{submissionLanguage(submission.language)}</td>
@@ -90,6 +93,12 @@ export function SubmissionsTable({submissions,title='Submissions',participantLab
         <td className="judge-record-cell">{submission.url?<a href={submission.url} target="_blank" rel="noreferrer" className="submission-link judge-submission-record" aria-label={'View submission #'+submission.id} title={'Submission #'+submission.id}><FileText size={15} aria-hidden="true"/><span>#{submission.id}</span></a>:<span className="judge-submission-record" title={'Submission #'+submission.id}><FileText size={15} aria-hidden="true"/><span>#{submission.id}</span></span>}</td>
       </tr>:<tr key={submission.id+'-'+i}><td>{submission.url?<a href={submission.url} target="_blank" rel="noreferrer" className="submission-link">#{submission.id}<ArrowUpRight size={12} aria-hidden="true"/></a>:'#'+submission.id}</td><td className="time-value">{dateTime(submission.submittedAt)}</td><td className="problem-letter">{submission.problem}</td><td className="text-left"><span className={'judge-verdict judge-verdict-'+judgingState(submission.verdict)}>{submission.verdict==='FROZEN'?'FROZEN':submission.verdict}</span></td><td><span className={'stage-label '+(submission.practice?'stage-practice':'')}>{submission.practice?'Practice':'Contest'}</span></td>{showScore&&<td>{submission.practice?'—':submission.points??'—'}</td>}</tr>)}</tbody>
     </table></TableFit>}
-    <div className="judge-table-footer"><span>{records.length} submissions</span><span>All times in Asia/Shanghai</span></div>
+    <div className="judge-table-footer"><span>{detailStyle&&pageCount>1?`${(currentPage-1)*10+1}–${Math.min(currentPage*10,records.length)} of `:''}{records.length} submissions</span><span>All times in Asia/Shanghai</span>
+      {detailStyle&&pageCount>1&&<nav className="judge-pagination" aria-label="Submission pagination">
+        <button type="button" disabled={currentPage===1} onClick={()=>setPage(currentPage-1)} aria-label="Previous page"><ChevronLeft size={14} aria-hidden="true"/>Previous</button>
+        <span aria-live="polite" aria-atomic="true">{currentPage} / {pageCount}</span>
+        <button type="button" disabled={currentPage===pageCount} onClick={()=>setPage(currentPage+1)} aria-label="Next page">Next<ChevronRight size={14} aria-hidden="true"/></button>
+      </nav>}
+    </div>
   </section>;
 }
