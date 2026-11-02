@@ -5,12 +5,13 @@ import io
 from pathlib import Path
 import tempfile
 import unittest
+from dataclasses import asdict
 from unittest.mock import Mock, patch
 
 from isolation import isolate_local_state
 from test_rank_xcpcio import PAGE, fixture
-from vp_helper import cli, external_rank
-from vp_helper.models import Contest, Medals, Reference, Rules, VPError
+from vp_helper import cli, cloud, external_rank
+from vp_helper.models import Contest, Medals, Reference, Rules, Submission, VPError
 from vp_helper.rank_xcpcio import parse
 from vp_helper.scoring import score_submissions
 from vp_helper.sessions import save_state
@@ -201,6 +202,65 @@ class ExternalRankTests(unittest.TestCase):
             external_rank.sync_room_rank(self.path, self.state, PAGE)
             external_rank.sync_room_rank(self.path, self.state, PAGE)
         provider.assert_called_once()
+
+    def test_cloud_replays_manual_rank_without_dashboard_and_uses_current_vp_time(self):
+        self.import_board()
+        self.assertNotIn('reference_rank', self.state)
+        for elapsed, rank in ((100, '1'), (200, '2'), (18000, '2')):
+            with patch.object(cloud, 'platform_now', return_value=1000+elapsed):
+                payload = cloud.sync_payload(self.path, self.state)
+            self.assertEqual((payload['rank'], payload['rankSource']), (rank, 'original'))
+            self.assertEqual(payload['externalRankUrl'], PAGE)
+        self.assertNotIn('reference_rank', read_json(self.path))
+
+    def test_broken_manual_rank_does_not_upload_a_cached_native_rank(self):
+        self.import_board()
+        self.state['reference_rank'] = {'source':'original','contestUrl':self.contest.url,
+            'rank':'1','officialParticipants':2,'scoring':'ICPC','scoreKey':[0,0]}
+        external_rank.attachment_path(self.path).write_text('not JSON', encoding='utf8')
+        payload = cloud.sync_payload(self.path, self.state)
+        self.assertEqual((payload['rank'], payload['rankSource']), ('—', 'unavailable'))
+        self.assertNotIn('externalRankUrl', payload)
+        external_rank.attachment_path(self.path).unlink()
+        self.assertIsNone(cloud.sync_payload(self.path, self.state)['externalRankUrl'])
+
+    def test_finished_medal_remains_visible_while_next_submission_poll_is_running(self):
+        self.import_board()
+        incoming = [Submission('mine-a','me','A',1,'CORRECT'), Submission('mine-b','me','B',2,'CORRECT')]
+        self.state['submissions'] = [asdict(event) for event in incoming]
+        write_json(self.path, self.state)
+        client = Mock(handle='tester', submissions_complete=True)
+        calls = []
+        class Pool:
+            def __init__(self, **kwargs): pass
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def submit(self, function, *args):
+                calls.append(args)
+                future = Future()
+                if len(calls) == 1:
+                    client.submissions_complete = True
+                    future.set_result((incoming, ''))
+                else:
+                    # QOJ clears its public flag at the beginning of a GET.
+                    client.submissions_complete = False
+                return future
+        view = Mock()
+        view.__enter__ = Mock(return_value=view)
+        view.__exit__ = Mock(return_value=False)
+        view.input.side_effect = [True]*12+[False]
+        with patch('pathlib.Path.cwd', return_value=Path(self.state['directory'])), \
+             patch.object(cli, 'adapter', return_value=client), \
+             patch.object(cli, 'TerminalDashboard', return_value=view), \
+             patch.object(cli, 'ThreadPoolExecutor', Pool), \
+             patch('vp_helper.windows_terminal.track_monitor'), \
+             patch('time.sleep'), patch('time.monotonic', side_effect=iter(range(1, 1000))), \
+             patch.object(cli, 'platform_now', return_value=20000):
+            cli.monitor(self.path)
+        self.assertGreaterEqual(len(calls), 2)
+        prizes = [call.args[0].prize for call in view.update.call_args_list]
+        self.assertIn('Gold', prizes)
+        self.assertTrue(all(prize == 'Gold' for prize in prizes[prizes.index('Gold'):]), prizes)
 
     def test_late_native_reference_cannot_overwrite_newly_imported_rank(self):
         native = Reference([], complete=True, statistics_complete=True, message='late native board')

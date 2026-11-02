@@ -103,6 +103,15 @@ test('detail records retain full timestamps, submission IDs, actual judging link
   assert.match(filter,/aria-label="Filter submissions"/);
 });
 
+test('history detail displays the synchronized external scoreboard beside the original contest',()=>{
+  const history=fixture();history.externalRankUrl='https://rank.iccpc.cn/r/e5697b3a-8326-4818-84ca-e2ce1688af23';
+  const html=render(history);
+  assert(html.includes(history.externalRankUrl));
+  assert.match(html,/>External scoreboard</);
+  assert(html.includes(history.contestUrl));
+  assert(!render(fixture()).includes('External scoreboard'));
+});
+
 test('native graded scores are displayed only when supplied and anonymous public counts stay unchanged',()=>{
   const history=fixture();history.scoring='IOI';history.points=75;
   history.cells.A={tries:1,pending:0,solved:false,practiceSolved:false,points:75,maxPoints:100};

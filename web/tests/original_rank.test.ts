@@ -111,6 +111,26 @@ test('frozen rank provenance is required only for VP histories, and no empty roo
   assert.equal(historyRank({},room),'—');
 });
 
+test('ongoing standalone VP and live ranks keep updating until their actual final snapshot',async t=>{
+  const {api,login}=fixture(t),user=await login('student');
+  for(const mode of ['vp','live']){
+    const source=mode==='vp'?'original':'native',start=Date.now()-600e3,end=start+7200e3;
+    const data={localId:'realtime-'+mode,mode,status:'running',startedAt:new Date(start).toISOString(),endedAt:new Date(end).toISOString(),
+      contest:{url:'https://codeforces.com/gym/106554',name:'Current results',problems:['A'],rules:{duration:7200}},
+      rank:'51',rankSource:source,solved:1,penalty:51,cells:{A:{tries:1,solved:true}},submissions:[],revision:1};
+    const saved=await api('POST','client/sync',user.token,data);
+    await api('POST','client/sync',user.token,{...data,rank:'40',revision:2});
+    assert.equal((await api('GET',`history/${saved.id}`,user.token)).rank,'40');
+    t.mock.timers.setTime(end+1000);
+    await api('POST','client/sync',user.token,{...data,rank:'32',revision:3});
+    assert.equal((await api('GET',`history/${saved.id}`,user.token)).rank,'32','Judging may still be running after the scheduled end');
+    await api('POST','client/sync',user.token,{...data,rank:'21',status:'complete',revision:4});
+    assert.equal((await api('GET',`history/${saved.id}`,user.token)).rank,'21');
+    await api('POST','client/sync',user.token,{...data,mode:'bt',rank:'1',rankSource:'unavailable',revision:5});
+    assert.equal((await api('GET',`history/${saved.id}`,user.token)).rank,'21');
+  }
+});
+
 test('room public statistics never fall back to legacy or native own-submission counts',async(t)=>{
   const {api,login,room,register}=fixture(t),owner=await login('owner'),user=await login('student');
   const r=await room(owner),p=await register(r,owner,user),data=snapshot(r,p,'85');

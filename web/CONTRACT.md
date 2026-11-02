@@ -35,6 +35,8 @@ Native scoring snapshots are persisted without estimating platform formulas. OI 
 
 External scoreboard selection is stored with room rules and returned as `externalRankUrl` (string or null) in room/list/authorize responses and at the top level of client restore snapshots. The server stores only the validated public page URL; the local client downloads and validates the public archive without judge credentials.
 
+Standalone VP sync also accepts `externalRankUrl`: a canonical supported public page URL, or null to clear the selection. Omission preserves an existing selection for older clients. History list/detail and restore responses expose the selection. An explicitly configured room board must match; invalid URLs never enter history. Active VP/live ranks follow successive snapshots until an actually ended, finalized result is preserved for practice continuation; a future `endedAt` alone does not finalize the rank.
+
 `penalty_rounding` defaults to `per_problem`. For `total_seconds`, ICPC public/frozen projections floor each accepted elapsed time to seconds, sum these plus wrong-attempt penalty seconds across solved problems, and then floor the total to minutes; displayed cell solve times stay in minutes. Restore preserves this rule.
 
 New clients include `roomExternalRankUrl` (string or null) in room sync requests. When present, its canonical page URL must match the room's current external scoreboard, otherwise the server returns 409 before writing any history. Omitted fields remain compatible with existing clients.

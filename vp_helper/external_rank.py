@@ -1,8 +1,11 @@
 """Explicit per-attempt external scoreboards, separate from mutable VP state."""
 from copy import deepcopy
 from dataclasses import asdict
+from functools import lru_cache
+import json
 from pathlib import Path
 import re
+from threading import RLock
 from urllib.parse import urlsplit
 
 from .models import Cell, Contest, Medals, Reference, Submission, TeamScore, VPError
@@ -30,6 +33,25 @@ def source_url(value: str) -> str:
 
 def attachment_path(path: Path) -> Path:
     return path.with_suffix('.external-rank')
+
+
+_SYNC_LOCK = RLock()
+
+
+@lru_cache(maxsize=32)
+def _sync_reader(path: str, binding: str):
+    return ManualRank(Path(path), Contest.from_dict(json.loads(binding)))
+
+
+def sync_reference(path: Path, contest: Contest, elapsed: float):
+    """Replay the attached board even when no dashboard process is running."""
+    binding = contest.to_dict()
+    binding['extra'] = {key: value for key, value in contest.extra.items()
+                        if key in ('scoring', 'external_rank_native_rounding')}
+    with _SYNC_LOCK:
+        reader = _sync_reader(str(path.resolve()), json.dumps(binding, sort_keys=True))
+        reference = reader.reference(contest, elapsed)
+        return reader.source, reference
 
 
 def apply_saved_rules(path: Path, contest: Contest) -> None:
@@ -178,6 +200,7 @@ class ManualRank:
         self.original_rounding = contest.extra.get('external_rank_native_rounding', contest.rules.penalty_rounding)
         self.rounding = self.original_rounding
         self.active = False
+        self.source = None
 
     def reference(self, contest: Contest, elapsed: float) -> Reference | None:
         try:
@@ -187,6 +210,7 @@ class ManualRank:
                 contest.medals = self.original_medals
                 contest.extra.pop('external_rank_native_medals', None)
             self.active, self.stamp, self.replay = False, None, None
+            self.source = None
             if 'external_rank_native_rounding' in contest.extra:
                 contest.rules.penalty_rounding = self.original_rounding
                 contest.extra.pop('external_rank_native_rounding', None)
@@ -194,10 +218,11 @@ class ManualRank:
         self.active = True
         stamp = (stat.st_mtime_ns, stat.st_size)
         if stamp != self.stamp:
-            self.stamp, self.replay, self.error, self.medals = stamp, None, '', None
+            self.stamp, self.replay, self.error, self.medals, self.source = stamp, None, '', None, None
             try:
                 payload = read_json(self.path)
                 self.replay = _replay(payload, contest)
+                self.source = payload['source']
                 self.rounding = payload['metadata'].get('penalty_rounding', 'per_problem')
                 medals = payload['metadata'].get('medals')
                 if isinstance(medals, dict) and all(type(medals.get(k)) is int and medals[k] >= 0 for k in ('gold', 'silver', 'bronze')):

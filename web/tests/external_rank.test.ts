@@ -74,6 +74,29 @@ test('only supported public pages and ICPC/CCPC formats accept an external board
   assert.equal((await api('PATCH',`rooms/${configured.id}`,owner.token,{scoringSystem:'OI',externalRankUrl:''})).externalRankUrl,null);
 });
 
+test('standalone VP external board survives history, legacy sync and restore, and supports explicit clearing',async t=>{
+  const {api,login}=fixture(t),owner=await login('owner');
+  const snapshot={localId:'standalone-board',mode:'vp',status:'running',startedAt:new Date(EPOCH-600e3).toISOString(),
+    contest:{url:'https://qoj.ac/contest/4613',name:'Women contest',problems:['A'],rules:{duration:18000,contest_format:'CCPC'}},
+    rank:'41',rankSource:'original',solved:1,penalty:100,cells:{A:{tries:1,solved:true}},submissions:[],revision:1};
+  const result=await api('POST','client/sync',owner.token,{...snapshot,externalRankUrl:CCPC+'/'});
+  assert.equal((await api('GET',`history/${result.id}`,owner.token)).externalRankUrl,CCPC);
+  assert.equal((await api('GET','history',owner.token))[0].externalRankUrl,CCPC);
+  await api('POST','client/sync',owner.token,{...snapshot,rank:'40',revision:2});
+  const ongoing=await api('GET',`history/${result.id}`,owner.token);
+  assert.equal(ongoing.externalRankUrl,CCPC);assert.equal(ongoing.rank,'40');
+  t.mock.timers.setTime(EPOCH+18000e3);
+  await api('POST','client/sync',owner.token,{...snapshot,status:'complete',endedAt:new Date().toISOString(),rank:'39',revision:3});
+  const restored=await api('POST','client/restore',owner.token,{contestUrl:snapshot.contest.url});
+  assert.equal(restored.snapshot.externalRankUrl,CCPC);
+  await api('POST','client/sync',owner.token,{...snapshot,externalRankUrl:ICPC,rank:'57',revision:4});
+  assert.equal((await api('GET',`history/${result.id}`,owner.token)).rank,'57','Changing the selected board replaces its rank');
+  await api('POST','client/sync',owner.token,{...snapshot,externalRankUrl:null,rankSource:'unavailable',rank:'—',revision:5});
+  const cleared=await api('GET',`history/${result.id}`,owner.token);
+  assert.equal(cleared.externalRankUrl,null);assert.equal(cleared.rank,'—');
+  await api('POST','client/sync',owner.token,{...snapshot,externalRankUrl:'https://example.test/private?token=secret',revision:6},400);
+});
+
 test('changing an unreserved external board prevents reusing a withdrawn native identity',async t=>{
   const {api,login,body,register}=fixture(t),owner=await login('owner');
   const room=await api('POST','rooms',owner.token,body({externalRankUrl:ICPC}));

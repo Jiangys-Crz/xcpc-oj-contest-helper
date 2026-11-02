@@ -597,6 +597,7 @@ def monitor(path: Path) -> None:
         backoff = 5.0
         submission_error = reference_error = ""
         have_polled = False
+        completed_submissions = False
         future = reference_future = None
         next_render = 0.0
         from .windows_terminal import view_options
@@ -635,6 +636,7 @@ def monitor(path: Path) -> None:
                             scoring_elapsed = min(elapsed, cutoff-state['start_time']) if interrupted else elapsed
                         fresh_submissions = True
                         have_polled = True
+                        completed_submissions = bool(api.submissions_complete)
                         state["submissions"] = [asdict(s) for s in submissions.values()]
                         synchronized = apply_submission_sync(path, state, [asdict(s) for s in incoming], poll_revision)
                         submissions = {s['id']: Submission(**s) for s in synchronized}
@@ -682,9 +684,11 @@ def monitor(path: Path) -> None:
                 all_final = all(s.verdict not in ("PENDING", "UNAVAILABLE") for s in submissions.values() if not s.practice and 0 <= s.time < contest.rules.duration)
                 finalized = (not interrupted and elapsed >= contest.rules.duration and not frozen and current_reference.complete
                              and any(row.eligible for row in current_reference.rows)
-                             and api.submissions_complete and have_polled and all_final)
+                             and completed_submissions and have_polled and all_final)
                 from .ranking import original_rank
                 proof = original_rank(private, current_reference, state['url']) if not frozen else None
+                if proof and manual_reference is not None:
+                    proof['externalRankUrl'] = manual_rank.source
                 rank = '?' if frozen else proof['rank'].lstrip('=') if proof else '—'
                 shown_rank = rank
                 prize = prize_of(private, current_reference.rows, contest.medals) if finalized else ""

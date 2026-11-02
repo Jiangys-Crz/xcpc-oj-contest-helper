@@ -4,7 +4,7 @@
 
 线上组队、多队虚拟赛、训练历史与队内虚拟打印，配合原有终端完成原站参赛和提交。网站使用 Next.js 全栈，终端继续支持 Ubuntu、macOS 和 Windows。
 
-当前版本：**0.9.25**。源码与后续提交：[GitHub 仓库](https://github.com/Jiangys-Crz/xcpc-oj-contest-helper)。线上地址：[CWNU XCPC Vp System](https://vp.cwnupaa.com)。
+当前版本：**0.9.26**。源码与后续提交：[GitHub 仓库](https://github.com/Jiangys-Crz/xcpc-oj-contest-helper)。线上地址：[CWNU XCPC Vp System](https://vp.cwnupaa.com)。
 
 一键安装教程：[网站安装教程](https://vp.cwnupaa.com/install)。Ubuntu / macOS 在终端运行：
 
@@ -304,7 +304,7 @@ xcpc rank https://rank.iccpc.cn/r/e5697b3a-8326-4818-84ca-e2ce1688af23
 
 两条命令分别展示 ICPC 和 CCPC 的链接格式，请选择与当前题目相符的赛事。也可只输入 `xcpc rank` 后粘贴链接。程序读取官方公开 JSON，校验题号、比赛时长、罚时和完整提交记录，再将外榜绑定到当前 VP。面板自动按本场 VP 已用时间回放原赛排名及 submitted / attempted / accepted 统计，支持封榜和 CCPC 题目公开规则；打星队伍参与统计但不计入正式排名。CCPC 外榜采用官网的总秒数罚时取整方式。
 
-导入失败保留原榜。成功导入的数据保存在本地，恢复比赛时无需重新下载；再次执行命令可以刷新或更换外榜。`xcpc rank --clear` 恢复自动加载原榜。导入与换榜不改变 VP 起点，不重新报名，也不提交代码。
+导入失败保留原榜。成功导入的数据保存在本地，恢复比赛时无需重新下载；再次执行命令可以刷新或更换外榜。外榜链接和按当前 VP 已用时间计算的排名会同步到历史记录，网页详情可打开对应外榜。进行中的 VP 和 live 历史会持续刷新排名，比赛结束后保留最终结果。`xcpc rank --clear` 恢复自动加载原榜，并清除历史记录中的外榜链接。导入与换榜不改变 VP 起点，不重新报名，也不提交代码。
 
 创建或编辑云端房间时可填写“外榜链接”（ICPC / CCPC 可选），成员执行 `vp 房间链接` 时自动下载并绑定到本地。首次报名之前完成数据校验；若失败，修正链接或重试后再开始。已预约的房间不能更改外榜；本地也不能替换房间指定的来源。房间功能需要服务端和终端都更新到包含此功能的版本。
 

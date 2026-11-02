@@ -44,6 +44,7 @@ export function ContestDetailView({history,error='',onRetry,showTitle=true}:{his
 export function ContestTiming({history,originalContest=false}:{history:History;originalContest?:boolean}){
   return <div className="judge-contest-times">
     {originalContest&&<a className="judge-original-contest" href={history.contestUrl} target="_blank" rel="noreferrer">Original contest<ExternalLink size={11}/></a>}
+    {history.externalRankUrl&&<a className="judge-original-contest" href={history.externalRankUrl} target="_blank" rel="noreferrer">External scoreboard<ExternalLink size={11}/></a>}
     {history.mode!=='bt'&&<><span>Start: <strong>{dateTime(history.startedAt)}</strong></span><span>End: <strong>{history.endedAt?dateTime(history.endedAt):history.status==='failed'?'Not started':history.status==='cancelled'?'Cancelled':history.endsAt?dateTime(history.endsAt):'In progress'}</strong></span></>}
     <span className="judge-updated">Last synced: {dateTime(history.updatedAt)}</span>
     {history.frozen&&<span className="judge-freeze"><LockKeyhole size={13}/>Scoreboard frozen</span>}

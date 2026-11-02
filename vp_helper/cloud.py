@@ -15,6 +15,7 @@ import time
 from urllib.parse import urlsplit
 import requests
 from .models import Contest, Submission, VPError
+from .platform_clock import platform_now
 from .storage import config_directory, state_directory, file_lock, read_json, write_json
 
 DEFAULT_SERVER = 'https://vp.cwnupaa.com'
@@ -344,6 +345,17 @@ def sync_payload(path, state):
     from .external_rank import apply_saved_rules
     apply_saved_rules(Path(path), contest)
     duration = contest.rules.duration
+    mode = {'practice':'bt','live':'live'}.get(state.get('mode'), 'vp')
+    scoring_elapsed = duration
+    external_source, external_reference = None, None
+    if mode == 'vp':
+        from .sessions import boundary
+        from .external_rank import sync_reference
+        scoring_elapsed = min(duration, max(0, platform_now(state) - state['start_time']))
+        cutoff = boundary(Path(path))
+        if cutoff is not None:
+            scoring_elapsed = min(scoring_elapsed, max(0, cutoff - state['start_time']))
+        external_source, external_reference = sync_reference(Path(path), contest, scoring_elapsed)
     imported = {str(item['id']) for item in state.get('restored_submissions', [])} if state.get('cloud_restore') and state.get('mode') == 'practice' else set()
     records = [dict(item) for item in state.get('submissions', []) if str(item['id']) not in imported]
     for event in records:
@@ -353,7 +365,7 @@ def sync_payload(path, state):
                 for e in records if e['practice'] == practice]
     scoring = contest.extra.get('scoring', 'ICPC')
     maxima = contest.extra.get('problem_max_scores', {})
-    score = score_submissions(scoring_events(False), list(contest.problems), contest.rules, duration,
+    score = score_submissions(scoring_events(False), list(contest.problems), contest.rules, scoring_elapsed,
                               scoring=scoring, problem_max_scores=maxima,
                               oi_time_tiebreak=bool(contest.extra.get('oi_time_tiebreak')))
     corrections = scoring_events(True)
@@ -369,10 +381,14 @@ def sync_payload(path, state):
         if cell.get('solveTime') is None:
             cell.pop('solveTime', None)
     own = state.get('snapshot', {}).get('own') or {}
-    mode = {'practice':'bt','live':'live'}.get(state.get('mode'), 'vp')
     if mode == 'vp':
-        from .ranking import verified_rank
-        rank = verified_rank(state, score)
+        from .ranking import original_rank, verified_rank
+        if external_reference is not None:
+            proof = (original_rank(score, external_reference, contest.url)
+                     if state.get('status') != 'scheduled' and not contest.rules.frozen(scoring_elapsed, external_reference.released) else None)
+            rank = proof['rank'].lstrip('=') if proof else '—'
+        else:
+            rank = '—' if (state.get('reference_rank') or {}).get('externalRankUrl') else verified_rank(state, score)
         rank_source = 'original' if rank != '—' else 'unavailable'
     elif mode == 'live':
         rank = state.get('practice_rank') or own.get('rank') or state.get('last_rank') or state.get('summary', {}).get('rank') or '—'
@@ -463,6 +479,8 @@ def sync_payload(path, state):
         payload['roomStartsAt'] = state['cloud']['startsAt']
         if 'externalRankUrl' in state['cloud']:
             payload['roomExternalRankUrl'] = state['cloud']['externalRankUrl']
+    if mode == 'vp' and (external_reference is None or external_source):
+        payload['externalRankUrl'] = external_source
     return payload
 
 

@@ -24,7 +24,7 @@ export function HistoryResultsTable({items,problems}:{items:History[];problems:s
 
 export function HistoryList(){
   const [term,setTerm]=useState(''),[search,setSearch]=useState(''),[type,setType]=useState('');
-  const result=useResource<History[]>('/api/history?search='+encodeURIComponent(search)+'&type='+type),items=result.data||[];
+  const result=useResource<History[]>('/api/history?search='+encodeURIComponent(search)+'&type='+type,5000),items=result.data||[];
   const problems=useMemo(()=>Array.from(new Set(items.flatMap(item=>item.problems))).sort((a,b)=>a.localeCompare(b,'en',{numeric:true})),[items]);
   function filter(e:FormEvent){e.preventDefault();setSearch(term.trim());}
   return <div className="history-list">
