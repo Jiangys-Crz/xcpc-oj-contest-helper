@@ -411,7 +411,7 @@ def sync_payload(path, state):
                      if 0 <= event.time <= scoring_elapsed)
         complete = state.get('status') == 'complete' or state.get('submissions_complete') is True
         if rank_source == 'original' and external_reference.released and judged and complete:
-            prize = prize_of(score, external_reference.rows, contest.medals)
+            prize = prize_of(score, external_reference.rows, contest.medals) if contest.medals is not None else 'Unknown'
             if contest.medals is not None and prize != 'Unknown':
                 prize_source = 'original'
     for index, label in enumerate(contest.problems):

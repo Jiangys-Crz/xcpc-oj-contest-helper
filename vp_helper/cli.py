@@ -694,7 +694,7 @@ def monitor(path: Path) -> None:
                     proof['externalRankUrl'] = manual_rank.source
                 rank = '?' if frozen else proof['rank'].lstrip('=') if proof else '—'
                 shown_rank = rank
-                prize = prize_of(private, current_reference.rows, contest.medals) if finalized else ""
+                prize = (prize_of(private, current_reference.rows, contest.medals) if contest.medals is not None else 'Unknown') if finalized else ""
                 stats = statistics(current_reference.rows, list(contest.problems), include_unofficial=True) if current_reference.statistics_complete and current_reference.rows else None
                 if stats is not None and hasattr(current_reference.replay, 'statistics_at'):
                     stats = current_reference.replay.statistics_at(contest, contest.rules.duration if manual_final else scoring_elapsed,

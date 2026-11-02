@@ -270,6 +270,14 @@ class ExternalRankTests(unittest.TestCase):
         self.assertEqual(saved['summary']['prize'],'Silver')
         self.assertEqual(saved['public_statistics']['accepted']['B'],1)
 
+    def test_missing_external_medal_rules_are_unknown_even_with_zero_solves(self):
+        payload=self.import_board();payload['metadata']['medals']=None
+        write_json(external_rank.attachment_path(self.path),payload)
+        self.state['status']='complete'
+        with patch.object(cloud,'platform_now',return_value=20000):
+            result=cloud.sync_payload(self.path,self.state)
+        self.assertEqual((result['prize'],result['prizeSource']),('Unknown','unavailable'))
+
     def test_broken_manual_rank_does_not_upload_a_cached_native_rank(self):
         self.import_board()
         self.state['reference_rank'] = {'source':'original','contestUrl':self.contest.url,
