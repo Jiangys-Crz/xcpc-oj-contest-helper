@@ -161,6 +161,10 @@ def prepare(url: str, scheduled_start: float | None = None, *, cloud: dict | Non
         from .freeze import configure, configure_format
         configure_format(contest, room_format=cloud.get("scoringSystem", "ICPC") if cloud else None)
         configure(contest, room_minutes=cloud.get("freezeMinutes") if cloud else None)
+        external_rank = None
+        if cloud and cloud.get('externalRankUrl'):
+            from .external_rank import prepare_import
+            external_rank = prepare_import(cloud['externalRankUrl'], contest)
         contest.directory_name = " ".join(contest.directory_name.split())
         number = len(previous) + 1
         attempt_id = uuid4().hex[:10]
@@ -191,6 +195,9 @@ def prepare(url: str, scheduled_start: float | None = None, *, cloud: dict | Non
         if directory != target:
             state["workspace_target"] = str(target)
         write_json(path, state)
+        if external_rank is not None:
+            from .external_rank import attachment_path
+            write_json(attachment_path(path), external_rank)
         cli.bind_submit_context(directory, path, state)
         # Codeforces confirms a future registration now; QOJ preflights the
         # reservation and sends its single native start request at the deadline.

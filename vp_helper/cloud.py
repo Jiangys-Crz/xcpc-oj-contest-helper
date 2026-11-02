@@ -218,6 +218,8 @@ def _check_room_context(state, room, participant):
     if (context.get('freezeMinutes', 0) != room.get('freezeMinutes', 0)
             or context.get('scoringSystem', 'ICPC') != room.get('scoringSystem', 'ICPC')):
         raise VPError('房间赛制或封榜设置已修改，不能使用旧的本地 VP，请联系房间管理员。')
+    if 'externalRankUrl' in context and context['externalRankUrl'] != room.get('externalRankUrl'):
+        raise VPError('房间外榜链接已修改，请重新运行房间 VP 命令同步配置。')
 
 
 def start_room(value):
@@ -235,6 +237,8 @@ def start_room(value):
     if result.get('canRestore'):
         from .cloud_restore import restore_room
         path, state = restore_room(room_id, saved)
+        from .external_rank import sync_room_rank
+        sync_room_rank(path, state, room.get('externalRankUrl'))
         cli.open_state(path, state)
         return
     from .parsing import contest_url
@@ -252,12 +256,17 @@ def start_room(value):
                'userId':str(saved['user']['id']), 'participantId':str(participant['id']),
                'label':participant['label'], 'startsAt':room['startsAt'],
                'freezeMinutes':room.get('freezeMinutes', 0), 'scoringSystem':room.get('scoringSystem', 'ICPC'),
+               'externalRankUrl':room.get('externalRankUrl'),
                'captainId':str(participant['captainId']), 'type':participant['type']}
     from .identity import participant_identity
     title, subtitle = participant_identity(participant)
     context.update(participantTitle=title, participantSubtitle=subtitle)
     if previous:
         path, state = previous
+        from .external_rank import prepare_room_rank, attachment_path
+        # Validate the room's archive before changing a standalone/legacy
+        # attempt's binding. A failed download leaves its old board intact.
+        prepared_rank = prepare_room_rank(path, state, context.get('externalRankUrl'))
         # Native activation uses the same locks. Re-read before rebinding so a
         # resumed invite cannot overwrite an in-flight start or fresh verdicts.
         with file_lock(path.parent / 'start.lock'), file_lock(path.with_suffix('.activate.lock')), file_lock(path.with_suffix('.save.lock')):
@@ -278,6 +287,8 @@ def start_room(value):
             configure_format(contest, room_format=context['scoringSystem'])
             configure(contest, room_minutes=context['freezeMinutes'])
             state['contest'] = contest.to_dict()
+            if prepared_rank is not None:
+                write_json(attachment_path(path), prepared_rank)
             write_json(path, state)
         cli.bind_submit_context(Path(state['directory']), path, state)
         queue_state(path, state)
@@ -330,6 +341,8 @@ def sync_payload(path, state):
     from .submission_results import judging_url
     from .submission_languages import language_fields
     contest = Contest.from_dict(state['contest'])
+    from .external_rank import apply_saved_rules
+    apply_saved_rules(Path(path), contest)
     duration = contest.rules.duration
     imported = {str(item['id']) for item in state.get('restored_submissions', [])} if state.get('cloud_restore') and state.get('mode') == 'practice' else set()
     records = [dict(item) for item in state.get('submissions', []) if str(item['id']) not in imported]
@@ -394,6 +407,7 @@ def sync_payload(path, state):
     payload = {'localId':path.stem,'contest':{'platform':contest.platform,'contestId':contest.contest_id,
                'url':contest.url,'name':contest.name,'problems':list(contest.problems),
                'rules':{'duration':duration,'penalty_minutes':contest.rules.penalty_minutes,
+                        'penalty_rounding':contest.rules.penalty_rounding,
                         'compile_penalty':contest.rules.compile_penalty,
                         'freeze_minutes':(duration-contest.rules.freeze_at)/60 if contest.rules.freeze_at is not None else 0,
                         'scoring':scoring,'score_policy':'subtasks' if contest.extra.get('score_policy') == 'subtasks' else 'latest' if scoring == 'OI' else 'best',
@@ -447,6 +461,8 @@ def sync_payload(path, state):
         payload['roomId'] = state['cloud']['roomId']
         payload['participantId'] = state['cloud']['participantId']
         payload['roomStartsAt'] = state['cloud']['startsAt']
+        if 'externalRankUrl' in state['cloud']:
+            payload['roomExternalRankUrl'] = state['cloud']['externalRankUrl']
     return payload
 
 

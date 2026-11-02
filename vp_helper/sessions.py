@@ -154,6 +154,10 @@ def save_state(path: Path, state: dict) -> None:
     # merge IDs under a separate lock, so a slow GET cannot erase new receipts.
     with file_lock(path.with_suffix(".save.lock")):
         previous = read_json(path)
+        from .external_rank import apply_saved_rules
+        contest = Contest.from_dict(state['contest'])
+        apply_saved_rules(path, contest)
+        state['contest'] = contest.to_dict()
         if (state['start_time'] != previous.get('start_time', state['start_time'])
                 and state['start_time'] in previous.get('start_time_aliases', [])):
             _rebase_start(state, previous['start_time'])

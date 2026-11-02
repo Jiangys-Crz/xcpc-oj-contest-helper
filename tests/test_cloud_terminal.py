@@ -163,7 +163,7 @@ class CloudTerminalTests(unittest.TestCase):
                 self.state['contest']['rules']['compile_penalty']=compile_penalty
                 payload=cloud.sync_payload(self.path,self.state)
                 self.assertEqual(payload['contest']['rules'],{
-                    'duration':3600,'penalty_minutes':20,'compile_penalty':compile_penalty,
+                'duration':3600,'penalty_minutes':20,'penalty_rounding':'per_problem','compile_penalty':compile_penalty,
                     'freeze_minutes':0,'scoring':'ICPC','score_policy':'best','problem_max_scores':{},
                     'contest_format':'ICPC','problem_reveal_count':None})
                 self.assertEqual(payload['cells']['A']['tries'],2 if compile_penalty else 1)

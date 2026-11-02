@@ -44,6 +44,11 @@ HELP = """XCPC 比赛终端助手
 恢复当前比赛面板
   xcpc dashboard    在比赛目录或子目录运行；已结束的比赛进入补题界面
 
+手动导入外榜（在 VP 比赛目录或子目录运行）
+  xcpc rank 外榜链接     支持 board.xcpcio.com 的 ICPC 和 rank.iccpc.cn 的 CCPC
+  xcpc rank             交互输入外榜链接，按 VP 已用时间回放
+  xcpc rank --clear     恢复自动加载原榜（房间指定外榜除外）
+
 手动结束本地 VP
   xcpc end             优先结束当前目录对应的本地 VP，不操作原站
   xcpc end 轮次ID      结束指定轮次；保留代码，后续提交计为补题，新 AC 方格变紫
@@ -145,6 +150,9 @@ def main() -> None:
             from .updater import main as update
             sys.argv = [sys.argv[0], *args[1:]]
             update()
+        elif args and args[0] == 'rank':
+            from .external_rank import command
+            command(args[1:])
         elif args == ['dashboard']:
             from .cli import dashboard
             dashboard()
