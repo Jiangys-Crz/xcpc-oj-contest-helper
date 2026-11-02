@@ -39,7 +39,7 @@ class OnlineInstallerTests(unittest.TestCase):
         self.installer_log = self.root / 'installer-call'
         self.curl_log = self.root / 'curl-calls'
         self.xcpc_log = self.root / 'xcpc-calls'
-        for name in ('bash', 'sh', 'mktemp', 'sed', 'cut', 'tar', 'awk', 'mkdir', 'rm', 'cp', 'mv', 'dirname', 'readlink'):
+        for name in ('bash', 'sh', 'mktemp', 'sed', 'cut', 'tar', 'gzip', 'awk', 'mkdir', 'rm', 'cp', 'mv', 'dirname', 'readlink'):
             command = shutil.which(name)
             self.assertIsNotNone(command, name)
             (self.bin / name).symlink_to(command)
