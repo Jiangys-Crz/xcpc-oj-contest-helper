@@ -388,21 +388,24 @@ class Dashboard:
             columns.append('penalty')
             values.append('—' if self.practice and not known_summary else str(self.me.penalty) if self.me.results_complete else '?')
         rows = [[*values, *cells]]
-        if not self.practice and not self.contest.rules.problem_reveal_count:
+        # A completed VP keeps its original scoreboard while upsolving. Only a
+        # standalone practice workspace has no original public statistics.
+        show_statistics = not self.practice or known_summary
+        if show_statistics and not self.contest.rules.problem_reveal_count:
             for key in ("submitted", "attempted", "accepted"):
                 rows.append(["", key, *([""] * (len(columns) - 2)), *(str(self.stats[key][p]) if self.stats else "—"
                                                    for p in self.contest.problems)])
         table = score_table(columns, self.contest.problems,
                             rows, width, separate_summary=True)
         labels = self.record_heading(width, self.record_rows(self))
-        if not self.practice and self.contest.rules.problem_reveal_count:
+        if show_statistics and self.contest.rules.problem_reveal_count:
             return Group(heading, Text(" "), table, self.public_statistics(), Text(" "), labels)
         return Group(heading, Text(" "), table, Text(" "), labels)
 
     def public_statistics(self):
         visible = self.revealed or frozenset()
         freeze = self.contest.rules.freeze_at
-        if self.elapsed >= self.contest.rules.duration or freeze is not None and self.elapsed >= freeze:
+        if self.practice or self.elapsed >= self.contest.rules.duration or freeze is not None and self.elapsed >= freeze:
             visible = frozenset(self.contest.problems)
         ordered = [p for p in self.contest.problems if p in visible]
         # Keep anonymous counts together, ordered by public activity rather than
