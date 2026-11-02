@@ -78,16 +78,16 @@ class CloudUpdaterTests(unittest.TestCase):
             updater.cloud_update({**self.data,'source_revision':self.revision})
         self.assertEqual(fetch.call_count,1);install.assert_not_called()
 
-    def test_only_connectivity_failure_allows_gitee_fallback(self):
+    def test_only_connectivity_failure_allows_github_fallback(self):
         with patch.object(updater,'installation',return_value=self.data), \
                 patch.object(updater,'cloud_update',side_effect=updater.CloudUnavailable('offline')), \
                 patch.object(updater,'ensure_git',side_effect=VPError('fallback reached')) as git:
-            with self.assertRaisesRegex(VPError,'fallback reached'):updater.update()
+            with self.assertRaisesRegex(VPError,'fallback reached'):updater.update(cloud=True)
         git.assert_called_once()
         with patch.object(updater,'installation',return_value=self.data), \
                 patch.object(updater,'cloud_update',side_effect=VPError('bad checksum')), \
                 patch.object(updater,'ensure_git') as git:
-            with self.assertRaisesRegex(VPError,'bad checksum'):updater.update()
+            with self.assertRaisesRegex(VPError,'bad checksum'):updater.update(cloud=True)
         git.assert_not_called()
 
     def test_malformed_manifest_and_non_archive_body_fail_closed(self):
@@ -106,3 +106,22 @@ class CloudUpdaterTests(unittest.TestCase):
         with patch('sys.argv',['xcpc','update','--gitee']),patch.object(updater,'update') as run:
             commands.main()
         run.assert_called_once_with(gitee=True)
+
+    def test_default_update_uses_github_without_reading_the_cloud_manifest(self):
+        with patch.object(updater,'installation',return_value=self.data), \
+                patch.object(updater,'cloud_update') as cloud, \
+                patch.object(updater,'ensure_git',side_effect=VPError('GitHub reached')) as git:
+            with self.assertRaisesRegex(VPError,'GitHub reached'):
+                updater.update()
+        git.assert_called_once()
+        cloud.assert_not_called()
+        self.assertEqual(updater.REPOSITORY,'https://github.com/Zyihan-Crz/xcpc-oj-contest-helper.git')
+
+    def test_new_update_options_dispatch_without_browser_login_setup(self):
+        for options,kwargs in (([],{}),(['--github'],{}),(['--cloud'],{'cloud':True})):
+            with self.subTest(options=options), patch('sys.argv',['xcpc','update',*options]), \
+                    patch.object(updater,'update') as run, \
+                    patch('vp_helper.chromium_login.ensure_user_bridge') as browser:
+                commands.main()
+            run.assert_called_once_with(**kwargs)
+            browser.assert_not_called()

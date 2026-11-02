@@ -66,8 +66,9 @@ Codeforces API 设置
   xcpc api gym          配置 Gym 使用的 Codeforces 账号
 
 更新
-  xcpc update           优先从 VP 云端更新，失败回退 Gitee，保留原安装位置及个人数据
-  xcpc update --gitee   使用 Gitee 更新
+  xcpc update           从 GitHub 更新，保留原安装位置及个人数据
+  xcpc update --github  使用 GitHub main 更新（与默认方式相同）
+  xcpc update --cloud   使用公网兼容下载入口，不可用时回退 GitHub
 
 帮助
   xcpc --help
@@ -87,7 +88,7 @@ ICPC/CCPC 优先读取原站封榜时间；未知时手动输入距离结束的�
 def main() -> None:
     args = sys.argv[1:]
     try:
-        if args not in ([], ['--help'], ['-h'], ['--version'], ['update'], ['update', '--gitee']):
+        if args not in ([], ['--help'], ['-h'], ['--version'], ['update'], ['update', '--github'], ['update', '--cloud'], ['update', '--gitee']):
             from .chromium_login import ensure_user_bridge
             ensure_user_bridge(force=bool(args and args[0] == 'doctor'))
         if args in ([], ["-h"], ["--help"]):
@@ -146,7 +147,7 @@ def main() -> None:
             _, state = end_attempt(args[1] if len(args) == 2 else None)
             print("本地 VP 已结束：" + state.get("attempt_id", "") + " · " + state["directory"])
             print("代码与历史记录已保留；已开始轮次的后续提交计为补题，新 AC 方格显示紫色，记录保留判定颜色。")
-        elif args in (["update"], ["update", "--gitee"]):
+        elif args in (["update"], ["update", "--github"], ["update", "--cloud"], ["update", "--gitee"]):
             from .updater import main as update
             sys.argv = [sys.argv[0], *args[1:]]
             update()

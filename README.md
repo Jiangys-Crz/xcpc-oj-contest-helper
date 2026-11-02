@@ -2,7 +2,7 @@
 
 线上组队、多队虚拟赛、训练历史与队内虚拟打印，配合原有终端完成原站参赛和提交。网站使用 Next.js 全栈，终端继续支持 Ubuntu、macOS 和 Windows。
 
-当前版本：**0.9.22**。线上地址：[CWNU XCPC Vp System](https://vp.cwnupaa.com)。
+当前版本：**0.9.23**。源码与后续提交：[GitHub 仓库](https://github.com/Zyihan-Crz/xcpc-oj-contest-helper)。线上地址：[CWNU XCPC Vp System](https://vp.cwnupaa.com)。
 
 一键安装教程：[网站安装教程](https://vp.cwnupaa.com/install)。Ubuntu / macOS 在终端运行：
 
@@ -78,7 +78,7 @@ CCPC 新赛制中，公共统计的题号需有至少 50 支原赛队伍（包�
 
 默认安装到系统公共目录，命令对这台电脑的所有用户生效；安装和更新公共程序需要管理员权限。账号、Cookie、设置和比赛文件按用户分别保存，日常比赛命令和浏览器请使用同一个普通用户运行。
 
-没有 Git 时，可先从 [Gitee 项目仓库](https://gitee.com/Zyihan_Crz/xcpc-vp-system)下载 ZIP 并解压，再进入源码目录运行对应系统的安装脚本。脚本会补齐 Git，安装后即可使用 `xcpc update` 更新。
+没有 Git 时，可先从 [GitHub 项目仓库](https://github.com/Zyihan-Crz/xcpc-oj-contest-helper)下载 ZIP 并解压，再进入源码目录运行对应系统的安装脚本。脚本会补齐 Git，安装后即可使用 `xcpc update` 更新。
 
 各系统的安装脚本会检查环境并补齐缺少的依赖，已有可用环境会继续使用：
 
@@ -109,8 +109,8 @@ Windows 在执行安装命令前运行 `$env:XCPC_MIRROR = 'official'`。该设�
 支持 x86_64、ARM64，推荐系统 Python 3.12 或更新版本；Ubuntu 26.04 的 Python 3.14 也支持。Ubuntu 22.04 x86_64 可使用随仓库提供的独立 Python 运行时。
 
 ```bash
-git clone https://gitee.com/Zyihan_Crz/xcpc-vp-system.git
-cd xcpc-vp-system
+git clone https://github.com/Zyihan-Crz/xcpc-oj-contest-helper.git
+cd xcpc-oj-contest-helper
 bash install.sh
 xcpc --help
 ```
@@ -157,7 +157,7 @@ xcpc --help
 
 ### Windows
 
-支持 Windows 10 / 11 原生运行，使用 Windows PowerShell 5.1 或更新版本。先从 [Gitee 项目仓库](https://gitee.com/Zyihan_Crz/xcpc-vp-system)下载并解压源码，进入包含 `install.ps1` 的文件夹。在资源管理器地址栏输入 `powershell` 并回车，打开当前目录的普通用户 PowerShell，然后运行：
+支持 Windows 10 / 11 原生运行，使用 Windows PowerShell 5.1 或更新版本。先从 [GitHub 项目仓库](https://github.com/Zyihan-Crz/xcpc-oj-contest-helper)下载并解压源码，进入包含 `install.ps1` 的文件夹。在资源管理器地址栏输入 `powershell` 并回车，打开当前目录的普通用户 PowerShell，然后运行：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
@@ -405,15 +405,18 @@ vp history --live
 
 ```text
 xcpc update
-xcpc update --gitee
+xcpc update --github
+xcpc update --cloud
 xcpc --version
 ```
 
-默认从 `vp.cwnupaa.com` 获取版本清单和源码包，验证 SHA256 后安装；网站更新源不可用时自动回退到 Gitee `main`。`--gitee` 可直接使用原更新方式。校验失败时停止安装。两种方式都沿用原安装位置并保留账号、比赛保存路径、代码和历史。
+默认从 [GitHub 仓库](https://github.com/Zyihan-Crz/xcpc-oj-contest-helper)的 `main` 分支更新，`--github` 与默认方式相同。已有 Gitee 更新缓存会自动迁移到同一项目的 GitHub 地址，保留旧源码目录中的本地改动。原安装位置、账号、比赛保存路径、代码和历史均保留。
+
+`--cloud` 使用 `vp.cwnupaa.com` 的兼容下载入口，校验源码包 SHA256 后安装；入口不可用时回退到 GitHub，校验失败时停止安装。旧的 `--gitee` 参数仍可调用，但实际从 GitHub 更新，不再访问 Gitee。
 
 `xcpc --version` 在离线状态下显示当前版本、源码版本、安装与命令目录、Python 和依赖命令路径、比赛保存路径、云端账号资料及各原站配置状态。密码、Cookie、API key / secret 和令牌只显示是否配置，不显示具体值；在线登录验证仍使用 `xcpc doctor`。
 
-0.8.2 等旧版仍可运行原来的 `xcpc update`，从 Gitee 升级到新版；以后默认使用网站更新源。不要手动删除安装目录中的旧 release；原生命令入口和 Windows 本地连接会通过初始启动环境转到当前版本。
+0.9.x 中支持公网更新入口的旧版可先运行原来的 `xcpc update` 迁移到新版，以后默认使用 GitHub。仍只支持 Gitee 的更早版本，请重新运行官网一键安装命令，或从 GitHub 下载源码后按对应系统的安装步骤安装。不要手动删除安装目录中的旧 release；原生命令入口和 Windows 本地连接会通过初始启动环境转到当前版本。
 
 **macOS / Windows 更新后，还需要重新加载扩展：**
 
@@ -433,7 +436,7 @@ $Current = Get-Content -LiteralPath (Join-Path $App 'current.json') -Raw -Encodi
 & (Join-Path $Current.release 'venv\Scripts\python.exe') -I -m vp_helper.updater
 ```
 
-0.9.0 等旧的个人安装，将第一行改为 `$App = Join-Path $env:LOCALAPPDATA 'XCPC\app'`。自定义过 `--target-root` 时，使用原来的程序目录。这条命令绕过 `xcpc.exe` 等命令启动器，从 Gitee 更新，并沿用原来的程序目录和命令目录。
+0.9.0 等旧的个人安装，将第一行改为 `$App = Join-Path $env:LOCALAPPDATA 'XCPC\app'`。自定义过 `--target-root` 时，使用原来的程序目录。这条命令绕过 `xcpc.exe` 等命令启动器，调用当前已安装版本的更新模块，并沿用原来的程序目录和命令目录；新版更新模块使用 GitHub。
 
 如果 `current.json` 缺失、当前 Python 也无法启动，或旧版本没有更新模块，重新下载最新源码并解压，进入源码目录后运行：
 

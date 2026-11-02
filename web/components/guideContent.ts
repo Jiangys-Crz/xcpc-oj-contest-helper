@@ -465,12 +465,12 @@ export const guideSections: GuideSection[] = [
     id: 'update',
     title: '更新终端和浏览器扩展',
     commands: [
-      { label: '更新到网站发布的最新版本', command: 'xcpc update' },
-      { label: '使用原 Gitee 更新方式', command: 'xcpc update --gitee' },
+      { label: '从 GitHub 更新到最新版本', command: 'xcpc update' },
+      { label: '使用公网兼容下载入口', command: 'xcpc update --cloud' },
       { label: '更新后核对版本和实际路径', command: 'xcpc --version' },
     ],
     paragraphs: [
-      '默认从 vp.cwnupaa.com 获取并校验源码包，网站更新源不可用时回退 Gitee。两种方式均保留原安装位置、账号、保存路径、代码和比赛记录。',
+      '默认从 github.com/Zyihan-Crz/xcpc-oj-contest-helper 的 main 分支更新。公网入口用于旧版首次迁移、一键安装和显式 --cloud 更新；原安装位置、账号、保存路径、代码和比赛记录均保留。',
       '公共程序更新可能再次请求管理员授权。结束后重新打开终端再恢复比赛面板，让新启动的进程使用新版本。',
       '如果连 xcpc 命令本身都无法运行，重新执行本页对应系统的一键安装命令；已有个人文件和账号会保留，不要手动删除安装目录或配置目录。',
     ],
@@ -490,7 +490,7 @@ export const guideSections: GuideSection[] = [
         ['Ubuntu', 'Ubuntu 软件包下载和 Python 依赖优先使用国内镜像；已有可用环境会继续复用'],
         ['macOS', 'Homebrew 相关下载与 Python 依赖使用国内镜像优先的安装流程'],
         ['Windows', '缺少公共 Python 时从本站国内服务器获取并校验官方安装包；WinGet 目录索引和 Python 依赖使用国内镜像，Git 安装包仍可能从原厂下载；Windows Terminal 不作为安装依赖'],
-        ['XCPC 更新包', '默认从 vp.cwnupaa.com 获取，网站更新源不可用时可回退 Gitee'],
+        ['XCPC 更新包', '默认使用 GitHub main；公网兼容入口继续供一键安装和旧版迁移使用'],
       ],
     },
     paragraphs: [

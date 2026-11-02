@@ -17,7 +17,8 @@ import sys
 from .models import VPError
 from .storage import read_json
 
-REPOSITORY = "https://gitee.com/Zyihan_Crz/xcpc-vp-system.git"
+REPOSITORY = "https://github.com/Zyihan-Crz/xcpc-oj-contest-helper.git"
+LEGACY_REPOSITORY = "https://gitee.com/Zyihan_Crz/xcpc-vp-system.git"
 
 
 def installation() -> dict:
@@ -58,7 +59,7 @@ def _git(args: list[str], *, cwd: Path | None = None) -> str:
                                 capture_output=True, text=True, check=True, timeout=600)
         return result.stdout.strip()
     except (subprocess.SubprocessError, OSError):
-        raise VPError("获取更新代码失败。请检查网络连接及 Gitee 仓库访问权限；原版本未改动。") from None
+        raise VPError("获取更新代码失败。请检查网络连接及 GitHub 仓库访问权限；原版本未改动。") from None
 
 
 def ensure_git() -> None:
@@ -209,14 +210,14 @@ def cloud_update(data):
         print('更新完成（' + revision[:8] + '）。查看帮助：xcpc --help')
 
 
-def update(*, repository: str = REPOSITORY, gitee: bool = False) -> None:
+def update(*, repository: str = REPOSITORY, cloud: bool = False, gitee: bool = False) -> None:
     data = installation()
-    if not gitee and repository == REPOSITORY:
+    if cloud and not gitee and repository == REPOSITORY:
         try:
             cloud_update(data)
             return
         except CloudUnavailable:
-            print("云端更新暂不可用，正在尝试 Gitee…", flush=True)
+            print("云端更新暂不可用，正在尝试 GitHub…", flush=True)
     ensure_git()
     key = hashlib.sha256(data["install_root"].encode()).hexdigest()[:16]
     cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home()/".cache"))/"vp/updates"/key
@@ -225,9 +226,15 @@ def update(*, repository: str = REPOSITORY, gitee: bool = False) -> None:
         if not bare.exists():
             _git(["init", "--bare", str(bare)])
             _git(["--git-dir", str(bare), "remote", "add", "origin", repository])
-        if _git(["--git-dir", str(bare), "remote", "get-url", "origin"]) != repository:
-            raise VPError("更新缓存的仓库地址不匹配，已停止更新；原版本未改动。")
-        print("正在检查 Gitee 最新版本…", flush=True)
+        previous_repository = _git(["--git-dir", str(bare), "remote", "get-url", "origin"])
+        if previous_repository != repository:
+            if repository == REPOSITORY and previous_repository == LEGACY_REPOSITORY:
+                # Preserve existing worktrees and local edits while moving only
+                # this project's verified legacy cache to its new official origin.
+                _git(["--git-dir", str(bare), "remote", "set-url", "origin", repository])
+            else:
+                raise VPError("更新缓存的仓库地址不匹配，已停止更新；原版本未改动。")
+        print("正在检查 GitHub 最新版本…", flush=True)
         _git(["--git-dir", str(bare), "fetch", "--depth", "1", "origin", "main"])
         revision = _git(["--git-dir", str(bare), "rev-parse", "FETCH_HEAD"])
         if not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", revision):
@@ -259,9 +266,16 @@ def update(*, repository: str = REPOSITORY, gitee: bool = False) -> None:
 
 def main() -> None:
     try:
-        if sys.argv[1:] not in ([], ["--gitee"]):
-            raise VPError("Usage: xcpc update [--gitee]")
-        update(gitee=True) if sys.argv[1:] else update()
+        args = sys.argv[1:]
+        if args not in ([], ["--github"], ["--cloud"], ["--gitee"]):
+            raise VPError("Usage: xcpc update [--github | --cloud]")
+        if args == ["--cloud"]:
+            update(cloud=True)
+        elif args == ["--gitee"]:
+            print("更新源已迁移到 GitHub，正在使用 GitHub 更新。", flush=True)
+            update(gitee=True)
+        else:
+            update()
     except (VPError, OSError) as exc:
         print("xcpc update: " + str(exc), file=sys.stderr)
         raise SystemExit(1) from None
