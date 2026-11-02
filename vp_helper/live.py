@@ -171,7 +171,7 @@ def save_progress(path: Path, state: dict, contest: Contest, snapshot: dict,
     if attachment_path(path).exists():
         from .cloud import sync_payload
         result = sync_payload(path, state)
-        if result['rankSource'] == 'original':
+        if result['rankSource'] == 'original' or result['prize'] is not None:
             state['external_result'] = {'rank':result['rank'],'prize':result['prize']}
     save_state(path, state)
     if snapshot:
