@@ -29,6 +29,7 @@ export function publicScore(history: Row, room: Row, at: number, freeze: boolean
     practiceCells[problem]={tries:0,pending:0,solved:false};
   }
   const submissions:Row[]=JSON.parse(history.submissions_json), visible:Row[]=[];
+  const acceptedSeconds:Record<string,number>=Object.create(null);
   for(const submission of [...submissions].sort((a,b)=>a.submittedAt.localeCompare(b.submittedAt)||a.id.localeCompare(b.id,undefined,{numeric:true}))) {
     const time=Date.parse(submission.submittedAt);
     if(time>at)continue;
@@ -62,9 +63,11 @@ export function publicScore(history: Row, room: Row, at: number, freeze: boolean
         cell.unknownPoints=true;
         if(latest)delete cell.points;
       }
-    } else if(accepted.has(verdict)) {cell.solved=true;cell.solveTime=Math.max(0,Math.floor((time-start)/60000));}
+    } else if(accepted.has(verdict)) {cell.solved=true;cell.solveTime=Math.max(0,Math.floor((time-start)/60000));acceptedSeconds[submission.problem]=Math.max(0,Math.floor((time-start)/1000));}
   }
-  const penalty=graded || practiceOnly?0:Object.values(cells).reduce((total,c)=>total+(c.solved?c.solveTime+Math.max(0,c.tries-1)*(rules.penalty_minutes??20):0),0);
+  const penalty=graded || practiceOnly?0:rules.penalty_rounding==='total_seconds'
+    ?Math.floor(Object.entries(cells).reduce((total,[problem,c])=>total+(c.solved?(acceptedSeconds[problem]??0)+Math.max(0,c.tries-1)*(rules.penalty_minutes??20)*60:0),0)/60)
+    :Object.values(cells).reduce((total,c)=>total+(c.solved?c.solveTime+Math.max(0,c.tries-1)*(rules.penalty_minutes??20):0),0);
   const unknownPoints=Object.values(cells).some(c=>c.unknownPoints);
   let points=graded && !practiceOnly && !subtasks && !unknownPoints?Object.values(cells).reduce((total,c)=>total+(c.points??0),0):undefined;
   if(subtasks && freeze && history.freeze_cells_json && history.freeze_points!==null && history.freeze_points!==undefined) {

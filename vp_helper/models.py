@@ -20,10 +20,13 @@ class Rules:
     freeze_at: int | None = None
     unfreeze_at: int | None = None
     problem_reveal_count: int | None = None
+    penalty_rounding: str = "per_problem"
 
     def __post_init__(self):
         if self.duration <= 0 or self.penalty_minutes < 0:
             raise VPError("Invalid contest duration or penalty configuration.")
+        if self.penalty_rounding not in ("per_problem", "total_seconds"):
+            raise VPError("Unsupported contest penalty rounding rule.")
         if self.freeze_at is not None and not 0 <= self.freeze_at <= self.duration:
             raise VPError("The scoreboard freeze time is outside the contest window.")
         if self.unfreeze_at is not None and self.unfreeze_at < self.duration:

@@ -70,6 +70,7 @@ def score_submissions(
         raise VPError("Unknown contest scoring mode: " + scoring)
     maximums = problem_max_scores or {}
     cells = {p: Cell(max_score=_native_score(maximums.get(p))) for p in problems}
+    accepted_seconds = {}
     frozen = public and rules.frozen(elapsed, released)
     # Latest polling response replaces previous verdicts; callers deduplicate by ID.
     unique = {s.id: s for s in submissions if s.team == team_id}
@@ -110,7 +111,14 @@ def score_submissions(
             if s.verdict == "CORRECT" and (scoring == "ICPC" or c.solved):
                 c.solved = True
                 c.solve_time = int(s.time // 60)
-    return TeamScore(team_id, name, cells, penalty_minutes=rules.penalty_minutes, scoring=scoring,
+                accepted_seconds[s.problem] = int(s.time)
+    # ICCPC's native board sums acceptance seconds before rounding the total
+    # to minutes. Other judges keep their existing per-problem minute rule.
+    penalty = None
+    if scoring == "ICPC" and rules.penalty_rounding == "total_seconds":
+        penalty = sum(accepted_seconds[p] + rules.penalty_minutes * 60 * max(0, c.tries - 1)
+                      for p, c in cells.items() if c.solved) // 60
+    return TeamScore(team_id, name, cells, penalty_minutes=rules.penalty_minutes, known_penalty=penalty, scoring=scoring,
                      oi_time_tiebreak=oi_time_tiebreak)
 
 

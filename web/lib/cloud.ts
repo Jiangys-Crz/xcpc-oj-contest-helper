@@ -37,6 +37,18 @@ function scoringSystem(value:unknown,url?:string):string {
   if(url && new URL(url).hostname==='codeforces.com' && !['ICPC','CCPC'].includes(value as string))return fail(400,'Codeforces / Gym 原站 VP 仅支持 ICPC 或 CCPC 展示赛制');
   return value as string;
 }
+function externalRankUrl(raw:unknown,system:string):string|null {
+  if(raw===undefined || raw===null || raw==='')return null;
+  const value=text(raw,'外榜链接',500);
+  if(!['ICPC','CCPC'].includes(system))return fail(400,'外榜仅支持 ICPC / CCPC 赛制');
+  let url:URL;
+  try {url=new URL(value);} catch {return fail(400,'外榜链接无效');}
+  if(url.protocol!=='https:' || url.username || url.password || url.port || url.search || url.hash || /[\\\s%]/.test(value))return fail(400,'请使用 HTTPS 外榜页面链接');
+  const board=url.hostname==='board.xcpcio.com' && /^\/icpc\/[A-Za-z0-9][A-Za-z0-9_-]*(?:\/[A-Za-z0-9][A-Za-z0-9_-]*)+\/?$/.test(url.pathname);
+  const ccpc=url.hostname==='rank.iccpc.cn' && /^\/r\/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\/?$/i.test(url.pathname);
+  if(!board && !ccpc)return fail(400,'外榜支持 board.xcpcio.com/icpc/… 或 rank.iccpc.cn/r/… 页面链接');
+  return `https://${url.hostname}${(ccpc?url.pathname.toLowerCase():url.pathname).replace(/\/$/,'')}`;
+}
 export function contestUrl(raw: unknown, roomsOnly = false): string {
   let url: URL;
   try { url = new URL(text(raw, '比赛链接', 500)); } catch { return fail(400, '比赛链接无效'); }
@@ -178,7 +190,7 @@ export class CloudService {
   private teamView(team:Row) { return {id:team.id,nameZh:team.name_zh,nameEn:team.name_en,captainId:team.captain_id,createdAt:team.created_at,members:this.store.all('SELECT u.* FROM users u JOIN team_members m ON m.user_id=u.id WHERE m.team_id=? ORDER BY CASE WHEN u.id=? THEN 0 ELSE 1 END,u.created_at',team.id,team.captain_id).map(u=>profile(u))}; }
   private captain(teamId:string,user:User) {const team=this.team(teamId);if(team.captain_id!==user.id)return fail(403,'只有队长可以管理队伍');return team;}
   private participant(roomId:string,uid:string):Row|undefined { return this.store.one('SELECT p.* FROM participants p JOIN participant_members m ON p.id=m.participant_id WHERE m.room_id=? AND m.user_id=? AND NOT EXISTS(SELECT 1 FROM participant_departures d WHERE d.participant_id=p.id)',roomId,uid); }
-  private roomRegistrationConfig(room:Row) {return JSON.stringify({contestUrl:room.contest_url,startsAt:room.starts_at,freezeMinutes:room.freeze_minutes??0,scoringSystem:room.scoring_system||'ICPC'});}
+  private roomRegistrationConfig(room:Row) {return JSON.stringify({contestUrl:room.contest_url,startsAt:room.starts_at,freezeMinutes:room.freeze_minutes??0,scoringSystem:room.scoring_system||'ICPC',...(room.external_rank_url?{externalRankUrl:room.external_rank_url}:{})});}
   private snapshotMember(participantId:string,userId:string) {return Boolean(this.store.one("SELECT 1 FROM participants p,json_each(p.members_json) m WHERE p.id=? AND json_extract(m.value,'$.id')=?",participantId,userId));}
   private checkParticipantContext(body:Row,participant:Row,room:Row,operatorId?:string) {
     // A legacy first-sync snapshot has no server history to bind it to its old
@@ -187,6 +199,7 @@ export class CloudService {
     if(operatorId && (body.participantId===undefined || body.roomStartsAt===undefined) && this.store.one("SELECT 1 FROM participant_departures d JOIN participants p ON p.id=d.participant_id WHERE p.room_id=? AND p.id<>? AND (p.captain_id=? OR EXISTS(SELECT 1 FROM json_each(p.members_json) m WHERE json_extract(m.value,'$.id')=?))",room.id,participant.id,operatorId,operatorId))return fail(409,'参赛身份或比赛设置已改变，请先运行 xcpc update，再重新运行房间 VP 命令');
     if(body.participantId!==undefined && text(body.participantId,'参赛身份',80)!==participant.id)return fail(409,'参赛身份已改变，请重新运行房间 VP 命令');
     if(body.roomStartsAt!==undefined && iso(body.roomStartsAt,'房间开始时间')!==room.starts_at)return fail(409,'VP 房间开始时间已改变，请重新运行房间 VP 命令');
+    if(body.roomExternalRankUrl!==undefined && externalRankUrl(body.roomExternalRankUrl,room.scoring_system||'ICPC')!==(room.external_rank_url??null))return fail(409,'VP 房间外榜已改变，请重新运行房间 VP 命令');
   }
   private participantIdentity(row:Row):ParticipantIdentity {
     const members:User[]=JSON.parse(row.members_json);
@@ -202,10 +215,10 @@ export class CloudService {
     return legacyIdentity(row.participant_label,this.user(row.owner_id));
   }
   private participantView(row:Row) { return {id:row.id,type:row.type,userId:row.user_id,teamId:row.team_id,captainId:row.captain_id,label:row.label,...this.participantIdentity(row),members:JSON.parse(row.members_json)}; }
-  private room(roomId:string):Row { const row=this.store.one('SELECT r.*,rules.duration_seconds,rules.freeze_minutes,rules.scoring_system FROM rooms r LEFT JOIN room_rules rules ON rules.room_id=r.id WHERE r.id=?',roomId);if(!row)return fail(404,'VP 房间不存在');return row; }
+  private room(roomId:string):Row { const row=this.store.one('SELECT r.*,rules.duration_seconds,rules.freeze_minutes,rules.scoring_system,rules.external_rank_url FROM rooms r LEFT JOIN room_rules rules ON rules.room_id=r.id WHERE r.id=?',roomId);if(!row)return fail(404,'VP 房间不存在');return row; }
   private visibleRoom(roomId:string,user:User):Row {const room=this.room(roomId);if(room.creator_id!==user.id && !this.participant(roomId,user.id))return fail(403,'你尚未接受此 VP 房间的邀请');return room;}
   private manager(roomId:string,user:User):Row {const room=this.room(roomId);if(room.creator_id!==user.id)return fail(403,'只有创建者可以管理 VP 房间');return room;}
-  private roomView(room:Row,user:User) {const p=this.participant(room.id,user.id),rules=this.store.one('SELECT duration_seconds,freeze_minutes,scoring_system FROM room_rules WHERE room_id=?',room.id);return {id:room.id,name:room.name,contestUrl:room.contest_url,startsAt:room.starts_at,...roomTiming({...room,...rules}),scoringSystem:rules?.scoring_system||'ICPC',createdBy:room.creator_id,createdAt:room.created_at,canManage:room.creator_id===user.id,participants:this.store.all('SELECT p.* FROM participants p WHERE room_id=? AND NOT EXISTS(SELECT 1 FROM participant_departures d WHERE d.participant_id=p.id) ORDER BY created_at',room.id).map(p=>this.participantView(p)),participation:p?this.participantView(p):null,serverNow:now()};}
+  private roomView(room:Row,user:User) {const p=this.participant(room.id,user.id),rules=this.store.one('SELECT duration_seconds,freeze_minutes,scoring_system,external_rank_url FROM room_rules WHERE room_id=?',room.id);return {id:room.id,name:room.name,contestUrl:room.contest_url,startsAt:room.starts_at,...roomTiming({...room,...rules}),scoringSystem:rules?.scoring_system||'ICPC',externalRankUrl:rules?.external_rank_url??null,createdBy:room.creator_id,createdAt:room.created_at,canManage:room.creator_id===user.id,participants:this.store.all('SELECT p.* FROM participants p WHERE room_id=? AND NOT EXISTS(SELECT 1 FROM participant_departures d WHERE d.participant_id=p.id) ORDER BY created_at',room.id).map(p=>this.participantView(p)),participation:p?this.participantView(p):null,serverNow:now()};}
   private withdrawRoom(roomId:string,user:User,body:Row,participantId?:string) {
     return this.store.transaction(()=>{
       const room=participantId?this.manager(roomId,user):this.room(roomId);
@@ -341,13 +354,13 @@ export class CloudService {
     if(row.owner_id!==user.id && (!row.participant_id || !this.snapshotMember(row.participant_id,user.id)))return fail(404,'比赛记录不存在或无权恢复');
     if(!this.restoreEnded(row))return fail(409,'本场比赛尚未结束，不能恢复为补题');
     const saved=JSON.parse(row.rules_json||'{}'),rules:Row={};
-    for(const key of ['duration','penalty_minutes','compile_penalty','freeze_minutes','scoring','score_policy','problem_max_scores','contest_format','problem_reveal_count'])if(saved[key]!==undefined)rules[key]=saved[key];
+    for(const key of ['duration','penalty_minutes','penalty_rounding','compile_penalty','freeze_minutes','scoring','score_policy','problem_max_scores','contest_format','problem_reveal_count'])if(saved[key]!==undefined)rules[key]=saved[key];
     const room=row.room_id?this.room(row.room_id):undefined;
     const recordView=(history:Row):Row[]=>JSON.parse(history.submissions_json).filter((s:Row)=>Date.parse(s.submittedAt)<=Date.now()).map((s:Row)=>({id:s.id,problem:s.problem,submittedAt:s.submittedAt,verdict:s.verdict,practice:s.practice===true,language:submissionLanguage(s.language),...(s.points===undefined?{}:{points:s.points})}));
     // Explicit outbound allowlist: no judge credentials, local paths, source
     // files, association passwords, or other teams' records can be restored.
     const submissions=recordView(row),personal=this.store.one("SELECT * FROM histories WHERE owner_id=? AND contest_url=? AND mode='bt' AND room_id IS NULL AND id<>? ORDER BY created_at DESC,id DESC LIMIT 1",user.id,row.contest_url,row.id);
-    return {historyId:row.id,localId:row.local_id,isOwner:row.owner_id===user.id,roomId:row.room_id,roomName:room?.name??null,participantId:row.participant_id,
+    return {historyId:row.id,localId:row.local_id,isOwner:row.owner_id===user.id,roomId:row.room_id,roomName:room?.name??null,externalRankUrl:room?.external_rank_url??null,participantId:row.participant_id,
       participantType:row.participant_id?this.store.one('SELECT type FROM participants WHERE id=?',row.participant_id)?.type||'individual':'individual',
       ...this.historyIdentity(row),mode:row.mode,startedAt:row.started_at,endedAt:room?roomTiming(room).endsAt:row.ended_at,
       rank:historyRank(row,room,false),revision:row.revision,updatedAt:row.updated_at,
@@ -370,6 +383,7 @@ export class CloudService {
       if(!c.rules || typeof c.rules!=='object' || Array.isArray(c.rules))return fail(400,'比赛规则无效');
       if(c.rules.duration!==undefined) {rules.duration=number(c.rules.duration,'比赛时长',7*86400);if(!Number.isInteger(rules.duration)||rules.duration<1)return fail(400,'比赛时长必须为正整数秒');}
       if(c.rules.penalty_minutes!==undefined)rules.penalty_minutes=number(c.rules.penalty_minutes,'错误提交罚时',1000);
+      if(c.rules.penalty_rounding!==undefined) {if(!['per_problem','total_seconds'].includes(c.rules.penalty_rounding))return fail(400,'罚时取整方式无效');rules.penalty_rounding=c.rules.penalty_rounding;}
       if(c.rules.compile_penalty!==undefined && typeof c.rules.compile_penalty!=='boolean')return fail(400,'编译错误罚时配置无效');
       rules.compile_penalty=c.rules.compile_penalty===true;
       if(c.rules.freeze_minutes!==undefined)rules.freeze_minutes=number(c.rules.freeze_minutes,'封榜分钟数',7*24*60);
@@ -581,7 +595,7 @@ export class CloudService {
     if(segments[0]==='notifications' && segments.length===3 && segments[2]==='respond' && method==='POST')return {data:this.respond(segments[1],user,body)};
     if(path==='rooms') {
       if(method==='GET')return {data:this.store.all('SELECT DISTINCT r.* FROM rooms r LEFT JOIN participant_members m ON m.room_id=r.id WHERE r.creator_id=? OR m.user_id=? ORDER BY r.created_at DESC,r.id DESC',user.id,user.id).map(r=>this.roomView(r,user))};
-      if(method==='POST') {const name=text(body.name,'VP名称',200),url=contestUrl(body.contestUrl,true),startsAt=iso(body.startsAt,'开始时间'),freeze=freezeMinutes(body.freezeMinutes),system=scoringSystem(body.scoringSystem,url);if(Date.parse(startsAt)<=Date.now())return fail(400,'开始时间必须晚于当前时间');const rid=id();this.store.transaction(()=>{this.store.run('INSERT INTO rooms(id,name,contest_url,starts_at,creator_id,created_at) VALUES(?,?,?,?,?,?)',rid,name,url,startsAt,user.id,now());this.store.run('INSERT INTO room_rules(room_id,duration_seconds,freeze_minutes,scoring_system) VALUES(?,?,?,?)',rid,0,freeze,system);this.audit(user,'room.create',rid);});return {data:this.roomView(this.room(rid),user)};}
+      if(method==='POST') {const name=text(body.name,'VP名称',200),url=contestUrl(body.contestUrl,true),startsAt=iso(body.startsAt,'开始时间'),freeze=freezeMinutes(body.freezeMinutes),system=scoringSystem(body.scoringSystem,url),rankUrl=externalRankUrl(body.externalRankUrl,system);if(Date.parse(startsAt)<=Date.now())return fail(400,'开始时间必须晚于当前时间');const rid=id();this.store.transaction(()=>{this.store.run('INSERT INTO rooms(id,name,contest_url,starts_at,creator_id,created_at) VALUES(?,?,?,?,?,?)',rid,name,url,startsAt,user.id,now());this.store.run('INSERT INTO room_rules(room_id,duration_seconds,freeze_minutes,scoring_system,external_rank_url) VALUES(?,?,?,?,?)',rid,0,freeze,system,rankUrl);this.audit(user,'room.create',rid);});return {data:this.roomView(this.room(rid),user)};}
     }
     if(segments[0]==='rooms' && segments.length>=2) {
       const rid=segments[1];
@@ -593,9 +607,10 @@ export class CloudService {
           const url=body.contestUrl===undefined?room.contest_url:contestUrl(body.contestUrl,true),startsAt=body.startsAt===undefined?room.starts_at:iso(body.startsAt,'开始时间');
           const freeze=body.freezeMinutes===undefined?(room.freeze_minutes??0):freezeMinutes(body.freezeMinutes),system=body.scoringSystem===undefined?(room.scoring_system||'ICPC'):scoringSystem(body.scoringSystem,url);
           scoringSystem(system,url);
-          if((url!==room.contest_url || startsAt!==room.starts_at || freeze!==(room.freeze_minutes??0) || system!==(room.scoring_system||'ICPC')) && this.store.one('SELECT 1 FROM histories WHERE room_id=?',rid))return fail(409,'已有客户端预约此 VP，不能更改比赛、开始时间或封榜设置');
+          const rankUrl=externalRankUrl(body.externalRankUrl===undefined?room.external_rank_url:body.externalRankUrl,system);
+          if((url!==room.contest_url || startsAt!==room.starts_at || freeze!==(room.freeze_minutes??0) || system!==(room.scoring_system||'ICPC') || rankUrl!==(room.external_rank_url??null)) && this.store.one('SELECT 1 FROM histories WHERE room_id=?',rid))return fail(409,'已有客户端预约此 VP，不能更改比赛、开始时间、赛制、封榜或外榜设置');
           if(Date.parse(startsAt)<=Date.now())return fail(400,'开始时间必须晚于当前时间');
-          this.store.transaction(()=>{this.store.run('UPDATE rooms SET name=?,contest_url=?,starts_at=? WHERE id=?',body.name===undefined?room.name:text(body.name,'VP名称',200),url,startsAt,rid);this.store.run('INSERT INTO room_rules(room_id,duration_seconds,freeze_minutes,scoring_system) VALUES(?,?,?,?) ON CONFLICT(room_id) DO UPDATE SET duration_seconds=excluded.duration_seconds,freeze_minutes=excluded.freeze_minutes,scoring_system=excluded.scoring_system',rid,url===room.contest_url?(room.duration_seconds??0):0,freeze,system);this.audit(user,'room.update',rid);});return {data:this.roomView(this.room(rid),user)};
+          this.store.transaction(()=>{this.store.run('UPDATE rooms SET name=?,contest_url=?,starts_at=? WHERE id=?',body.name===undefined?room.name:text(body.name,'VP名称',200),url,startsAt,rid);this.store.run('INSERT INTO room_rules(room_id,duration_seconds,freeze_minutes,scoring_system,external_rank_url) VALUES(?,?,?,?,?) ON CONFLICT(room_id) DO UPDATE SET duration_seconds=excluded.duration_seconds,freeze_minutes=excluded.freeze_minutes,scoring_system=excluded.scoring_system,external_rank_url=excluded.external_rank_url',rid,url===room.contest_url?(room.duration_seconds??0):0,freeze,system,rankUrl);this.audit(user,'room.update',rid);});return {data:this.roomView(this.room(rid),user)};
         }
       }
       if(segments.length===3 && segments[2]==='invitations' && method==='POST')return {data:this.inviteRoom(rid,user,body)};
@@ -632,7 +647,7 @@ export class CloudService {
     }
     if(segments[0]==='history' && segments.length===2 && method==='GET') {const h=this.store.one('SELECT * FROM histories WHERE id=?',segments[1]);if(!h||!this.historyVisible(h,user,true))return fail(404,'比赛记录不存在或无权查看');return {data:this.historyView(h,true,user)};}
     if(segments[0]==='client') {
-      if(segments.length===4 && segments[1]==='rooms' && segments[3]==='authorize' && method==='POST') {const room=this.visibleRoom(segments[2],user),p=this.participant(room.id,user.id);if(!p)return fail(403,'请先接受 VP 参赛邀请');const history=this.store.one('SELECT * FROM histories WHERE participant_id=?',p.id);return {data:{room:{id:room.id,name:room.name,contestUrl:room.contest_url,startsAt:room.starts_at,freezeMinutes:room.freeze_minutes??0,scoringSystem:room.scoring_system||'ICPC'},participant:this.participantView(p),canSubmit:p.captain_id===user.id,canRestore:Boolean(history&&this.restoreEnded(history)),serverNow:now()}};}
+      if(segments.length===4 && segments[1]==='rooms' && segments[3]==='authorize' && method==='POST') {const room=this.visibleRoom(segments[2],user),p=this.participant(room.id,user.id);if(!p)return fail(403,'请先接受 VP 参赛邀请');const history=this.store.one('SELECT * FROM histories WHERE participant_id=?',p.id);return {data:{room:{id:room.id,name:room.name,contestUrl:room.contest_url,startsAt:room.starts_at,freezeMinutes:room.freeze_minutes??0,scoringSystem:room.scoring_system||'ICPC',externalRankUrl:room.external_rank_url??null},participant:this.participantView(p),canSubmit:p.captain_id===user.id,canRestore:Boolean(history&&this.restoreEnded(history)),serverNow:now()}};}
       if(segments.length===4 && segments[1]==='rooms' && segments[3]==='restore' && method==='POST') {const room=this.visibleRoom(segments[2],user),p=this.participant(room.id,user.id);if(!p)return fail(403,'请先接受 VP 参赛邀请');const history=this.store.one('SELECT * FROM histories WHERE participant_id=?',p.id);if(!history)return fail(404,'此参赛记录尚未同步到云端，请让队长先同步');return {data:this.restoreView(history,user)};}
       if(path==='client/restore' && method==='POST') {const url=contestUrl(body.contestUrl),histories=this.store.all('SELECT h.* FROM histories h WHERE h.contest_url=? AND (h.owner_id=? OR EXISTS(SELECT 1 FROM participants p,json_each(p.members_json) m WHERE p.id=h.participant_id AND json_extract(m.value,\'$.id\')=?)) ORDER BY CASE WHEN h.mode=\'bt\' THEN 1 ELSE 0 END,h.created_at DESC,h.id DESC',url,user.id,user.id);const history=histories.find(h=>this.restoreEnded(h));return {data:{snapshot:history?this.restoreView(history,user):null}};}
       if(path==='client/sync' && method==='POST')return {data:this.sync(user,body)};

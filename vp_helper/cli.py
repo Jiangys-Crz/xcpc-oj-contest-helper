@@ -590,6 +590,8 @@ def monitor(path: Path) -> None:
             api.seed_submissions(list(submissions.values()))
         receipts = ReceiptReader(path, state)
         reference = Reference()
+        from .external_rank import ManualRank
+        manual_rank = ManualRank(path, contest)
         last_poll = 0.0
         next_poll = next_reference = 0.0
         backoff = 5.0
@@ -641,21 +643,31 @@ def monitor(path: Path) -> None:
                     pending = any(s.verdict == "PENDING" for s in submissions.values())
                     backoff = min(60.0, max(5.0, backoff * 2)) if error and incoming is None else 2.0 if pending else 5.0
                     next_poll = now + backoff
+                manual_reference = manual_rank.reference(contest, scoring_elapsed)
+                if state['contest']['rules'].get('penalty_rounding', 'per_problem') != contest.rules.penalty_rounding:
+                    state['contest'] = contest.to_dict()
+                    save_state(path, state)
                 if reference_future is not None and reference_future.done():
-                    refreshed, reference_error = reference_future.result()
+                    refreshed, error = reference_future.result()
                     reference_future = None
-                    if refreshed is not None:
-                        reference = refreshed
+                    if manual_reference is None:
+                        reference_error = error
+                        if refreshed is not None:
+                            reference = refreshed
                     next_reference = now + 30
                 if future is None and now >= next_poll:
                     poll_revision = reserve_submission_sync(path)
                     from .pending_results import seed_pending
                     seed_pending(api, contest.platform, list(submissions.values()))
                     future = network.submit(poll, api, contest, elapsed)
-                if reference_future is None and now >= next_reference:
+                if manual_reference is None and reference_future is None and now >= next_reference:
                     reference_future = network.submit(poll, reference_api, contest, scoring_elapsed, True)
-                current_reference = (reference.replay.at(contest, scoring_elapsed, released=reference.released)
-                                     if reference.replay is not None else reference)
+                if manual_reference is not None:
+                    reference_error = ''
+                    current_reference = manual_reference
+                else:
+                    current_reference = (reference.replay.at(contest, scoring_elapsed, released=reference.released)
+                                         if reference.replay is not None else reference)
                 frozen = contest.rules.frozen(scoring_elapsed, current_reference.released)
                 # Rebuild from canonical submissions, including when resuming old
                 # state or offline. Discovery order is not submission chronology.

@@ -52,6 +52,7 @@ CREATE INDEX IF NOT EXISTS rooms_creation ON rooms(created_at DESC,id DESC);`);
     const ruleColumns = new Set((this.db.prepare('PRAGMA table_info(room_rules)').all() as Row[]).map(c => c.name));
     if (!ruleColumns.has('freeze_minutes')) this.db.exec('ALTER TABLE room_rules ADD COLUMN freeze_minutes INTEGER NOT NULL DEFAULT 0');
     if (!ruleColumns.has('scoring_system')) this.db.exec("ALTER TABLE room_rules ADD COLUMN scoring_system TEXT NOT NULL DEFAULT 'ICPC'");
+    if (!ruleColumns.has('external_rank_url')) this.db.exec('ALTER TABLE room_rules ADD COLUMN external_rank_url TEXT');
     if (path !== ':memory:') chmodSync(path, 0o600);
   }
   one(sql: string, ...params: any[]): Row | undefined { return this.db.prepare(sql).get(...params) as Row | undefined; }
