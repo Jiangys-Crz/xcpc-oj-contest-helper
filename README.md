@@ -1,5 +1,7 @@
 # CWNU XCPC Vp System
 
+本项目基于 [thedyingkai/vp-helper](https://github.com/thedyingkai/vp-helper) 进行修改与扩展开发。感谢原作者 [thedyingkai](https://github.com/thedyingkai) 的开源工作，为本项目的后续开发提供了基础。
+
 线上组队、多队虚拟赛、训练历史与队内虚拟打印，配合原有终端完成原站参赛和提交。网站使用 Next.js 全栈，终端继续支持 Ubuntu、macOS 和 Windows。
 
 当前版本：**0.9.24**。源码与后续提交：[GitHub 仓库](https://github.com/Zyihan-Crz/xcpc-oj-contest-helper)。线上地址：[CWNU XCPC Vp System](https://vp.cwnupaa.com)。
