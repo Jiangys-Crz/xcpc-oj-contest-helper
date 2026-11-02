@@ -43,14 +43,14 @@ def _sync_reader(path: str, binding: str):
     return ManualRank(Path(path), Contest.from_dict(json.loads(binding)))
 
 
-def sync_reference(path: Path, contest: Contest, elapsed: float):
+def sync_reference(path: Path, contest: Contest, elapsed: float, *, final: bool = False):
     """Replay the attached board even when no dashboard process is running."""
     binding = contest.to_dict()
     binding['extra'] = {key: value for key, value in contest.extra.items()
                         if key in ('scoring', 'external_rank_native_rounding')}
     with _SYNC_LOCK:
         reader = _sync_reader(str(path.resolve()), json.dumps(binding, sort_keys=True))
-        reference = reader.reference(contest, elapsed)
+        reference = reader.reference(contest, elapsed, final=final)
         return reader.source, reference
 
 
@@ -162,8 +162,8 @@ def current_attempt() -> tuple[Path, dict]:
         if match is None or not here.is_relative_to(Path(match[1]['directory']).resolve()):
             raise VPError('当前目录未绑定有效比赛记录。')
         path, state = match
-        if state.get('mode', 'vp') != 'vp' or state.get('status') in ('failed', 'cancelled'):
-            raise VPError('请在有效 VP 的比赛目录运行 xcpc rank。')
+        if state.get('mode', 'vp') not in ('vp', 'live') or state.get('status') in ('failed', 'cancelled'):
+            raise VPError('请在有效 VP 或 ICPC live 的比赛目录运行 xcpc rank。')
         return path, state
     raise VPError('请进入 VP 比赛目录或其子目录，再运行 xcpc rank。')
 
@@ -202,7 +202,7 @@ class ManualRank:
         self.active = False
         self.source = None
 
-    def reference(self, contest: Contest, elapsed: float) -> Reference | None:
+    def reference(self, contest: Contest, elapsed: float, *, final: bool = False) -> Reference | None:
         try:
             stat = self.path.stat()
         except FileNotFoundError:
@@ -235,4 +235,5 @@ class ManualRank:
         contest.extra['external_rank_native_rounding'] = self.original_rounding
         contest.extra['external_rank_native_medals'] = asdict(self.original_medals) if self.original_medals else None
         contest.rules.penalty_rounding = self.rounding
-        return self.replay.at(contest, elapsed, released=elapsed >= contest.rules.duration)
+        return self.replay.at(contest, contest.rules.duration if final else elapsed,
+                              released=final or elapsed >= contest.rules.duration)

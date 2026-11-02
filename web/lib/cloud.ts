@@ -322,6 +322,13 @@ export class CloudService {
     const publicProblemStatistics=problems.map(problem=>({label:revealed.has(problem)?problem:null,submitted:stats?.submitted?.[problem]??null,attempted:stats?.attempted?.[problem]??null,accepted:stats?.accepted?.[problem]??null})).sort((a,b)=>a.label && b.label?a.label.localeCompare(b.label,'en',{numeric:true}):a.label?-1:b.label?1:(b.accepted??-1)-(a.accepted??-1)||(b.attempted??-1)-(a.attempted??-1)||(b.submitted??-1)-(a.submitted??-1));
     return {publicProblemStatistics,statisticsAt:reference?.statistics_at??null,statisticsSource:reference?.statistics_source||'unavailable'};
   }
+  private historyPrize(row:Row) {
+    if(row.mode==='bt' || !row.external_rank_url)return {prize:null,prizeSource:'unavailable'};
+    const ended=['complete','archived'].includes(row.status) && this.restoreEnded(row);
+    if(row.mode==='bt' || !ended || !row.external_rank_url)return {prize:null,prizeSource:'unavailable'};
+    const valid=row.rank_source==='original' && row.prize_source==='original' && ['Gold','Silver','Bronze','None'].includes(row.prize);
+    return {prize:valid?row.prize:'Unknown',prizeSource:valid?'original':'unavailable'};
+  }
   private historyView(row:Row, details=false, viewer?:User, publicBoard=false) {
     const participantType=row.participant_id?this.store.one('SELECT type FROM participants WHERE id=?',row.participant_id)?.type||'individual':'individual';
     const room=row.room_id?this.store.one('SELECT r.*,rules.duration_seconds,rules.freeze_minutes,rules.scoring_system,rules.external_rank_url FROM rooms r LEFT JOIN room_rules rules ON rules.room_id=r.id WHERE r.id=?',row.room_id):undefined,timing=room?roomTiming(room):undefined;
@@ -332,7 +339,7 @@ export class CloudService {
     const rules=JSON.parse(row.rules_json||'{}');
     if(frozen && rules.score_policy!=='subtasks' && filtered?.points!==undefined && row.freeze_points!==null && row.freeze_points!==undefined && row.freeze_event_points!==null && row.freeze_event_points!==undefined)filtered.points+=row.freeze_points-row.freeze_event_points;
     else if(frozen && filtered && (filtered.points===undefined || row.freeze_event_points===null) && row.freeze_points!==null && row.freeze_points!==undefined)filtered.points=row.freeze_points;
-    const value={id:row.id,participantType,...this.historyIdentity(row),contestName:room?.name||row.contest_name,contestUrl:row.contest_url,externalRankUrl:row.external_rank_url??room?.external_rank_url??null,platform:row.platform,mode:row.mode,rank:historyRank(row,room,frozen),rankSource:row.mode==='bt'?'unavailable':frozen?(row.freeze_rank_source==='original'?'original':'unavailable'):row.rank_source||'legacy',solved:filtered?.solved??row.solved,penalty:row.mode==='bt'?0:filtered?.penalty??row.penalty,points:row.mode==='bt'?null:filtered?filtered.points??null:row.points??null,scoring:rules.scoring||'ICPC',problems:JSON.parse(row.problems_json),cells:filtered?.cells??JSON.parse(row.cells_json),startedAt:row.mode==='bt'?null:row.started_at,endedAt:row.mode==='bt'?null:row.ended_at,participantLabel:row.participant_label,roomId:row.room_id,status:row.status,createdAt:row.created_at,updatedAt:row.updated_at,rules,...(timing?{...timing,freezeActive:timing.frozen,frozen}: {frozen:false})};
+    const value={id:row.id,...this.historyPrize(row),participantType,...this.historyIdentity(row),contestName:room?.name||row.contest_name,contestUrl:row.contest_url,externalRankUrl:row.external_rank_url??room?.external_rank_url??null,platform:row.platform,mode:row.mode,rank:historyRank(row,room,frozen),rankSource:row.mode==='bt'?'unavailable':frozen?(row.freeze_rank_source==='original'?'original':'unavailable'):row.rank_source||'legacy',solved:filtered?.solved??row.solved,penalty:row.mode==='bt'?0:filtered?.penalty??row.penalty,points:row.mode==='bt'?null:filtered?filtered.points??null:row.points??null,scoring:rules.scoring||'ICPC',problems:JSON.parse(row.problems_json),cells:filtered?.cells??JSON.parse(row.cells_json),startedAt:row.mode==='bt'?null:row.started_at,endedAt:row.mode==='bt'?null:row.ended_at,participantLabel:row.participant_label,roomId:row.room_id,status:row.status,createdAt:row.created_at,updatedAt:row.updated_at,rules,...(timing?{...timing,freezeActive:timing.frozen,frozen}: {frozen:false})};
     const statistics=row.mode!=='bt' || row.statistics_json?this.statisticsView(room||{starts_at:row.started_at||now(),duration_seconds:rules.duration,freeze_minutes:rules.freeze_minutes,scoring_system:rules.contest_format},[row],JSON.parse(row.problems_json),at):{};
     return details?{...value,...statistics,submissions:(filtered?.submissions??submissions.filter(s=>Date.parse(s.submittedAt)<=at)).map(s=>({...s,language:submissionLanguage(s.language)}))}:value;
   }
@@ -360,7 +367,7 @@ export class CloudService {
     // Explicit outbound allowlist: no judge credentials, local paths, source
     // files, association passwords, or other teams' records can be restored.
     const submissions=recordView(row),personal=this.store.one("SELECT * FROM histories WHERE owner_id=? AND contest_url=? AND mode='bt' AND room_id IS NULL AND id<>? ORDER BY created_at DESC,id DESC LIMIT 1",user.id,row.contest_url,row.id);
-    return {historyId:row.id,localId:row.local_id,isOwner:row.owner_id===user.id,roomId:row.room_id,roomName:room?.name??null,externalRankUrl:row.external_rank_url??room?.external_rank_url??null,participantId:row.participant_id,
+    return {historyId:row.id,...this.historyPrize(row),localId:row.local_id,isOwner:row.owner_id===user.id,roomId:row.room_id,roomName:room?.name??null,externalRankUrl:row.external_rank_url??room?.external_rank_url??null,participantId:row.participant_id,
       participantType:row.participant_id?this.store.one('SELECT type FROM participants WHERE id=?',row.participant_id)?.type||'individual':'individual',
       ...this.historyIdentity(row),mode:row.mode,startedAt:row.started_at,endedAt:room?roomTiming(room).endsAt:row.ended_at,
       rank:historyRank(row,room,false),revision:row.revision,updatedAt:row.updated_at,
@@ -445,7 +452,9 @@ export class CloudService {
     if(status==='failed')startedAt=null;
     if(startedAt && endedAt && endedAt<startedAt) {if(['failed','cancelled'].includes(status))startedAt=null;else return fail(400,'结束时间不能早于开始时间');}
     const externalSource=body.externalRankUrl===undefined?undefined:externalRankUrl(body.externalRankUrl,rules.contest_format||rules.scoring||'ICPC');
-    return {localId,url,mode,status,platform,name,problems,rules,externalRankUrl:externalSource,cells,submissions,publicStatistics,revealedProblems,statisticsAt,statisticsSource,startedAt,endedAt,createdAt,rankSource,rank:mode==='bt'?'—':text(String(body.rank??'—'),'原站排名',100),solved:number(body.solved,'解决题数',100),penalty:mode==='bt'?0:number(body.penalty,'罚时'),points:mode==='bt'||body.points===undefined?null:score(body.points),revision:number(body.revision,'同步版本',Number.MAX_SAFE_INTEGER)};
+    if(body.prize!==undefined && body.prize!==null && !['Gold','Silver','Bronze','None','Unknown'].includes(body.prize))return fail(400,'奖项无效');
+    if(body.prizeSource!==undefined && !['original','unavailable'].includes(body.prizeSource))return fail(400,'奖项来源无效');
+    return {localId,url,mode,status,platform,name,problems,rules,externalRankUrl:externalSource,prize:body.prize,prizeSource:body.prizeSource??'unavailable',cells,submissions,publicStatistics,revealedProblems,statisticsAt,statisticsSource,startedAt,endedAt,createdAt,rankSource,rank:mode==='bt'?'—':text(String(body.rank??'—'),'原站排名',100),solved:number(body.solved,'解决题数',100),penalty:mode==='bt'?0:number(body.penalty,'罚时'),points:mode==='bt'||body.points===undefined?null:score(body.points),revision:number(body.revision,'同步版本',Number.MAX_SAFE_INTEGER)};
   }
   private sync(user:User,body:Row) {
     const data=this.sanitizeSnapshot(body);
@@ -536,6 +545,14 @@ export class CloudService {
       this.store.run('UPDATE histories SET status=?,rank_source=?,participant_title=?,participant_subtitle=?,external_rank_url=? WHERE id=?',preserveRank && ['complete','archived'].includes(old?.status) && data.status==='running'?old!.status:data.status,rankSource,identity.participantTitle,identity.participantSubtitle,externalSource,hid);
       const rules=effectiveRules;
       this.store.run('UPDATE histories SET rules_json=?,points=? WHERE id=?',JSON.stringify(rules),practiceContinuation?old!.points:data.points??old?.points??null,hid);
+      const latest=this.store.one('SELECT * FROM histories WHERE id=?',hid)!;
+      const ended=['complete','archived'].includes(latest.status) && this.restoreEnded(latest);
+      const keepPrize=Boolean(old && sameRankBoard && (data.prize===undefined || preserveRank && old.prize_source==='original'));
+      const validPrize=ended && externalSource && rankSource==='original' && data.prizeSource==='original'
+        && ['Gold','Silver','Bronze','None'].includes(data.prize) && String(data.rank).replace(/^=/,'')===String(rank).replace(/^=/,'');
+      const prize=keepPrize?old!.prize:validPrize?data.prize:null;
+      const prizeSource=keepPrize?old!.prize_source:validPrize?'original':'unavailable';
+      this.store.run('UPDATE histories SET prize=?,prize_source=? WHERE id=?',prize,prizeSource,hid);
       const statisticsTiming=room?roomTiming(room):null;
       const statisticsCutoff=statisticsTiming?.frozen && statisticsTiming.freezeAt?Date.parse(statisticsTiming.freezeAt):Infinity;
       if(data.statisticsSource==='unavailable')this.store.run('UPDATE histories SET statistics_json=NULL,revealed_problems_json=NULL,statistics_at=NULL,statistics_source=? WHERE id=?','unavailable',hid);
@@ -638,7 +655,7 @@ export class CloudService {
         const rows=histories.map(r=>{
           const view=r.id?this.historyView(r,false,user,true):undefined;
           const identity=this.participantIdentity({label:r.participant_name,type:r.participant_type,members_json:r.participant_members_json});
-          return {participantId:r.participant_key,label:r.participant_name,...identity,rank:view?.rank||'—',rankSource:view?.rankSource||'unavailable',solved:view?.solved??0,penalty:view?.penalty??0,points:view?.points??null,scoring:view?.scoring||(['OI','IOI'].includes(room.scoring_system)?room.scoring_system:'ICPC'),cells:view?.cells||{},historyId:r.id,lastSyncedAt:r.updated_at,status:r.status||'scheduled',frozen:view?.frozen||false,canViewHistory:Boolean(r.id && this.historyVisible(r,user,true))};
+          return {participantId:r.participant_key,label:r.participant_name,...identity,rank:view?.rank||'—',rankSource:view?.rankSource||'unavailable',prize:view?.prize??null,prizeSource:view?.prizeSource||'unavailable',solved:view?.solved??0,penalty:view?.penalty??0,points:view?.points??null,scoring:view?.scoring||(['OI','IOI'].includes(room.scoring_system)?room.scoring_system:'ICPC'),cells:view?.cells||{},historyId:r.id,lastSyncedAt:r.updated_at,status:r.status||'scheduled',frozen:view?.frozen||false,canViewHistory:Boolean(r.id && this.historyVisible(r,user,true))};
         }).sort((a,b)=>a.points!==null||b.points!==null?(b.points??0)-(a.points??0)||a.penalty-b.penalty:b.solved-a.solved||a.penalty-b.penalty);
         return {data:{room:this.roomView(room,user),...timing,rows,problems,...statistics,serverNow:now()}};
       }

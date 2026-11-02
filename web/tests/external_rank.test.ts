@@ -107,6 +107,28 @@ test('changing an unreserved external board prevents reusing a withdrawn native 
   assert.notEqual(changed.participant.id,original.participant.id);
 });
 
+test('final external prizes appear in history and restore and survive legacy and practice updates',async t=>{
+  const {api,login}=fixture(t),owner=await login('owner');
+  const start=EPOCH-600e3,data={localId:'prize-vp',mode:'vp',status:'running',startedAt:new Date(start).toISOString(),
+    contest:{url:'https://qoj.ac/contest/4613',name:'External prizes',problems:['A'],rules:{duration:18000,contest_format:'CCPC'}},
+    externalRankUrl:CCPC,rank:'41',rankSource:'original',prize:'Silver',prizeSource:'original',
+    solved:1,penalty:10,cells:{A:{tries:1,solved:true}},submissions:[],revision:1};
+  const saved=await api('POST','client/sync',owner.token,data);
+  assert.equal((await api('GET',`history/${saved.id}`,owner.token)).prize,null);
+  t.mock.timers.setTime(start+18000e3+1000);
+  await api('POST','client/sync',owner.token,{...data,status:'complete',endedAt:new Date().toISOString(),revision:2});
+  const final=await api('GET',`history/${saved.id}`,owner.token);
+  assert.equal(final.prize,'Silver');assert.equal(final.prizeSource,'original');
+  assert.equal((await api('GET','history',owner.token))[0].prize,'Silver');
+  assert.equal((await api('POST','client/restore',owner.token,{contestUrl:data.contest.url})).snapshot.prize,'Silver');
+  const legacy:any={...data,revision:3};delete legacy.prize;delete legacy.prizeSource;
+  await api('POST','client/sync',owner.token,legacy);
+  assert.equal((await api('GET',`history/${saved.id}`,owner.token)).prize,'Silver');
+  await api('POST','client/sync',owner.token,{...legacy,mode:'bt',rank:'—',rankSource:'unavailable',prize:null,revision:4});
+  assert.equal((await api('GET',`history/${saved.id}`,owner.token)).prize,'Silver');
+  await api('POST','client/sync',owner.token,{...data,prize:'<script>',revision:5},400);
+});
+
 test('legacy room rules migrate once to an empty external board without changing scheduling',t=>{
   const root=mkdtempSync(join(tmpdir(),'vp-rank-migration-')),path=join(root,'legacy.sqlite');
   t.after(()=>rmSync(root,{recursive:true,force:true}));

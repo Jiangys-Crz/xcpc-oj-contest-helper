@@ -347,15 +347,18 @@ def sync_payload(path, state):
     duration = contest.rules.duration
     mode = {'practice':'bt','live':'live'}.get(state.get('mode'), 'vp')
     scoring_elapsed = duration
+    finished = False
     external_source, external_reference = None, None
-    if mode == 'vp':
+    if mode in ('vp', 'live'):
         from .sessions import boundary
         from .external_rank import sync_reference
-        scoring_elapsed = min(duration, max(0, platform_now(state) - state['start_time']))
+        elapsed = platform_now(state) - state['start_time']
+        scoring_elapsed = min(duration, max(0, elapsed))
         cutoff = boundary(Path(path))
+        finished = elapsed >= duration or cutoff is not None and elapsed >= cutoff-state['start_time']
         if cutoff is not None:
             scoring_elapsed = min(scoring_elapsed, max(0, cutoff - state['start_time']))
-        external_source, external_reference = sync_reference(Path(path), contest, scoring_elapsed)
+        external_source, external_reference = sync_reference(Path(path), contest, scoring_elapsed, final=finished)
     imported = {str(item['id']) for item in state.get('restored_submissions', [])} if state.get('cloud_restore') and state.get('mode') == 'practice' else set()
     records = [dict(item) for item in state.get('submissions', []) if str(item['id']) not in imported]
     for event in records:
@@ -393,8 +396,24 @@ def sync_payload(path, state):
     elif mode == 'live':
         rank = state.get('practice_rank') or own.get('rank') or state.get('last_rank') or state.get('summary', {}).get('rank') or '—'
         rank_source = 'native' if str(rank) not in ('', '?', '—') else 'unavailable'
+        if finished and external_reference is not None:
+            from .ranking import original_rank
+            proof = original_rank(score, external_reference, contest.url)
+            rank = proof['rank'].lstrip('=') if proof else '—'
+            rank_source = 'original' if proof else 'unavailable'
     else:
         rank, rank_source = '—', 'unavailable'
+    prize, prize_source = None, 'unavailable'
+    if mode in ('vp', 'live') and finished and external_reference is not None:
+        prize = 'Unknown'
+        from .scoring import prize_of, UNRESOLVED_VERDICTS
+        judged = all(event.verdict not in UNRESOLVED_VERDICTS | {'PENDING'} for event in scoring_events(False)
+                     if 0 <= event.time <= scoring_elapsed)
+        complete = state.get('status') == 'complete' or state.get('submissions_complete') is True
+        if rank_source == 'original' and external_reference.released and judged and complete:
+            prize = prize_of(score, external_reference.rows, contest.medals)
+            if contest.medals is not None and prize != 'Unknown':
+                prize_source = 'original'
     for index, label in enumerate(contest.problems):
         native = own.get('problemResults', [])
         if index < len(native):
@@ -429,7 +448,8 @@ def sync_payload(path, state):
                         'scoring':scoring,'score_policy':'subtasks' if contest.extra.get('score_policy') == 'subtasks' else 'latest' if scoring == 'OI' else 'best',
                         'problem_max_scores':maxima,'contest_format':contest.extra.get('contest_format', 'ICPC'),
                         'problem_reveal_count':contest.rules.problem_reveal_count}},
-               'mode':mode,'status':state.get('status','running'),'rank':str(rank),'rankSource':rank_source,'solved':solved,
+               'mode':mode,'status':state.get('status','running'),'rank':str(rank),'rankSource':rank_source,
+               'prize':prize,'prizeSource':prize_source,'solved':solved,
                'penalty':0 if mode == 'bt' or scoring != 'ICPC' else _penalty(own.get('penalty'), score.penalty),'cells':cells,
                'submissions':[{'id':str(e['id']),'problem':e['problem'],'submittedAt':_iso(state['start_time']+e['time']),
                               'verdict':e['verdict'],'practice':e['practice'],
@@ -479,7 +499,7 @@ def sync_payload(path, state):
         payload['roomStartsAt'] = state['cloud']['startsAt']
         if 'externalRankUrl' in state['cloud']:
             payload['roomExternalRankUrl'] = state['cloud']['externalRankUrl']
-    if mode == 'vp' and (external_reference is None or external_source):
+    if mode in ('vp', 'live') and (external_reference is None or external_source):
         payload['externalRankUrl'] = external_source
     return payload
 

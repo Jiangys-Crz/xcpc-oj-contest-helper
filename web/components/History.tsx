@@ -4,7 +4,7 @@ import Link from 'next/link';
 import {ArrowUpRight,ChevronRight,Search} from 'lucide-react';
 import {useResource} from './api';
 import {Empty,ErrorBox,Legend,Loading,ModeBadge,PageHeader,ParticipationBadge} from './shared';
-import {ContestDetailView,DetailProblemCell,ParticipantIdentity,ProblemBadge} from './ContestDetail';
+import {ContestDetailView,DetailProblemCell,ParticipantIdentity,ProblemBadge,RankPrize} from './ContestDetail';
 import {TableFit} from './TableFit';
 import type {History} from './types';
 import {ResultColumns} from './ResultColumns';
@@ -15,7 +15,7 @@ export function HistoryResultsTable({items,problems}:{items:History[];problems:s
     <thead><tr><th scope="col" className="text-left contest-column">Contest</th><th scope="col">Mode</th><th scope="col">Participation</th><th scope="col">Rank</th><th scope="col">Solved</th><th scope="col">Penalty / Score</th>{problems.map(problem=><th scope="col" className="problem-heading" key={problem}><ProblemBadge problem={problem} order={problems}/></th>)}<th scope="col">Details</th></tr></thead>
     <tbody>{items.map(item=><tr key={item.id}>
       <td className="text-left"><Link className="contest-link" href={'/history/'+item.id}>{item.contestName}</Link><div className="row-subtitle"><ParticipantIdentity title={item.participantTitle} subtitle={item.participantSubtitle} label={item.participantLabel}/>{item.status==='failed'?' · Not started':item.status==='cancelled'?' · Cancelled':''}</div></td>
-      <td><ModeBadge mode={item.mode}/></td><td><ParticipationBadge type={item.participantType}/></td><td className="rank-value">{item.rank||'—'}</td><td className="metric-value">{item.mode==='bt'?'—':item.solved}</td><td>{item.mode==='bt'?'—':item.scoring&&item.scoring!=='ICPC'?item.points??'—':item.penalty}</td>
+      <td><ModeBadge mode={item.mode}/></td><td><ParticipationBadge type={item.participantType}/></td><td className="rank-value"><RankPrize rank={item.rank} prize={item.prize}/></td><td className="metric-value">{item.mode==='bt'?'—':item.solved}</td><td>{item.mode==='bt'?'—':item.scoring&&item.scoring!=='ICPC'?item.points??'—':item.penalty}</td>
       {problems.map(problem=><DetailProblemCell key={problem} label={problem} cell={item.cells[problem]}/>)}
       <td><Link className="table-action" href={'/history/'+item.id}>Details<ChevronRight size={13}/></Link></td>
     </tr>)}</tbody>

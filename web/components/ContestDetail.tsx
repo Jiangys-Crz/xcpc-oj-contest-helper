@@ -29,6 +29,13 @@ export function ParticipantIdentity({title,subtitle,label}:{title?:string;subtit
   return <div className="participant-identity"><strong>{title||label||'—'}</strong>{subtitle&&<small>{subtitle}</small>}</div>;
 }
 
+export function RankPrize({rank,prize}:{rank:string;prize?:string|null}){
+  const labels:Record<string,string>={Gold:'Gold Prize',Silver:'Silver Prize',Bronze:'Bronze Prize',None:'No Prize',Unknown:'Prize unavailable'};
+  const label=prize?labels[prize]:null;
+  if(!label)return <>{rank||'—'}</>;
+  return <div className="judge-rank-prize"><span>{rank||'—'}</span>{label&&<small className={'judge-prize judge-prize-'+prize!.toLowerCase()} aria-label={'Prize: '+label}>{label}</small>}</div>;
+}
+
 export function ContestDetailView({history,error='',onRetry,showTitle=true}:{history:History;error?:string;onRetry?:()=>void;showTitle?:boolean}){
   return <div className="judge-page judge-contest-detail" data-contest-detail={history.id}>
     {showTitle&&<TableFit compact center className="judge-contest-title"><h1>{history.contestName}</h1></TableFit>}
@@ -59,7 +66,7 @@ export function ContestScoreboard({history,summary=true}:{history:History;summar
     <TableFit compact center minimumWidth={(practice?150:330)+history.problems.length*42} className="judge-score-scroll"><table className="data-table scoreboard judge-scoreboard fit-table compact-result-table" data-dense={history.problems.length>16||undefined}><ResultColumns problems={history.problems} practice={practice} score={graded} rows={[{name:history.participantTitle||history.participantLabel,rank:history.rank,solved:history.solved,total:graded?history.points:history.penalty}]}/>
       <caption className="sr-only">Contest results for {history.participantLabel}</caption>
       <thead><tr>{!practice&&<th scope="col" className="judge-rank">Rank</th>}<th scope="col" className="judge-team">Team</th>{!practice&&<><th scope="col" className="judge-solved">Solved</th><th scope="col" className="judge-penalty">{graded?'Score':'Penalty'}</th></>}{history.problems.map(problem=><th scope="col" className="judge-problem-heading" key={problem}><ProblemBadge problem={problem} order={history.problems}/></th>)}</tr></thead>
-      <tbody><tr>{!practice&&<td className="rank-value">{history.rank||'—'}</td>}<td className="judge-team-name"><ParticipantIdentity title={history.participantTitle} subtitle={history.participantSubtitle} label={history.participantLabel}/></td>{!practice&&<><td className="metric-value">{history.solved}</td><td>{graded?history.points??'—':history.penalty}</td></>}{history.problems.map(problem=><DetailProblemCell key={problem} label={problem} cell={history.cells[problem]}/>)}</tr></tbody>
+      <tbody><tr>{!practice&&<td className="rank-value"><RankPrize rank={history.rank} prize={history.prize}/></td>}<td className="judge-team-name"><ParticipantIdentity title={history.participantTitle} subtitle={history.participantSubtitle} label={history.participantLabel}/></td>{!practice&&<><td className="metric-value">{history.solved}</td><td>{graded?history.points??'—':history.penalty}</td></>}{history.problems.map(problem=><DetailProblemCell key={problem} label={problem} cell={history.cells[problem]}/>)}</tr></tbody>
       {summary&&!practice&&<tfoot><tr className="judge-summary judge-summary-public"><th scope="row" colSpan={leadingColumns}>public</th>{history.problems.map((problem,i)=><td key={problem}>{publicColumns?publicColumns[i]?.label||'?':problem}</td>)}</tr>{(['submitted','attempted','accepted'] as const).map(kind=><tr className={'judge-summary judge-summary-'+kind} key={kind}><th scope="row" colSpan={leadingColumns}>{kind}</th>{history.problems.map((problem,i)=><td key={problem}>{publicColumns?.[i]?.[kind]??'—'}</td>)}</tr>)}</tfoot>}
     </table></TableFit>
   </section>;

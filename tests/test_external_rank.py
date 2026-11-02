@@ -89,15 +89,20 @@ class ExternalRankTests(unittest.TestCase):
                 self.assertEqual(path, self.path)
                 self.assertEqual(state['attempt_id'], 'one')
 
-    def test_unrelated_directory_and_non_vp_modes_are_rejected(self):
+    def test_unrelated_directory_and_practice_or_failed_sessions_are_rejected(self):
         write_json(state_directory() / 'current.json', {'state_path': str(self.path)})
         with patch('pathlib.Path.cwd', return_value=self.root), self.assertRaises(VPError):
             external_rank.current_attempt()
-        for change in ({'mode': 'practice'}, {'mode': 'live'}, {'status': 'failed'}, {'status': 'cancelled'}):
+        for change in ({'mode': 'practice'}, {'status': 'failed'}, {'status': 'cancelled'}):
             write_json(self.path, {**self.state, **change})
             with self.subTest(change=change), patch('pathlib.Path.cwd', return_value=Path(self.state['directory'])), \
                  self.assertRaises(VPError):
                 external_rank.current_attempt()
+
+    def test_icpc_live_session_can_select_an_external_board(self):
+        write_json(self.path,{**self.state,'mode':'live'})
+        with patch('pathlib.Path.cwd',return_value=Path(self.state['directory'])):
+            self.assertEqual(external_rank.current_attempt()[1]['mode'],'live')
 
     def test_copied_contest_config_cannot_rebind_other_directory(self):
         unrelated = self.root / 'copied'
@@ -212,6 +217,58 @@ class ExternalRankTests(unittest.TestCase):
             self.assertEqual((payload['rank'], payload['rankSource']), (rank, 'original'))
             self.assertEqual(payload['externalRankUrl'], PAGE)
         self.assertNotIn('reference_rank', read_json(self.path))
+
+    def test_cloud_prizes_use_final_board_only_after_natural_or_local_end(self):
+        payload=self.import_board()
+        payload['metadata']['medals']={'gold':1,'silver':1,'bronze':0}
+        write_json(external_rank.attachment_path(self.path),payload)
+        self.state['submissions']=[asdict(Submission('mine','me','A',90,'CORRECT'))]
+        with patch.object(cloud,'platform_now',return_value=1200):
+            live=cloud.sync_payload(self.path,self.state)
+        self.assertEqual(live['rank'],'1')
+        self.assertIsNone(live['prize'])
+        self.state['status']='complete'
+        with patch.object(cloud,'platform_now',return_value=20000):
+            final=cloud.sync_payload(self.path,self.state)
+        self.assertEqual((final['rank'],final['prize'],final['prizeSource']),('2','Silver','original'))
+        self.state.update(status='archived',ended_at=1200,submissions_complete=True)
+        write_json(self.path.with_suffix('.closed'),{'capture_until':1200})
+        with patch.object(cloud,'platform_now',return_value=1300):
+            stopped=cloud.sync_payload(self.path,self.state)
+        self.assertEqual((stopped['rank'],stopped['prize']),('2','Silver'))
+        self.path.with_suffix('.closed').unlink()
+        self.state.update(mode='live',status='running',snapshot={'own':{'rank':91}})
+        with patch.object(cloud,'platform_now',return_value=1200):
+            active_live=cloud.sync_payload(self.path,self.state)
+        self.assertEqual((active_live['rank'],active_live['rankSource'],active_live['prize']),('91','native',None))
+        self.state['status']='complete'
+        with patch.object(cloud,'platform_now',return_value=20000):
+            ended_live=cloud.sync_payload(self.path,self.state)
+        self.assertEqual((ended_live['rank'],ended_live['prize']),('2','Silver'))
+        self.state['submissions']=[asdict(Submission('mine','me','A',90,'PENDING'))]
+        self.assertNotEqual(cloud.sync_payload(self.path,self.state)['prizeSource'],'original')
+
+    def test_locally_ended_terminal_shows_final_external_rank_and_prize(self):
+        from test_cf_start_sync import ImmediatePool
+        payload=self.import_board();payload['metadata']['medals']={'gold':1,'silver':1,'bronze':0}
+        write_json(external_rank.attachment_path(self.path),payload)
+        incoming=[Submission('mine','me','A',90,'CORRECT')]
+        self.state.update(status='archived',ended_at=1200,submissions=[asdict(e) for e in incoming])
+        write_json(self.path,self.state);write_json(self.path.with_suffix('.closed'),{'capture_until':1200})
+        client=Mock(handle='tester',submissions_complete=True);client.submissions.return_value=incoming
+        view=Mock();view.__enter__=Mock(return_value=view);view.__exit__=Mock(return_value=False)
+        view.input.side_effect=[True]*6+[False]
+        with patch('pathlib.Path.cwd',return_value=Path(self.state['directory'])), \
+             patch.object(cli,'adapter',return_value=client),patch.object(cli,'TerminalDashboard',return_value=view), \
+             patch.object(cli,'ThreadPoolExecutor',ImmediatePool),patch('vp_helper.windows_terminal.track_monitor'), \
+             patch('time.sleep'),patch('time.monotonic',side_effect=iter(range(1,1000))), \
+             patch.object(cli,'platform_now',return_value=1300):
+            cli.monitor(self.path)
+        final=view.update.call_args.args[0]
+        self.assertEqual((final.rank,final.prize),('2','Silver'))
+        saved=read_json(self.path)
+        self.assertEqual(saved['summary']['prize'],'Silver')
+        self.assertEqual(saved['public_statistics']['accepted']['B'],1)
 
     def test_broken_manual_rank_does_not_upload_a_cached_native_rank(self):
         self.import_board()

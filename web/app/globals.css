@@ -347,3 +347,10 @@ input,select,textarea,label,.button,.filter-form select,.detail-grid dd,.team-me
 .history-list-panel>.table-footer{padding:13px 0;border-top:0}
 .status-dot.status-upcoming{background:#a4b68b}.status-dot.status-ongoing{background:#16a34a;box-shadow:0 0 0 3px #16a34a15}.status-dot.status-ended{background:#94a3b8;box-shadow:none}
 .countdown.countdown-ended{color:#64748b}
+
+/* Final external-scoreboard awards share the rank cell. */
+.judge-rank-prize{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;line-height:1.25}
+.judge-rank-prize .judge-prize{margin:0;font-size:11px;font-weight:600;white-space:nowrap;color:#6b7280}
+.judge-rank-prize .judge-prize-gold{color:#826200}
+.judge-rank-prize .judge-prize-silver{color:#576574}
+.judge-rank-prize .judge-prize-bronze{color:#875133}

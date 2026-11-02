@@ -318,7 +318,7 @@ class Dashboard:
     def fixed(self, width: int):
         # Equal side columns keep the contest title at the screen's center.
         sides = min(30, max(19, (width - 8) // 3))
-        prize = {"Gold": "Gold Prize", "Silver": "Silver Prize", "Bronze": "Bronze Prize"}.get(self.prize, "")
+        prize = {"Gold": "Gold Prize", "Silver": "Silver Prize", "Bronze": "Bronze Prize", "Unknown": "Prize unavailable"}.get(self.prize, "")
         if self.prize == "None" and self.contest.medals is not None:
             prize = "No Prize"
         result = str(self.rank).lstrip('=') + (f"\n{prize}" if prize else "")
@@ -525,6 +525,8 @@ class LiveDashboard:
     handle: str = ""
     practice: bool = False
     practice_rank: str | None = None
+    final_rank: str | None = None
+    prize: str = ''
     participant_label: str = ""
     participant_title: str = ''
     participant_subtitle: str = ''
@@ -608,7 +610,9 @@ class LiveDashboard:
         name = self.participant_label or name
         value = (str(int(own["points"])) if scoring == "ICPC" else f"{own['points']:g}") if own else "—"
         rank = self.practice_rank if self.practice else str(own['rank']) if own else '—'
-        values = [str(rank).lstrip('=') if rank is not None else '—',
+        rank = self.final_rank if self.final_rank is not None else rank
+        prize = {'Gold':'Gold Prize','Silver':'Silver Prize','Bronze':'Bronze Prize','None':'No Prize','Unknown':'Prize unavailable'}.get(self.prize, '')
+        values = [(str(rank).lstrip('=') if rank is not None else '—') + ('\n'+prize if prize else ''),
                   participant_text(self.participant_title, self.participant_subtitle, name)]
         values.append(value)
         if scoring == "ICPC":

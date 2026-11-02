@@ -37,6 +37,8 @@ External scoreboard selection is stored with room rules and returned as `externa
 
 Standalone VP sync also accepts `externalRankUrl`: a canonical supported public page URL, or null to clear the selection. Omission preserves an existing selection for older clients. History list/detail and restore responses expose the selection. An explicitly configured room board must match; invalid URLs never enter history. Active VP/live ranks follow successive snapshots until an actually ended, finalized result is preserved for practice continuation; a future `endedAt` alone does not finalize the rank.
 
+Completed external-board snapshots may include `prize` (`Gold`, `Silver`, `Bronze`, `None`, `Unknown`, or null) and `prizeSource` (`original` or `unavailable`). Verified prizes require an ended VP, its selected external board and matching verified original rank. History/restore responses expose prizes only after finalization; older clients and practice continuation preserve a confirmed final prize, while changing the selected board clears it. No verified medal rules produces `Unknown`, not `None`.
+
 `penalty_rounding` defaults to `per_problem`. For `total_seconds`, ICPC public/frozen projections floor each accepted elapsed time to seconds, sum these plus wrong-attempt penalty seconds across solved problems, and then floor the total to minutes; displayed cell solve times stay in minutes. Restore preserves this rule.
 
 New clients include `roomExternalRankUrl` (string or null) in room sync requests. When present, its canonical page URL must match the room's current external scoreboard, otherwise the server returns 409 before writing any history. Omitted fields remain compatible with existing clients.

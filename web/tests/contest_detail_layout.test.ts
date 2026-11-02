@@ -112,6 +112,16 @@ test('history detail displays the synchronized external scoreboard beside the or
   assert(!render(fixture()).includes('External scoreboard'));
 });
 
+test('the rank cell displays each final prize and distinguishes unknown awards',()=>{
+  const history=fixture();
+  for(const [prize,label] of [['Gold','Gold Prize'],['Silver','Silver Prize'],['Bronze','Bronze Prize'],['None','No Prize'],['Unknown','Prize unavailable']] as const){
+    history.prize=prize;
+    const html=render(history);
+    assert(html.includes('Prize: '+label));assert(html.includes('87'));
+  }
+  assert(!render(fixture()).includes('Prize: '));
+});
+
 test('native graded scores are displayed only when supplied and anonymous public counts stay unchanged',()=>{
   const history=fixture();history.scoring='IOI';history.points=75;
   history.cells.A={tries:1,pending:0,solved:false,practiceSolved:false,points:75,maxPoints:100};

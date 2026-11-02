@@ -645,7 +645,8 @@ def monitor(path: Path) -> None:
                     pending = any(s.verdict == "PENDING" for s in submissions.values())
                     backoff = min(60.0, max(5.0, backoff * 2)) if error and incoming is None else 2.0 if pending else 5.0
                     next_poll = now + backoff
-                manual_reference = manual_rank.reference(contest, scoring_elapsed)
+                manual_final = interrupted and elapsed >= cutoff-state['start_time']
+                manual_reference = manual_rank.reference(contest, scoring_elapsed, final=manual_final)
                 if state['contest']['rules'].get('penalty_rounding', 'per_problem') != contest.rules.penalty_rounding:
                     state['contest'] = contest.to_dict()
                     save_state(path, state)
@@ -682,7 +683,9 @@ def monitor(path: Path) -> None:
                 public = score_submissions(list(submissions.values()), list(contest.problems), contest.rules,
                                            public_elapsed, public=True, released=current_reference.released, name=api.handle, **score_options)
                 all_final = all(s.verdict not in ("PENDING", "UNAVAILABLE") for s in submissions.values() if not s.practice and 0 <= s.time < contest.rules.duration)
-                finalized = (not interrupted and elapsed >= contest.rules.duration and not frozen and current_reference.complete
+                finished = (not interrupted and elapsed >= contest.rules.duration
+                            or manual_final and manual_reference is not None and current_reference.released)
+                finalized = (finished and not frozen and current_reference.complete
                              and any(row.eligible for row in current_reference.rows)
                              and completed_submissions and have_polled and all_final)
                 from .ranking import original_rank
@@ -694,7 +697,7 @@ def monitor(path: Path) -> None:
                 prize = prize_of(private, current_reference.rows, contest.medals) if finalized else ""
                 stats = statistics(current_reference.rows, list(contest.problems), include_unofficial=True) if current_reference.statistics_complete and current_reference.rows else None
                 if stats is not None and hasattr(current_reference.replay, 'statistics_at'):
-                    stats = current_reference.replay.statistics_at(contest, scoring_elapsed,
+                    stats = current_reference.replay.statistics_at(contest, contest.rules.duration if manual_final else scoring_elapsed,
                                                                    released=current_reference.released)
                 revealed = revealed_problems(contest, scoring_elapsed, current_reference)
                 reference_changed = False
@@ -753,6 +756,7 @@ def monitor(path: Path) -> None:
                         state["medal_lines"] = medal_lines(current_reference.rows, contest.medals)
                     state.update(contest=contest.to_dict(), submissions=[asdict(x) for x in submissions.values()],
                                  recent=recent, submission_history=records, last_sync_time=platform_now(state),
+                                 submissions_complete=completed_submissions,
                                  status="archived" if interrupted and elapsed >= cutoff-state["start_time"] else "complete" if finalized or preserve_final else "running")
                     state["summary"] = {"solved": private.solved,
                                         "points": private.points if private.scoring != 'ICPC' else None,

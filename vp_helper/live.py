@@ -166,6 +166,13 @@ def save_progress(path: Path, state: dict, contest: Contest, snapshot: dict,
     state.update(contest=contest.to_dict(), start_time=contest.original_start, snapshot=snapshot,
                  submissions=merged, status="complete" if final else "running",
                  last_sync_time=submissions_at)
+    from .external_rank import attachment_path
+    state.pop('external_result', None)
+    if attachment_path(path).exists():
+        from .cloud import sync_payload
+        result = sync_payload(path, state)
+        if result['rankSource'] == 'original':
+            state['external_result'] = {'rank':result['rank'],'prize':result['prize']}
     save_state(path, state)
     if snapshot:
         update_history(Path(state["history_path"]), {
@@ -285,6 +292,8 @@ def monitor_live(path: Path) -> None:
                                               state["handle"], practice=state["practice_view"],
                                               practice_rank=read_json(path).get('practice_rank', state.get('practice_rank', '—')))
                     dashboard.participant_label = state.get("cloud", {}).get("label", "")
+                    dashboard.final_rank = state.get('external_result', {}).get('rank')
+                    dashboard.prize = state.get('external_result', {}).get('prize') or ''
                     from .identity import dashboard_identity
                     title, subtitle = dashboard_identity(state, path)
                     if state.get('cloud') or subtitle or title != state['handle']:
