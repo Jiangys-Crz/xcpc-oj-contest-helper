@@ -15,6 +15,7 @@ from vp_helper.models import Contest, Reference, Rules, Submission
 from vp_helper.rank_xcpcio import parse
 from vp_helper.sessions import save_state
 from vp_helper.storage import read_json, state_directory, write_json
+from vp_helper.workspaces import promote
 
 
 class PracticeReferenceSummaryTests(unittest.TestCase):
@@ -44,10 +45,10 @@ class PracticeReferenceSummaryTests(unittest.TestCase):
         with patch('vp_helper.rank_xcpcio.load', return_value=parse(*fixture(), self.contest, PAGE)):
             external_rank.import_rank(self.path, read_json(self.path), PAGE)
 
-    def monitor(self, now=20000, incoming=None):
+    def monitor(self, now=20000, incoming=None, reference=None):
         client = Mock(handle='tester', submissions_complete=True)
         client.submissions.return_value = incoming if incoming is not None else [self.vp_submission]
-        client.reference.return_value = Reference()
+        client.reference.return_value = reference if reference is not None else Reference()
         view = Mock()
         view.__enter__ = Mock(return_value=view)
         view.__exit__ = Mock(return_value=False)
@@ -140,6 +141,66 @@ class PracticeReferenceSummaryTests(unittest.TestCase):
         dashboard, state = self.monitor()
         self.assertEqual(dashboard.rank, '—')
         self.assertEqual(state['summary']['rank'], '—')
+
+    def test_stale_write_preserves_external_provenance_when_board_becomes_unavailable(self):
+        for broken in (False, True):
+            with self.subTest(broken=broken):
+                write_json(self.path, self.state)
+                stale = deepcopy(self.state)
+                self.import_board()
+                self.monitor()
+                save_state(self.path, stale)
+                attachment = external_rank.attachment_path(self.path)
+                if broken:
+                    attachment.write_text('not JSON', encoding='utf8')
+                else:
+                    attachment.unlink()
+                dashboard, state = self.monitor()
+                self.assertIn(dashboard.rank, ('—', '?'))
+                self.assertEqual(state['summary']['rank'], dashboard.rank)
+                self.assertIsNone(dashboard.stats)
+                self.assertEqual(state['reference_rank']['externalRankUrl'], PAGE)
+                # Removing a broken attachment must not expose its cached rank.
+                attachment.unlink(missing_ok=True)
+                dashboard, state = self.monitor()
+                self.assertEqual(dashboard.rank, '—')
+
+    def test_fresh_native_reference_replaces_external_provenance_even_at_same_rank(self):
+        self.import_board()
+        self.monitor()
+        stale = read_json(self.path)
+        external_rank.attachment_path(self.path).unlink()
+        _, _, rows = parse(*fixture(), self.contest, PAGE)
+        reference = Reference(rows=rows, complete=True, released=True)
+        dashboard, state = self.monitor(reference=reference)
+        self.assertEqual(dashboard.rank, '2')
+        self.assertEqual(state['practice_rank'], '2')
+        self.assertNotIn('externalRankUrl', state['reference_rank'])
+        native_proof = deepcopy(state['reference_rank'])
+        save_state(self.path, stale)
+        self.assertEqual(read_json(self.path)['reference_rank'], native_proof)
+        dashboard, state = self.monitor()
+        self.assertEqual(dashboard.rank, '2')
+
+    def test_workspace_reopen_preserves_latest_rank_provenance(self):
+        for native in (False, True):
+            with self.subTest(native=native):
+                write_json(self.path, self.state)
+                stale = deepcopy(self.state)
+                self.import_board()
+                self.monitor()
+                attachment = external_rank.attachment_path(self.path)
+                if native:
+                    stale = read_json(self.path)
+                    attachment.unlink()
+                    _, _, rows = parse(*fixture(), self.contest, PAGE)
+                    self.monitor(reference=Reference(rows=rows, complete=True, released=True))
+                expected = read_json(self.path)['reference_rank']
+                promote(self.path, stale)
+                self.assertEqual(read_json(self.path)['reference_rank'], expected)
+                attachment.unlink(missing_ok=True)
+                dashboard, state = self.monitor()
+                self.assertEqual(dashboard.rank, '2' if native else '—')
 
 
 if __name__ == '__main__':
