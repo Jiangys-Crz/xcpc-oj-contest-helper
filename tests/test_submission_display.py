@@ -623,7 +623,7 @@ class SubmissionDisplayTests(unittest.TestCase):
                             'Pure BT does not add a problem clock')
             self.assertEqual(vars(practice),original)
 
-    def test_unavailable_awards_never_show_unknown_or_a_false_no_prize(self):
+    def test_unavailable_awards_are_labeled_without_a_false_no_prize(self):
         contest=self.contest()
         me=score_submissions([],list(contest.problems),contest.rules,120,name='tester')
         unavailable=[]
@@ -631,7 +631,11 @@ class SubmissionDisplayTests(unittest.TestCase):
             output=self.render(Dashboard(contest,120,me,'3',prize,None,[]).fixed(160))
             self.assertNotIn('Unknown',output)
             self.assertNotIn('No Prize',output)
-            unavailable.append(output)
+            if prize=='Unknown':
+                self.assertIn('Prize unavailable',output)
+            else:
+                self.assertNotIn('Prize unavailable',output)
+                unavailable.append(output)
         self.assertEqual(len(set(unavailable)),1)
         contest.medals=Medals(gold=1,silver=2,bronze=3,source='fixture official medals')
         self.assertIn('No Prize',self.render(Dashboard(contest,120,me,'3','None',None,[]).fixed(160)))
@@ -736,6 +740,50 @@ class SubmissionDisplayTests(unittest.TestCase):
             self.assertEqual(sum(segment.cell_length for segment in colored),2 if index==0 else 0)
         self.assertEqual(''.join(segment.text.strip() for line in lines[1:] for segment in line),'1+1123456')
         self.assertEqual(value.plain,'1+1\n123456')
+
+    def test_odd_problem_columns_compact_attempts_to_fit_the_actual_square(self):
+        views=self.active_team_views(12)
+        views[0].contest.rules.problem_reveal_count=50
+        views[1].snapshot.pop('stats')
+        for view in views:
+            before=copy.deepcopy(vars(view))
+            for width in (72,76,80,96,100):
+                with self.subTest(view=type(view).__name__,width=width):
+                    boxes=self.problem_boxes(view,width)
+                    self.assertTrue(all(not cell.details_below for cell in boxes),
+                                    'Short counts and minutes must stay inside the square')
+                    for cell in boxes:
+                        self.assertTrue(all(cell_len(line)<=cell.width for line in cell.plain.splitlines()),
+                                        'A label fitting the wider column must not wrap inside its square')
+                    attempts,minutes=boxes[0].plain.split('\n')
+                    self.assertIn(attempts,('1','1 try'))
+                    self.assertEqual(minutes,'2')
+            self.assertEqual(vars(view),before)
+
+    def test_narrow_vp_square_keeps_counts_and_multi_digit_minutes_on_colored_rows(self):
+        contest=self.contest()
+        contest.problems=dict(list(contest.problems.items())[:12])
+        contest.rules.problem_reveal_count=50
+        events=[Submission('1','me','A',420,'CORRECT'),
+                Submission('2','me','B',60,'WRONG-ANSWER'),
+                Submission('3','me','B',8220,'CORRECT')]
+        me=score_submissions(events,list(contest.problems),contest.rules,9000,name='tester')
+        view=Dashboard(contest,9000,me,'4','',None,[])
+        for width in (72,76,80):
+            for engine in ('rich','curses'):
+                with self.subTest(width=width,engine=engine):
+                    console=(Console(width=width,color_system='truecolor',legacy_windows=False) if engine=='rich'
+                             else TerminalDashboard().console)
+                    self.logical_width=width
+                    rows=[]
+                    for line in self.logical_segments(view.fixed(width),console,width):
+                        green=''.join(segment.text for segment in line if segment.style and segment.style.bgcolor
+                                      and segment.style.bgcolor.get_truecolor()==(96,231,96)).split()
+                        if green:
+                            rows.append(green)
+                    self.assertEqual(rows,[['1','2'],['7','137']],
+                                     'Attempt counts and native minutes share two rows inside the AC boxes')
+        self.assertEqual((me.solved,me.penalty,me.cells['A'].tries,me.cells['B'].tries),(2,164,1,2))
 
     def test_practice_cells_are_purple_and_pending_cells_blue_without_recoloring_original_ac(self):
         contest=self.contest()

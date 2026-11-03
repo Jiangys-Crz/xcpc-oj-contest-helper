@@ -160,9 +160,14 @@ def score_table(columns, problems, rows, width, *, separate_summary=False, _allo
         widths = table._calculate_column_widths(layout, layout.options.update_width(width - table._extra_width))
         problem_width = min(widths[index] - table._get_padding_width(index)
                             for index in range(len(columns), count))
+        # The square rounds odd column widths down. Compact against its actual
+        # width so "1 try" cannot fit the column but wrap inside a 4-cell box,
+        # pushing otherwise short attempts and minutes below every square.
+        box_width = max(1, min(16, problem_width // 2 * 2))
+        height = max(1, box_width // 2)
         values = [cell if isinstance(cell, Text) else Text(str(cell)) for cell in first_cells]
         for index, value in enumerate(values):
-            if content_width(value) > problem_width:
+            if content_width(value) > box_width:
                 lines = value.plain.split("\n")
                 lines[0] = re.sub(r"\s+tr(?:y|ies)\b", "", lines[0]).replace(" ", "")
                 lines[0] = re.sub(r"pending\b", "?", lines[0])
@@ -171,8 +176,6 @@ def score_table(columns, problems, rows, width, *, separate_summary=False, _allo
         # exact 2:1 dimensions rather than rounding an odd width or stretching
         # the background to accommodate the text. Narrow cells put the full
         # count and time below the square, keeping every problem visible.
-        box_width = max(1, min(16, problem_width // 2 * 2))
-        height = max(1, box_width // 2)
         content_height = max(len(value.wrap(layout, box_width, overflow="fold", no_wrap=False))
                              for value in values)
         details_below = content_height > height or box_width == 1
