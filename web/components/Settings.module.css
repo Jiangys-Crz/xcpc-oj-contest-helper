@@ -1,0 +1,11 @@
+.content { max-width: none; }
+.createForm { display: flex; align-items: flex-end; gap: 12px; }
+.createForm label { flex: 1; }
+.newKey { display: flex; flex-direction: column; gap: 12px; padding: 18px; border: 1px solid #bfdbfe; border-radius: 5px; background: #eff6ff; }
+.newKey p { color: #475569; }
+.newKey input { font-family: Consolas, "SFMono-Regular", monospace; }
+.keyActions { display: flex; flex-wrap: wrap; gap: 8px; }
+.keysTable td:first-child { max-width: 260px; overflow-wrap: anywhere; white-space: normal; }
+@media (max-width: 600px) {
+  .createForm { align-items: stretch; flex-direction: column; }
+}

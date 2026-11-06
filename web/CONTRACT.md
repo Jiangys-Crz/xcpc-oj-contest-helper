@@ -4,10 +4,12 @@ Next.js App Router full-stack app. Node 24, node:sqlite (WAL + foreign keys). Du
 
 ## JSON API
 
-All success bodies are `{data: ...}`; failures `{error: string}`, meaningful HTTP status. User fields: `id,useraccount,username,realname,numberid,email,role`. IDs strings. Auth: HttpOnly SameSite=Lax secure production cookie plus Bearer token for CLI; login response data `{user,token,expiresAt}`. UTC ISO timestamps.
+All success bodies are `{data: ...}`; failures `{error: string}`, meaningful HTTP status. User fields: `id,useraccount,username,realname,numberid,email,role`; own authenticated profiles also expose `externalId` (association login `data.userId`, string or null). IDs strings. Auth: HttpOnly SameSite=Lax secure production cookie plus Bearer token for CLI; login response data `{user,token,expiresAt}`. UTC ISO timestamps.
 
 - POST /api/auth/login `{account,password}` external association login; POST /api/auth/admin-login `{account,password}` local bootstrap admin; GET /api/auth/me returns user; POST /api/auth/logout.
 - GET/PUT /api/admin/settings admin only `{externalBaseUrl,externalAppKey}` (GET masked key + configured flag); env initial VP_EXTERNAL_APP_KEY, VP_EXTERNAL_BASE_URL. Bootstrap account env VP_ADMIN_ACCOUNT default admin and VP_ADMIN_PASSWORD required at first boot. No secrets in source.
+- GET/POST /api/admin/api-keys and DELETE /api/admin/api-keys/:id: admin session only; create named random read-only history keys, return plaintext once, store SHA-256 only, list prefix and timestamps, revoke immediately. Maximum 100 active keys; create/revoke audited.
+- GET /api/external/vp-history?externalId=&contestUrl=&limit=20&offset=0: API Key Bearer or X-API-Key only, never a user session. Requires exact association ID and canonical original contest URL; no email lookup. Returns `{user,contestUrl,total,limit,offset,records,serverNow}` with ended VP details, including immutable team-roster membership. Excludes ongoing/scheduled/failed/cancelled, live and BT records. Limit 1–100; per-key 120 requests/minute per process, 429 + Retry-After:60. See [calling guide](../docs/vp-history-api.md).
 - GET /api/users?search=... authenticated search by real name/student number/account; minimum 2 characters; only public member profile fields.
 - GET/POST /api/teams `{nameZh,nameEn}`. GET/PATCH/DELETE /api/teams/:id. Team `{id,nameZh,nameEn,captainId,members:User[],createdAt}`; creator captain included, 1–3 members; captain edits/removes members via PATCH `{nameZh?,nameEn?,removeUserId?}`. Deletion retains historical data.
 - POST /api/teams/:id/invitations `{userId}` captain only; membership change on accept is transactional and capacity checked.

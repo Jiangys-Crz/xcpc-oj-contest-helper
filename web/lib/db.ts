@@ -12,6 +12,7 @@ export class Store {
 CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, external_id TEXT UNIQUE, useraccount TEXT NOT NULL UNIQUE COLLATE NOCASE, username TEXT NOT NULL, realname TEXT NOT NULL DEFAULT '', numberid TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', role TEXT NOT NULL DEFAULT 'user', password_hash TEXT, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), expires_at TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS api_keys(id TEXT PRIMARY KEY, name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, prefix TEXT NOT NULL, created_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL, last_used_at TEXT, revoked_at TEXT);
 CREATE TABLE IF NOT EXISTS teams(id TEXT PRIMARY KEY, name_zh TEXT NOT NULL, name_en TEXT NOT NULL, captain_id TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL, deleted_at TEXT);
 CREATE TABLE IF NOT EXISTS team_members(team_id TEXT NOT NULL REFERENCES teams(id), user_id TEXT NOT NULL REFERENCES users(id), PRIMARY KEY(team_id,user_id));
 CREATE TABLE IF NOT EXISTS rooms(id TEXT PRIMARY KEY, name TEXT NOT NULL, contest_url TEXT NOT NULL, starts_at TEXT NOT NULL, creator_id TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL);
@@ -47,6 +48,7 @@ CREATE TABLE IF NOT EXISTS audit(id TEXT PRIMARY KEY, actor_id TEXT REFERENCES u
           ELSE strftime('%Y-%m-%dT%H:%M:%fZ',updated_at) END,
         strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE created_at='';
 CREATE INDEX IF NOT EXISTS histories_creation ON histories(created_at DESC,id DESC);
+CREATE INDEX IF NOT EXISTS histories_contest_mode ON histories(contest_url,mode,created_at DESC,id DESC);
 CREATE INDEX IF NOT EXISTS rooms_creation ON rooms(created_at DESC,id DESC);`);
     });
     const ruleColumns = new Set((this.db.prepare('PRAGMA table_info(room_rules)').all() as Row[]).map(c => c.name));

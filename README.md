@@ -506,3 +506,7 @@ macOS / Windows 安装脚本支持 `--target-root`、`--target-bin` 和 `--offli
 ## 来源与许可证
 
 提交器参考 [hikariyo 的 QOJ submit](https://gist.github.com/hikariyo/b3cec2e736d87be57d1e4faafb04f908)、[ehnryx/cf_submit](https://github.com/ehnryx/cf_submit) 和 [vscode-nowcoderac](https://github.com/Handy2233/vscode-nowcoderac)。原赛数据按可用情况读取 [XCPCIO](https://github.com/xcpcio/board-data) 与 [SRK Collection](https://github.com/algoux/srk-collection)。来源、版本及许可证保留在 `third_party`；仓库不包含个人比赛数据和账号配置。
+
+## 历史 VP 数据接口
+
+管理员可在网站设置中添加只读 API Key，使用协会官网 ID 和原站比赛 URL 查询个人或组队的已结束 VP。调用方法见 [历史 VP 数据 API 文档](docs/vp-history-api.md)。

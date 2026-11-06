@@ -82,10 +82,10 @@ function latestRelease() {
   } catch(error) {if(error instanceof ApiError)throw error;return fail(503,'终端更新清单暂不可用');}
 }
 
-export type User = {id:string;useraccount:string;username:string;realname:string;numberid:string;email:string;role:string};
+export type User = {id:string;externalId?:string|null;useraccount:string;username:string;realname:string;numberid:string;email:string;role:string};
 function profile(row: Row, full = false): User {
   return {id:String(row.id),useraccount:row.useraccount,username:row.username,realname:row.realname,
-    numberid:row.numberid,email:full?row.email:'',role:row.role};
+    numberid:row.numberid,email:full?row.email:'',role:row.role,...(full?{externalId:row.external_id??null}:{})};
 }
 const labelUser = (u: User) => `${u.username || u.useraccount}-${u.realname || u.username || u.useraccount}`;
 type ParticipantIdentity = {participantTitle:string;participantSubtitle:string};
@@ -106,6 +106,7 @@ export class CloudService {
   readonly publicUrl: string;
   readonly externalFetch: typeof fetch;
   private attempts = new Map<string,{at:number,count:number}>();
+  private apiAttempts = new Map<string,{at:number,count:number}>();
   constructor(options: CloudOptions = {}) {
     this.store = new Store(options.path || resolve(process.env.VP_DATA_DIR || './data','vp.sqlite'));
     this.publicUrl = options.publicUrl || process.env.VP_PUBLIC_URL || 'http://127.0.0.1:3100';
@@ -123,6 +124,95 @@ export class CloudService {
   private user(uid: string): User { const user=this.store.one('SELECT * FROM users WHERE id=?',uid); if(!user)return fail(404,'用户不存在'); return profile(user,true); }
   private setting(key:string):string { return this.store.one('SELECT value FROM settings WHERE key=?',key)?.value || ''; }
   private audit(user:User,action:string,entity:string) { this.store.run('INSERT INTO audit VALUES(?,?,?,?,?)',id(),user.id,action,entity,now()); }
+  private apiKeyView(row:Row) {
+    return {id:row.id,name:row.name,prefix:row.prefix,createdAt:row.created_at,lastUsedAt:row.last_used_at,revokedAt:row.revoked_at};
+  }
+  private manageApiKeys(method:string,segments:string[],body:Row,user:User) {
+    if(user.role!=='admin')return fail(403,'只有超级管理员可以管理 API Key');
+    if(segments.length===2) {
+      if(method==='GET')return this.store.all('SELECT * FROM api_keys ORDER BY created_at DESC,id DESC').map(row=>this.apiKeyView(row));
+      if(method==='POST') {
+        const name=text(body.name,'密钥名称',100);
+        return this.store.transaction(()=>{
+          if(this.store.one('SELECT COUNT(*) count FROM api_keys WHERE revoked_at IS NULL')!.count>=100)return fail(409,'最多保留 100 个有效 API Key，请先撤销不再使用的密钥');
+          const keyId=id(),apiKey='vp_'+randomBytes(32).toString('base64url');
+          this.store.run('INSERT INTO api_keys(id,name,key_hash,prefix,created_by,created_at) VALUES(?,?,?,?,?,?)',keyId,name,hash(apiKey),apiKey.slice(0,11),user.id,now());
+          this.audit(user,'api-key.create',keyId);
+          return {...this.apiKeyView(this.store.one('SELECT * FROM api_keys WHERE id=?',keyId)!),apiKey};
+        });
+      }
+      return fail(405,'不支持此操作');
+    }
+    if(segments.length===3 && method==='DELETE') {
+      const keyId=segments[2];
+      return this.store.transaction(()=>{
+        const row=this.store.one('SELECT * FROM api_keys WHERE id=?',keyId);
+        if(!row)return fail(404,'API Key 不存在');
+        if(!row.revoked_at) {
+          this.store.run('UPDATE api_keys SET revoked_at=? WHERE id=?',now(),keyId);
+          this.audit(user,'api-key.revoke',keyId);
+        }
+        return {ok:true};
+      });
+    }
+    return fail(405,'不支持此操作');
+  }
+  private authenticateApiKey(request:Request) {
+    const authorization=request.headers.get('authorization'),headerKey=request.headers.get('x-api-key');
+    const bearer=authorization?.match(/^Bearer (vp_[A-Za-z0-9_-]{43})$/)?.[1];
+    if((authorization && !bearer) || (bearer && headerKey && bearer!==headerKey))return fail(401,'API Key 无效');
+    const key=headerKey||bearer;
+    if(!key || !/^vp_[A-Za-z0-9_-]{43}$/.test(key))return fail(401,'请提供有效的 API Key');
+    const row=this.store.one('SELECT id FROM api_keys WHERE key_hash=? AND revoked_at IS NULL',hash(key));
+    if(!row)return fail(401,'API Key 无效或已撤销');
+    const current=Date.now();let entry=this.apiAttempts.get(row.id);
+    if(!entry || current-entry.at>=60000) {entry={at:current,count:0};this.apiAttempts.set(row.id,entry);}
+    if(++entry.count>120)return fail(429,'API 请求过于频繁，请一分钟后重试');
+    if(this.apiAttempts.size>1000)for(const [key,value] of this.apiAttempts)if(current-value.at>=60000)this.apiAttempts.delete(key);
+    this.store.run('UPDATE api_keys SET last_used_at=? WHERE id=?',now(),row.id);
+  }
+  private externalUser(params:URLSearchParams) {
+    const row=this.store.one('SELECT * FROM users WHERE external_id=?',text(params.get('externalId'),'协会官网 ID',64));
+    if(!row)return fail(404,'未找到已绑定的协会用户，请先在 VP 系统使用协会账号登录');
+    return row;
+  }
+  private externalUserView(row:Row) {
+    return {id:String(row.id),externalId:String(row.external_id),useraccount:row.useraccount,username:row.username,realname:row.realname};
+  }
+  private externalHistoryEnded(row:Row) {
+    if(['failed','cancelled','scheduled'].includes(row.status))return false;
+    if(row.room_id || JSON.parse(row.rules_json||'{}').duration>0)return this.restoreEnded(row);
+    // Legacy standalone clients may have sent only the actual end timestamp.
+    return ['complete','archived'].includes(row.status) && Date.parse(row.ended_at)<=Date.now();
+  }
+  private externalApi(request:Request,segments:string[]) {
+    this.authenticateApiKey(request);
+    if(request.method!=='GET')return fail(405,'外部 API 仅支持 GET 查询');
+    const path=segments.join('/'),params=new URL(request.url).searchParams;
+    if(path==='external/vp-history') {
+      for(const name of new Set(params.keys())) {
+        if(!['externalId','contestUrl','limit','offset'].includes(name))return fail(400,`不支持查询参数：${name}`);
+        if(params.getAll(name).length>1)return fail(400,'查询参数不能重复');
+      }
+      const url=contestUrl(params.get('contestUrl'));
+      const integer=(name:string,fallback:number,min:number,max:number)=>{
+        const raw=params.get(name);if(raw===null)return fallback;
+        if(!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw)) || Number(raw)<min || Number(raw)>max)return fail(400,`${name} 必须是 ${min}–${max} 的整数`);
+        return Number(raw);
+      };
+      const limit=integer('limit',20,1,100),offset=integer('offset',0,0,1000000),user=this.externalUser(params);
+      const records=this.store.all(`SELECT h.id,h.room_id,h.mode,h.status,h.started_at,h.ended_at,h.rules_json FROM histories h WHERE h.mode='vp' AND h.contest_url=? AND
+        (h.owner_id=? OR EXISTS(SELECT 1 FROM participants p,json_each(p.members_json) m
+          WHERE p.id=h.participant_id AND json_extract(m.value,'$.id')=?))
+        ORDER BY h.created_at DESC,h.id DESC`,url,user.id,user.id).filter(row=>this.externalHistoryEnded(row));
+      return {user:this.externalUserView(user),contestUrl:url,total:records.length,limit,offset,
+        records:records.slice(offset,offset+limit).map(record=>{
+          const row=this.store.one('SELECT * FROM histories WHERE id=?',record.id)!;
+          return {...this.historyView(row,true),participantId:row.participant_id};
+        }),serverNow:now()};
+    }
+    return fail(404,'接口不存在');
+  }
   private auth(request: Request): {user:User;token:string} {
     const authorization=request.headers.get('authorization');
     const bearer=authorization?.match(/^Bearer ([A-Za-z0-9_-]{40,100})$/)?.[1];
@@ -576,9 +666,11 @@ export class CloudService {
     if(path==='health' && method==='GET')return {data:{status:'ok'}};
     if(path==='client/releases/latest' && method==='GET')return {data:latestRelease()};
     if((path==='auth/login'||path==='auth/admin-login') && method==='POST') {const data=await this.login(request,body,path.endsWith('admin-login'));return {data,session:data};}
+    if(segments[0]==='external')return {data:this.externalApi(request,segments)};
     const {user,token}=this.auth(request);
     if(path==='auth/me' && method==='GET')return {data:user};
     if(path==='auth/logout' && method==='POST') {this.store.run('DELETE FROM sessions WHERE token_hash=?',hash(token));return {data:{ok:true},clearCookie:true};}
+    if(segments[0]==='admin' && segments[1]==='api-keys')return {data:this.manageApiKeys(method,segments,body,user)};
     if(path==='admin/settings') {
       if(user.role!=='admin')return fail(403,'只有超级管理员可以管理设置');
       if(method==='PUT') {
@@ -716,7 +808,10 @@ export async function handleRequest(request:Request,segments:string[], service?:
     if(result.clearCookie)headers.set('Set-Cookie',`xcpc_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`);
     return new Response(JSON.stringify({data:result.data}),{headers});
   } catch(error) {
-    if(error instanceof ApiError)return new Response(JSON.stringify({error:error.message}),{status:error.status,headers});
+    if(error instanceof ApiError) {
+      if(error.status===429)headers.set('Retry-After','60');
+      return new Response(JSON.stringify({error:error.message}),{status:error.status,headers});
+    }
     if(error instanceof Error && /UNIQUE constraint/.test(error.message))return new Response(JSON.stringify({error:'数据已存在或请求发生冲突，请刷新后重试'}),{status:409,headers});
     console.error('XCPC API internal failure:',error instanceof Error?error.name:'unknown');
     return new Response(JSON.stringify({error:'服务器暂时无法处理请求，请稍后重试'}),{status:500,headers});

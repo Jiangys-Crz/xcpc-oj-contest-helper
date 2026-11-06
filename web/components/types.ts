@@ -1,4 +1,4 @@
-export interface User { id:string; useraccount:string; username:string; realname:string; numberid:string; email:string; role:string }
+export interface User { id:string; externalId?:string|null; useraccount:string; username:string; realname:string; numberid:string; email:string; role:string }
 export interface Cell { tries:number; pending:number; solved:boolean; practiceSolved:boolean; solveTime?:number; points?:number; maxPoints?:number }
 export interface Submission { id:string; problem:string; submittedAt:string; verdict:string; practice:boolean; url?:string; points?:number; language?:string }
 export interface FreezeState { durationSeconds?:number; endsAt?:string; freezeAt?:string|null; freezeMinutes?:number; frozen?:boolean; freezeDurationSeconds?:number; durationSource?:'platform'|'default' }

@@ -41,7 +41,7 @@ const snapshot=(localId:string,revision=1):Data=>({
 
 test('association login synchronizes all five fields, preserves administrator role and hashes tokens',async(t)=>{
   const {api,service,login,admin}=fixture(t); const user=await login('captain');
-  assert.deepEqual(user.user,{id:user.user.id,useraccount:'captain',username:'队长昵称',realname:'张队长',numberid:'20260001',email:'captain@example.test',role:'user'});
+  assert.deepEqual(user.user,{id:user.user.id,externalId:'1',useraccount:'captain',username:'队长昵称',realname:'张队长',numberid:'20260001',email:'captain@example.test',role:'user'});
   const session=service.store.one('SELECT * FROM sessions WHERE user_id=?',user.user.id)!;
   assert.notEqual(session.token_hash,user.token);assert.equal(session.token_hash.length,64);
   assert.equal((await api('GET','auth/me',undefined,user.token)).data.email,'captain@example.test');
