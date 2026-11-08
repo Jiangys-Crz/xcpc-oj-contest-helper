@@ -62,10 +62,10 @@ test('history details and room My submissions use the shared detail renderer',()
   assert.doesNotMatch(render(fixture()),/clarifications?/i);
 });
 
-test('room pages can supply their common title while keeping all shared detail content',()=>{
-  const history=fixture(),html=renderToStaticMarkup(createElement(ContestDetailView,{history,showTitle:false}));
-  assert.doesNotMatch(html,/<h1(?:\s[^>]*)?>/);
-  assert.match(render(history),/<h1>The 2026 ICPC Fixture<\/h1>/);
+test('the shared detail includes one room-style page title above the results',()=>{
+  const history=fixture(),html=render(history);
+  assert.match(html,/<header class="page-heading"><div><h1>The 2026 ICPC Fixture<\/h1>/);
+  assert.equal([...html.matchAll(/<h1(?:\s[^>]*)?>/g)].length,1);
   for(const heading of ['Rank','Team','Solved','Penalty','Time','Problem','Lang','Result','Submission'])assert(headers(html).includes(heading),heading);
   assert(html.includes(history.contestUrl));
   assert(html.includes('#396538368'));

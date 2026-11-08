@@ -58,7 +58,7 @@ body{background:#fff}.site-header{height:56px;position:sticky;top:0;z-index:40;b
 /* DOMjudge-inspired contest detail: one score row, problem summary, then submissions. */
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .legend-purple{background:var(--upsolve)}.scoreboard .problem-cell.pending{background:var(--pending);color:#fff}
-.judge-page .page-heading{margin-bottom:13px}.judge-page .page-heading h1{font-size:25px}.judge-page .back-link{margin-bottom:13px}
+.judge-page .back-link{margin-bottom:13px}
 .judge-contest-times{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:7px 22px;padding:11px 14px;background:#f8f9fa;border:1px solid #e2e4e7;border-radius:3px;margin-bottom:5px;color:#6b7280;font-size:12px;font-variant-numeric:tabular-nums}
 .judge-contest-times strong{font-weight:400;color:#374151}.judge-updated{font-size:11px;color:#9ca3af}.judge-freeze{display:inline-flex;align-items:center;gap:5px;color:#685397;font-size:11px;white-space:nowrap}
 .judge-score-section{padding:24px 0 32px}.judge-score-scroll{padding:0 1px 2px}.judge-scoreboard{width:auto;min-width:550px;max-width:100%;margin:0 auto;border-collapse:collapse;color:#111827}
@@ -80,7 +80,7 @@ body{background:#fff}.site-header{height:56px;position:sticky;top:0;z-index:40;b
 .board-description{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:5px 16px}.board-description>span:last-child:not(:first-child){font-size:11px}.room-tabs{overflow-x:auto;white-space:nowrap;scrollbar-width:thin}.room-tabs>a{flex-shrink:0}
 .judge-verdict-ignored{color:#7b818a;font-weight:400}
 .judge-scoreboard tbody tr:last-child td{border-bottom:2px solid #111827}
-@media(max-width:760px){.judge-page .page-heading{gap:12px}.judge-page .page-heading h1{font-size:22px}.judge-page .heading-actions{gap:6px}.judge-page .heading-actions .button{font-size:10px;min-height:31px;padding:6px 9px}.judge-contest-times{justify-content:flex-start;gap:6px 15px;padding:10px 11px;font-size:11px}.judge-updated{width:100%;font-size:10px}.judge-score-section{padding-top:19px;padding-bottom:25px}.judge-scoreboard .judge-team,.judge-scoreboard .judge-team-name{min-width:185px;max-width:250px}.judge-submissions-table td,.judge-submissions-table th{padding-left:11px;padding-right:11px}.judge-section-heading{gap:12px}.judge-section-heading h2{font-size:16px}.judge-table-actions{gap:10px}.judge-filters{gap:10px}.judge-filters label{min-width:110px;flex:1}.judge-filters select{min-width:110px}.judge-legend{width:235px;font-size:10px}.judge-legend h3{font-size:11px}.room-tabs{gap:22px}}
+@media(max-width:760px){.judge-page .page-heading{gap:12px}.judge-page .heading-actions{gap:6px}.judge-page .heading-actions .button{font-size:10px;min-height:31px;padding:6px 9px}.judge-contest-times{justify-content:flex-start;gap:6px 15px;padding:10px 11px;font-size:11px}.judge-updated{width:100%;font-size:10px}.judge-score-section{padding-top:19px;padding-bottom:25px}.judge-scoreboard .judge-team,.judge-scoreboard .judge-team-name{min-width:185px;max-width:250px}.judge-submissions-table td,.judge-submissions-table th{padding-left:11px;padding-right:11px}.judge-section-heading{gap:12px}.judge-section-heading h2{font-size:16px}.judge-table-actions{gap:10px}.judge-filters{gap:10px}.judge-filters label{min-width:110px;flex:1}.judge-filters select{min-width:110px}.judge-legend{width:235px;font-size:10px}.judge-legend h3{font-size:11px}.room-tabs{gap:22px}}
 
 .public-problem-statistics{margin-top:1.5rem;border-top:1px solid var(--border);padding-top:1rem}
 .public-problem-statistics table{width:auto;min-width:min(100%,36rem);margin:auto}
@@ -193,8 +193,6 @@ body{background:#fff}.site-header{height:56px;position:sticky;top:0;z-index:40;b
 .table-fit-content>.fit-table th,.table-fit-content>.fit-table td,.table-fit-content>.fit-table .contest-link,.table-fit-content>.fit-table .participant-identity strong,.table-fit-content>.fit-table .participant-identity small,.table-fit-content>.fit-table .problem-cell span,.table-fit-content>.fit-table .problem-cell small{white-space:nowrap;overflow-wrap:normal;word-break:normal}
 .table-fit-content>.fit-table .problem-heading,.table-fit-content>.fit-table .judge-problem-heading,.table-fit-content>.fit-table .problem-cell{width:58px;min-width:58px}
 .table-fit-content>.fit-table .participant-identity{min-width:max-content}
-.judge-contest-title{margin:5px 0 20px}
-.judge-contest-title h1{font-family:Georgia,"Times New Roman",serif;font-size:29px;font-weight:700;line-height:1.4;white-space:nowrap;overflow-wrap:normal;color:#111827}
 .judge-submissions{width:100%;max-width:100%;margin-right:auto}
 .judge-submissions-fit .table-fit-content>.judge-submissions-table.fit-table{width:100%;min-width:0;max-width:none;table-layout:auto}
 .judge-submissions-fit .table-fit-content>.fit-table th,.judge-submissions-fit .table-fit-content>.fit-table td{padding:9px 14px;white-space:nowrap}
@@ -260,8 +258,8 @@ input,select,textarea,label,.button,.filter-form select,.detail-grid dd,.team-me
 .judge-contest-detail .domjudge-submissions .judge-table-actions .button{width:25px;height:24px;min-height:24px;padding:0;border:0;border-radius:2px;background:transparent;color:#526985}
 .judge-contest-detail .domjudge-submissions .judge-table-actions .button:hover,.judge-contest-detail .domjudge-submissions .judge-table-actions .button.is-active{background:#ffffff80;color:#1d4ed8}
 .judge-contest-detail .domjudge-submissions .judge-submissions-table.fit-table{border-top:0}
-.judge-contest-detail .domjudge-submissions .judge-submissions-table.fit-table th{width:auto;padding:6px 7px;border-bottom:1px solid #bfc4cc;background:#fff;font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;font-weight:700;color:#111827}
-.judge-contest-detail .domjudge-submissions .judge-submissions-table.fit-table td{height:42px;padding:5px 7px;border-bottom:1px solid #d1d5db;background:#fff;font-size:14px}
+.judge-contest-detail .domjudge-submissions .judge-submissions-table.fit-table th{width:auto;padding:7px 8px;border-bottom:1px solid #bfc4cc;background:#fff;font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;font-weight:700;color:#111827}
+.judge-contest-detail .domjudge-submissions .judge-submissions-table.fit-table td{height:42px;padding:9px 8px;border-bottom:1px solid #d1d5db;background:#fff;font-size:14px}
 .judge-contest-detail .domjudge-submissions .judge-submissions-table.fit-table tbody tr:hover td{background:#f7faff}
 .judge-contest-detail .domjudge-submissions .judge-submissions-table.fit-table .time-value{text-align:left;font-size:13px;white-space:nowrap}
 .judge-contest-detail .domjudge-submissions .judge-submissions-table.fit-table th:first-child{text-align:left}
@@ -311,16 +309,16 @@ input,select,textarea,label,.button,.filter-form select,.detail-grid dd,.team-me
 .app-room .room-view{min-width:0}
 .app-room .room-view>.room-tabs{position:sticky;top:0;z-index:40;display:flex;align-items:stretch;gap:24px;min-height:48px;height:auto;margin:0 0 22px;background:#fff;border-bottom:1px solid #d8dee7;flex-wrap:nowrap}
 .app-room .room-view>.room-tabs>a{display:inline-flex;align-items:center;min-height:48px;white-space:nowrap}
-.app-room .room-view>.page-heading{display:flex;flex-direction:column;align-items:center;gap:12px;margin:20px 0 18px;text-align:center}
+.judge-contest-detail>.page-heading,.app-room .room-view>.page-heading{display:flex;flex-direction:column;align-items:center;gap:12px;margin:20px 0 18px;text-align:center}
 .app-room .room-view>.page-heading>div:first-child{width:100%}
 .app-room .room-view>.page-heading .heading-actions{justify-content:center}
 .app-room .room-view>.room-summary{justify-content:center;flex-wrap:wrap;gap:10px 24px;margin:0 0 22px;font-size:13px}
 .app-room .room-view .card{border:0;border-radius:0;box-shadow:none}
 .app-room .room-view .section-heading{min-height:27px;margin:0 0 10px;padding:3px 8px;border:1px solid #b9c6dd;border-radius:0;background:#c5d8fc;gap:10px}
 .app-room .room-view .section-heading h2{font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif;font-size:20px;font-weight:400;color:#111827}
-.app-room .room-view .data-table:not(.judge-scoreboard) th{padding:7px 8px;border-bottom:1px solid #bfc4cc;background:#fff;font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;color:#111827}
-.app-room .room-view .data-table:not(.judge-scoreboard) td{padding:9px 8px;border-bottom:1px solid #d1d5db;background:#fff;font-size:14px}
-.app-room .room-view .data-table:not(.judge-scoreboard) tbody tr:hover td{background:#f7faff}
+.app-room .room-view .data-table:not(.judge-scoreboard):not(:where(.domjudge-submissions .data-table)) th{padding:7px 8px;border-bottom:1px solid #bfc4cc;background:#fff;font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;color:#111827}
+.app-room .room-view .data-table:not(.judge-scoreboard):not(:where(.domjudge-submissions .data-table)) td{padding:9px 8px;border-bottom:1px solid #d1d5db;background:#fff;font-size:14px}
+.app-room .room-view .data-table:not(.judge-scoreboard):not(:where(.domjudge-submissions .data-table)) tbody tr:hover td{background:#f7faff}
 .app-room .room-view .room-scoreboard-panel>.table-fit-viewport:not(.public-problem-statistics){margin:14px 0}
 .app-room .room-view .room-scoreboard-panel .board-description{padding:0 3px 10px;font-size:13px}
 .app-room .room-view .room-scoreboard-panel>.table-footer{padding:12px 3px}
@@ -333,8 +331,6 @@ input,select,textarea,label,.button,.filter-form select,.detail-grid dd,.team-me
 /* QOJ-style archive: each contest owns its compact problem strip. */
 .history-list>.page-heading{align-items:center;gap:18px}
 .history-list,.history-archive,.history-legend{--history-ac:#238636;--history-rj:#cf3440;--history-bt:#2563eb;--history-partial:#a85b05;--history-untried:#6b7280}
-.history-detail{--upsolve:#2563eb}
-.history-detail .judge-contest-detail .problem-cell.upsolved,.history-detail .judge-legend-upsolved{color:#fff}
 .history-list-panel.card{border:0;border-radius:0;box-shadow:none}
 .history-list-panel>.table-toolbar{padding:0 0 20px;border-bottom:0;background:#fff}
 .history-archive{width:100%;border-collapse:collapse;table-layout:fixed;text-align:left}

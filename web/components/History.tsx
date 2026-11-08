@@ -104,5 +104,5 @@ export function HistoryDetail({id}:{id:string}){
   if(result.error&&!result.data)return <ErrorBox englishMessage="Unable to load this contest. Refresh or check your access." message={result.error} onRetry={result.reload}/>;
   const history=result.data;
   if(!history)return null;
-  return <div className="history-detail"><ContestDetailView history={history} error={result.error} onRetry={result.reload}/></div>;
+  return <ContestDetailView history={history} error={result.error} onRetry={result.reload}/>;
 }

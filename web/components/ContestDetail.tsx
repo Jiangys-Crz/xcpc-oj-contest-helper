@@ -1,7 +1,7 @@
 'use client';
 import {cloneElement,useId,useMemo,useState} from 'react';
 import {ArrowUpRight,ChevronDown,ChevronLeft,ChevronRight,ExternalLink,FileText,Filter,LockKeyhole} from 'lucide-react';
-import {Empty,ErrorBox,ModeBadge,ParticipationBadge,ProblemCell,dateTime} from './shared';
+import {Empty,ErrorBox,ModeBadge,PageHeader,ParticipationBadge,ProblemCell,dateTime} from './shared';
 import {ResultColumns} from './ResultColumns';
 import {TableFit} from './TableFit';
 import type {Cell,History,Submission} from './types';
@@ -36,9 +36,9 @@ export function RankPrize({rank,prize}:{rank:string;prize?:string|null}){
   return <div className="judge-rank-prize"><span>{rank||'—'}</span>{label&&<small className={'judge-prize judge-prize-'+prize!.toLowerCase()} aria-label={'Prize: '+label}>{label}</small>}</div>;
 }
 
-export function ContestDetailView({history,error='',onRetry,showTitle=true}:{history:History;error?:string;onRetry?:()=>void;showTitle?:boolean}){
+export function ContestDetailView({history,error='',onRetry}:{history:History;error?:string;onRetry?:()=>void}){
   return <div className="judge-page judge-contest-detail" data-contest-detail={history.id}>
-    {showTitle&&<TableFit compact center className="judge-contest-title"><h1>{history.contestName}</h1></TableFit>}
+    <PageHeader title={history.contestName}/>
     <ErrorBox message={error} englishMessage="Unable to load this contest. Refresh or check your access." onRetry={onRetry}/>
     <ContestScoreboard history={history}/>
     <div className="judge-detail-columns">
