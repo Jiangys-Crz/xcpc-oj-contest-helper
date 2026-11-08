@@ -7,6 +7,7 @@ import {TableFit} from './TableFit';
 import type {Cell,History,Submission} from './types';
 import {judgingState} from './judging';
 import {submissionLanguage} from '../lib/submission-language';
+import {pointScoring} from '../lib/scoreboard';
 
 const problemColors=[
   ['#a4b68b','#111827'],['#99c8e6','#111827'],['#f6e33e','#111827'],['#e9b8cd','#111827'],
@@ -20,8 +21,8 @@ export function ProblemBadge({problem,order}:{problem:string;order:string[]}){
   return <span className="judge-problem-badge" style={{backgroundColor,color}}>{problem}</span>;
 }
 
-export function DetailProblemCell({cell,label}:{cell?:Cell;label:string}){
-  const original=ProblemCell({cell,label});
+export function DetailProblemCell({cell,label,showPoints}:{cell?:Cell;label:string;showPoints:boolean}){
+  const original=ProblemCell({cell,label,showPoints});
   return cloneElement(original,{children:<div className="judge-detail-cell-content">{original.props.children}</div>});
 }
 
@@ -42,7 +43,7 @@ export function ContestDetailView({history,error='',onRetry}:{history:History;er
     <ErrorBox message={error} englishMessage="Unable to load this contest. Refresh or check your access." onRetry={onRetry}/>
     <ContestScoreboard history={history}/>
     <div className="judge-detail-columns">
-      <SubmissionsTable key={history.id} submissions={history.submissions||[]} detailStyle problemOrder={history.problems}/>
+      <SubmissionsTable key={history.id} submissions={history.submissions||[]} detailStyle problemOrder={history.problems} showPoints={history.mode!=='bt'&&pointScoring(history)}/>
       <aside className="judge-detail-information" aria-label="Contest information"><h2>Contest information</h2><ContestMetadata history={history} originalContest/></aside>
     </div>
   </div>;
@@ -59,14 +60,14 @@ export function ContestTiming({history,originalContest=false}:{history:History;o
 }
 
 export function ContestScoreboard({history,summary=true}:{history:History;summary?:boolean}){
-  const practice=history.mode==='bt',graded=!!history.scoring&&history.scoring!=='ICPC';
+  const practice=history.mode==='bt',graded=pointScoring(history);
   const publicColumns=history.publicProblemStatistics;
   const leadingColumns=practice?1:4;
   return <section className="judge-score-section" aria-label="Contest scoreboard">
     <TableFit compact center minimumWidth={(practice?150:330)+history.problems.length*42} className="judge-score-scroll"><table className="data-table scoreboard judge-scoreboard fit-table compact-result-table" data-dense={history.problems.length>16||undefined}><ResultColumns problems={history.problems} practice={practice} score={graded} rows={[{name:history.participantTitle||history.participantLabel,rank:history.rank,solved:history.solved,total:graded?history.points:history.penalty}]}/>
       <caption className="sr-only">Contest results for {history.participantLabel}</caption>
       <thead><tr>{!practice&&<th scope="col" className="judge-rank">Rank</th>}<th scope="col" className="judge-team">Team</th>{!practice&&<><th scope="col" className="judge-solved">Solved</th><th scope="col" className="judge-penalty">{graded?'Score':'Penalty'}</th></>}{history.problems.map(problem=><th scope="col" className="judge-problem-heading" key={problem}><ProblemBadge problem={problem} order={history.problems}/></th>)}</tr></thead>
-      <tbody><tr>{!practice&&<td className="rank-value"><RankPrize rank={history.rank} prize={history.prize}/></td>}<td className="judge-team-name"><ParticipantIdentity title={history.participantTitle} subtitle={history.participantSubtitle} label={history.participantLabel}/></td>{!practice&&<><td className="metric-value">{history.solved}</td><td>{graded?history.points??'—':history.penalty}</td></>}{history.problems.map(problem=><DetailProblemCell key={problem} label={problem} cell={history.cells[problem]}/>)}</tr></tbody>
+      <tbody><tr>{!practice&&<td className="rank-value"><RankPrize rank={history.rank} prize={history.prize}/></td>}<td className="judge-team-name"><ParticipantIdentity title={history.participantTitle} subtitle={history.participantSubtitle} label={history.participantLabel}/></td>{!practice&&<><td className="metric-value">{history.solved}</td><td>{graded?history.points??'—':history.penalty}</td></>}{history.problems.map(problem=><DetailProblemCell key={problem} label={problem} cell={history.cells[problem]} showPoints={!practice&&graded}/>)}</tr></tbody>
       {summary&&!practice&&<tfoot><tr className="judge-summary judge-summary-public"><th scope="row" colSpan={leadingColumns}>public</th>{history.problems.map((problem,i)=><td key={problem}>{publicColumns?publicColumns[i]?.label||'?':problem}</td>)}</tr>{(['submitted','attempted','accepted'] as const).map(kind=><tr className={'judge-summary judge-summary-'+kind} key={kind}><th scope="row" colSpan={leadingColumns}>{kind}</th>{history.problems.map((problem,i)=><td key={problem}>{publicColumns?.[i]?.[kind]??'—'}</td>)}</tr>)}</tfoot>}
     </table></TableFit>
   </section>;
@@ -76,7 +77,7 @@ export function ContestMetadata({history,originalContest=false}:{history:History
 
 export function ContestLegend(){return <aside className="judge-legend" aria-label="Cell colours"><h3>Cell colours</h3><div className="judge-legend-accepted">Solved</div><div className="judge-legend-rejected">Tried, incorrect</div><div className="judge-legend-pending">Tried, pending</div><div className="judge-legend-upsolved">Upsolved</div><div className="judge-legend-untried">Untried</div></aside>}
 
-export function SubmissionsTable({submissions,title='Submissions',participantLabel,historyHref,detailStyle=false,problemOrder}:{submissions:Submission[];title?:string;participantLabel?:string;historyHref?:string;detailStyle?:boolean;problemOrder?:string[]}){
+export function SubmissionsTable({submissions,title='Submissions',participantLabel,historyHref,detailStyle=false,problemOrder,showPoints=true}:{submissions:Submission[];title?:string;participantLabel?:string;historyHref?:string;detailStyle?:boolean;problemOrder?:string[];showPoints?:boolean}){
   const [filters,setFilters]=useState(false),[problem,setProblem]=useState(''),[state,setState]=useState(''),[stage,setStage]=useState('');
   const [page,setPage]=useState(1);
   const filterId=useId();
@@ -85,7 +86,7 @@ export function SubmissionsTable({submissions,title='Submissions',participantLab
   const records=useMemo(()=>[...submissions].filter(record=>(!problem||record.problem===problem)&&(!state||judgingState(record.verdict)===state)&&(!stage||record.practice===(stage==='practice'))).sort((a,b)=>new Date(b.submittedAt).getTime()-new Date(a.submittedAt).getTime()),[submissions,problem,state,stage]);
   const pageCount=Math.max(1,Math.ceil(records.length/10)),currentPage=Math.min(page,pageCount);
   const visibleRecords=detailStyle?records.slice((currentPage-1)*10,currentPage*10):records;
-  const showScore=submissions.some(record=>!record.practice&&record.points!==undefined);
+  const showScore=showPoints&&submissions.some(record=>!record.practice&&record.points!==undefined);
   return <section className={'judge-submissions'+(detailStyle?' domjudge-submissions':'')}>
     <div className="judge-section-heading"><div><h2>{title}{!detailStyle&&<span className="count-label">{submissions.length}</span>}</h2>{participantLabel&&<p>{participantLabel}</p>}</div><div className="judge-table-actions">{historyHref&&<a href={historyHref} className="text-button">History details<ArrowUpRight size={13}/></a>}<button className={'button button-secondary button-small '+(filters?'is-active':'')} onClick={()=>setFilters(!filters)} aria-label="Filter submissions" aria-controls={filterId} aria-expanded={filters}><Filter size={14} aria-hidden="true"/>{!detailStyle&&<>Filter<ChevronDown size={12} aria-hidden="true"/></>}</button></div></div>
     {filters&&<div className="judge-filters" id={filterId}><label>Problem<select value={problem} onChange={event=>{setProblem(event.target.value);setPage(1);}}><option value="">All problems</option>{problems.map(value=><option key={value}>{value}</option>)}</select></label><label>Result<select value={state} onChange={event=>{setState(event.target.value);setPage(1);}}><option value="">All results</option><option value="accepted">Accepted</option><option value="rejected">Incorrect</option><option value="pending">Pending / unconfirmed</option><option value="ignored">Not counted</option></select></label><label>Stage<select value={stage} onChange={event=>{setStage(event.target.value);setPage(1);}}><option value="">All stages</option><option value="contest">Contest</option><option value="practice">Practice</option></select></label><button className="text-button" onClick={()=>{setProblem('');setState('');setStage('');setPage(1);}}>Reset</button></div>}

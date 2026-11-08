@@ -122,13 +122,25 @@ test('the rank cell displays each final prize and distinguishes unknown awards',
   assert(!render(fixture()).includes('Prize: '));
 });
 
+test('ICPC live results display attempts and solve time even with native point fields',()=>{
+  const history=fixture();
+  history.mode='live';
+  history.cells.A={tries:1,pending:0,solved:true,practiceSolved:false,solveTime:47,maxPoints:100};
+  history.submissions![0]={...history.submissions![0],points:100};
+  const html=render(history),labels=headers(html);
+  assert.match(html,/class="problem-cell accepted"[^>]*><div[^>]*><span>1 try<\/span><small>47<\/small>/);
+  assert.doesNotMatch(html,/— \/ 100/);
+  assert(labels.includes('Penalty'));
+  assert(!labels.includes('Score'));
+});
+
 test('native graded scores are displayed only when supplied and anonymous public counts stay unchanged',()=>{
   const history=fixture();history.scoring='IOI';history.points=75;
   history.cells.A={tries:1,pending:0,solved:false,practiceSolved:false,points:75,maxPoints:100};
   history.submissions![0]={...history.submissions![0],verdict:'PARTIAL',points:75};
   history.publicProblemStatistics=history.problems.map((_,i)=>({label:i===0?'C':null,submitted:i===0?7654:null,attempted:null,accepted:null}));
   const html=render(history),labels=headers(html),footer=html.match(/<tfoot>([\s\S]*?)<\/tfoot>/)?.[1]||'';
-  assert(labels.includes('Score'));assert(html.includes('75'));
+  assert(labels.includes('Score'));assert(html.includes('75 / 100'));
   assert(footer.includes('7654'));assert(!footer.includes('1000'));
   assert.match(footer,/<td[^>]*>\?<\/td>/);
   assert.match(footer,/<td[^>]*>—<\/td>/,'Unknown public statistics are not replaced with personal counts');
