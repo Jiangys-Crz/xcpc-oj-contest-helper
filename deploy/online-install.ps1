@@ -65,6 +65,21 @@ function Set-XcpcOnlineCommandPath {
     Write-Host "Command directory: $Bin"
 }
 
+function Resolve-XcpcOnlineInstaller {
+    param([string]$Source)
+    # Releases can contain the source at the archive root or in one directory.
+    $candidates = @($Source) + @(Get-ChildItem -LiteralPath $Source -Directory -Force | Select-Object -ExpandProperty FullName)
+    $roots = @($candidates | Where-Object {
+        (Test-Path -LiteralPath (Join-Path $_ 'install.py') -PathType Leaf) -and
+        (Test-Path -LiteralPath (Join-Path $_ 'install.sh') -PathType Leaf)
+    })
+    if ($roots.Count -gt 1) { throw 'Multiple source roots in release archive.' }
+    if ($roots.Count -eq 0) { throw 'Incomplete source archive.' }
+    $installer = Join-Path $roots[0] 'install.ps1'
+    if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw 'Incomplete source archive: missing install.ps1.' }
+    return $installer
+}
+
 function Invoke-XcpcOnlineSetupCore {
     if ($env:OS -ne 'Windows_NT') { throw 'Use install.sh on Ubuntu or macOS.' }
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -110,8 +125,7 @@ function Invoke-XcpcOnlineSetupCore {
         New-Item -ItemType Directory -Path $xcpcSource | Out-Null
         & $xcpcTar -xzf $xcpcArchive -C $xcpcSource
         if ($LASTEXITCODE -ne 0) { throw 'Could not extract the release.' }
-        $xcpcInstaller = Join-Path $xcpcSource 'VP\install.ps1'
-        if (-not (Test-Path -LiteralPath $xcpcInstaller -PathType Leaf)) { throw 'Incomplete source archive.' }
+        $xcpcInstaller = Resolve-XcpcOnlineInstaller $xcpcSource
         $env:XCPC_SOURCE_REVISION = $xcpcManifest.revision
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $xcpcInstaller
         if ($LASTEXITCODE -ne 0) { throw "Installation failed (exit $LASTEXITCODE). Installer output is saved in: $env:XCPC_SETUP_LOG" }

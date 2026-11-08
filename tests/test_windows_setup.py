@@ -68,6 +68,33 @@ Write-Output ('__RESULT__' + (@{ MachinePath = $script:machinePath; ProcessPath 
         self.assertEqual(data['Writes'], 1)
         self.assertEqual(len(data['Confirmed']), 2)
 
+    def test_online_archive_accepts_flat_and_wrapped_layouts_with_one_installer(self):
+        data = self.run_powershell(". '" + str(ONLINE).replace("'", "''") + "'\n" + r'''
+$source = Join-Path $env:LOCALAPPDATA 'source'
+$wrapped = Join-Path $source 'VP'
+New-Item -ItemType Directory -Path $source, $wrapped | Out-Null
+function Add-FixtureInstallers($Root) {
+    foreach ($file in @('install.py', 'install.sh', 'install.ps1')) {
+        New-Item -ItemType File -Path (Join-Path $Root $file) | Out-Null
+    }
+}
+Add-FixtureInstallers $source
+$flat = Resolve-XcpcOnlineInstaller $source
+Add-FixtureInstallers $wrapped
+try { $null = Resolve-XcpcOnlineInstaller $source } catch { $ambiguous = $_.Exception.Message }
+foreach ($file in @('install.py', 'install.sh', 'install.ps1')) {
+    Remove-Item -LiteralPath (Join-Path $source $file)
+}
+$nested = Resolve-XcpcOnlineInstaller $source
+Remove-Item -LiteralPath (Join-Path $wrapped 'install.ps1')
+try { $null = Resolve-XcpcOnlineInstaller $source } catch { $missing = $_.Exception.Message }
+Write-Output ('__RESULT__' + (@{ Flat=$flat; Wrapped=$nested; Ambiguous=$ambiguous; Missing=$missing } | ConvertTo-Json -Compress))
+''')
+        self.assertEqual(Path(data['Flat']).parent.name, 'source')
+        self.assertEqual(Path(data['Wrapped']).parent.name, 'VP')
+        self.assertIn('Multiple source roots', data['Ambiguous'])
+        self.assertIn('missing install.ps1', data['Missing'])
+
     def test_online_noop_global_update_reapplies_the_machine_command_path(self):
         data = self.run_powershell(". '" + str(ONLINE).replace("'", "''") + "'\n" + r'''
 $script:repaired = @(); $script:calls = @()

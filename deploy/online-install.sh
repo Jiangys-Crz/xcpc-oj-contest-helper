@@ -108,10 +108,20 @@ tar -tzf "$temporary/source.tar.gz" | awk 'BEGIN{ok=1} /^\// || /(^|\/)\.\.(\/|$
 tar -tvzf "$temporary/source.tar.gz" | awk 'substr($0,1,1)!="-" && substr($0,1,1)!="d"{bad=1} END{exit bad}' || { echo 'Source archive links are not allowed.' >&2; exit 1; }
 mkdir "$temporary/source"
 tar -xzf "$temporary/source.tar.gz" -C "$temporary/source"
-source="$temporary/source/VP"
-[[ -f "$source/install.py" && -f "$source/install.sh" ]] || { echo 'Incomplete source archive.' >&2; exit 1; }
+source=
+# Match the updater's root-or-one-directory layout and require one installer root.
+shopt -s dotglob nullglob
+for candidate in "$temporary/source" "$temporary/source"/*; do
+    if [[ -f "$candidate/install.py" && -f "$candidate/install.sh" ]]; then
+        [[ -z "$source" ]] || { echo 'Multiple source roots in release archive.' >&2; exit 1; }
+        source="$candidate"
+    fi
+done
+[[ -n "$source" ]] || { echo 'Incomplete source archive.' >&2; exit 1; }
 export XCPC_SOURCE_REVISION="$revision"
-if [[ "$platform" == Darwin ]]; then interactive sh "$source/install-macos.sh"
+if [[ "$platform" == Darwin ]]; then
+    [[ -f "$source/install-macos.sh" ]] || { echo 'Incomplete source archive: missing install-macos.sh.' >&2; exit 1; }
+    interactive sh "$source/install-macos.sh"
 else interactive bash "$source/install.sh"; fi
 configure_command_path "/usr/local/bin" "$platform"
 export PATH="/usr/local/bin:$PATH"

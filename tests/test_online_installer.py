@@ -92,23 +92,24 @@ esac
         path.write_text('#!/bin/sh\nset -eu\n' + body)
         path.chmod(0o755)
 
-    def make_archive(self, unsafe=None, *, missing_installer=False):
+    def make_archive(self, unsafe=None, *, missing_installer=False, prefixes=('VP/',)):
         installer = '''#!/bin/sh
 set -eu
 printf '%s\\0' "$XCPC_SOURCE_REVISION" "$0" "$PWD" "$@" > "$FIXTURE_INSTALL_LOG"
 [ "$FIXTURE_INSTALL_EXIT" != 0 ] || { mkdir -p "$FIXTURE_GLOBAL_BIN"; cp "$FIXTURE_CLI_TEMPLATE" "$FIXTURE_GLOBAL_BIN/xcpc"; }
 exit "$FIXTURE_INSTALL_EXIT"
 '''.encode()
-        files = {'VP/install.py': b'# No Python installation is executed by this fixture.\n',
-                 'VP/install.sh': installer, 'VP/install-macos.sh': installer}
+        files = {'install.py': b'# No Python installation is executed by this fixture.\n',
+                 'install.sh': installer, 'install-macos.sh': installer}
         if missing_installer:
-            del files['VP/install.py']
+            del files['install.py']
         with tarfile.open(self.archive, 'w:gz') as archive:
-            for name, value in files.items():
-                entry = tarfile.TarInfo(name)
-                entry.size = len(value)
-                entry.mode = 0o755 if name.endswith('.sh') else 0o644
-                archive.addfile(entry, io.BytesIO(value))
+            for prefix in prefixes:
+                for name, value in files.items():
+                    entry = tarfile.TarInfo(prefix + name)
+                    entry.size = len(value)
+                    entry.mode = 0o755 if name.endswith('.sh') else 0o644
+                    archive.addfile(entry, io.BytesIO(value))
             if unsafe:
                 name, kind = unsafe
                 entry = tarfile.TarInfo(name)
@@ -148,20 +149,29 @@ exit "$FIXTURE_INSTALL_EXIT"
         return [os.fsdecode(value) for value in self.installer_log.read_bytes().split(b'\0')[:-1]]
 
     def test_verified_archive_invokes_the_correct_native_installer_with_source_revision(self):
-        for operating_system, filename in (('Linux', 'install.sh'), ('Darwin', 'install-macos.sh')):
-            with self.subTest(operating_system=operating_system):
-                self.installer_log.unlink(missing_ok=True)
-                self.curl_log.unlink(missing_ok=True)
-                result = self.run_bootstrap(operating_system=operating_system)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                args = self.installed()
-                self.assertEqual(args[0], REVISION)
-                self.assertEqual(Path(args[1]).name, filename)
-                self.assertEqual(args[2:], [str(self.root)])
-                self.assertEqual(self.calls(self.curl_log), [BASE + '/api/client/releases/latest',
-                                                           BASE + '/downloads/terminal/' + REVISION + '.tar.gz'])
-                self.assertIn('xcpc login', result.stdout)
-                self.assertEqual(list(self.downloads.iterdir()), [])
+        for prefix in ('', 'VP/'):
+            self.make_archive(prefixes=(prefix,))
+            for operating_system, filename in (('Linux', 'install.sh'), ('Darwin', 'install-macos.sh')):
+                with self.subTest(operating_system=operating_system, prefix=prefix):
+                    self.installer_log.unlink(missing_ok=True)
+                    self.curl_log.unlink(missing_ok=True)
+                    result = self.run_bootstrap(operating_system=operating_system)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    args = self.installed()
+                    self.assertEqual(args[0], REVISION)
+                    self.assertTrue(args[1].endswith('/source/' + prefix + filename))
+                    self.assertEqual(args[2:], [str(self.root)])
+                    self.assertEqual(self.calls(self.curl_log), [BASE + '/api/client/releases/latest',
+                                                               BASE + '/downloads/terminal/' + REVISION + '.tar.gz'])
+                    self.assertIn('xcpc login', result.stdout)
+                    self.assertEqual(list(self.downloads.iterdir()), [])
+
+    def test_ambiguous_archive_never_runs_an_installer(self):
+        self.make_archive(prefixes=('', 'VP/'))
+        result = self.run_bootstrap()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Multiple source roots', result.stderr)
+        self.assertFalse(self.installer_log.exists())
 
     def test_sha_mismatch_never_runs_an_installer(self):
         self.write_manifest(sha256='b' * 64)
