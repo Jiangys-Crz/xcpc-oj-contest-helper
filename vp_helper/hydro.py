@@ -82,7 +82,7 @@ class HydroLive:
         self.handle = account.get("handle", "")
         self.uid = account.get("uid")
         self._identified = False
-        self._dynamic_records = None
+        self._unfiltered_records = False
         self.pending_results = PendingResults()
         self.submissions_complete = False
         self.submission_message = ''
@@ -336,13 +336,12 @@ class HydroLive:
         if contest.extra.get("uid") != self.uid:
             raise VPError("The CWNUOJ user ID changed; restore this contest's account.")
         result, seen, page = {}, set(), 1
-        # CWNUOJ's rating plugin interprets uidOrName as a display-name keyword,
-        # so its JSON view must be paged without that filter and then filtered by
-        # exact numeric UID. The server still enforces contest visibility.
-        dynamic = None if correction else self._dynamic_records
+        # Some rating-plugin versions treat uidOrName as a name search. Keep
+        # the numeric filter when the server confirms a self-only record view.
+        use_uid = correction or not self._unfiltered_records
         while True:
             params = {"page": page} if correction else {"tid": self.id, "page": page}
-            if dynamic is not True:
+            if use_uid:
                 params["uidOrName"] = str(self.uid)
             try:
                 data = self.get_json(ORIGIN + self.prefix + "/record", **params)
@@ -352,14 +351,12 @@ class HydroLive:
                 self.submissions_complete = False
                 self.submission_message += (' · ' if self.submission_message else '') + 'Recent submissions synced; older history will be retried: ' + str(exc)
                 break
-            if dynamic is None and data.get("ratingDynamicRecords"):
-                dynamic = True
-                if not correction:
-                    self._dynamic_records = True
-                continue
             dynamic = bool(data.get("ratingDynamicRecords"))
+            if page == 1 and use_uid and dynamic and data.get("ratingRecordsSelfUid") != self.uid:
+                use_uid = False
+                continue
             if not correction:
-                self._dynamic_records = dynamic
+                self._unfiltered_records = dynamic and not use_uid
             records = data.get("rdocs")
             if not isinstance(records, list):
                 raise VPError("CWNUOJ did not return a submission list.")
@@ -402,7 +399,8 @@ class HydroLive:
                     next_page = int(query["page"][0])
                 except (KeyError, ValueError, IndexError):
                     raise VPError("CWNUOJ returned invalid submission pagination.") from None
-                if query.get("tid") != (None if correction else [self.id]) or next_page <= page:
+                if (query.get("tid") != (None if correction else [self.id]) or next_page <= page
+                        or use_uid and query.get("uidOrName") != [str(self.uid)]):
                     raise VPError("CWNUOJ changed contest identity while paging submissions.")
                 page = next_page
             elif not records:

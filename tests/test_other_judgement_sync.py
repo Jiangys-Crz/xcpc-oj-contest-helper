@@ -45,7 +45,7 @@ class OtherJudgementSyncTests(Isolated):
         api._identified=True
         c=Contest('cwnuoj',hydro.TID,hydro.URL,'Fixture','Fixture',{},Rules(1))
         api.apply_metadata(c,hydro.details())
-        api._dynamic_records=True
+        api._unfiltered_records=True
         return api,c
 
     def nk(self):

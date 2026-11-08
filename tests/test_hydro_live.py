@@ -193,6 +193,24 @@ class PlatformTests(unittest.TestCase):
         with self.assertRaisesRegex(VPError, "invalid next"):
             self.api.submissions(self.contest)
 
+    def test_self_only_record_pages_keep_uid_filter_on_every_poll(self):
+        self.contest.extra["phase"] = "CODING"
+        first = {"_id": RID, "uid": 42, "pid": 10, "status": 1}
+        second = {**first, "_id": f"{1101:08x}" + "2" * 16, "status": 2}
+
+        def get_json(url, *, tid, page, uidOrName):
+            self.assertEqual((tid, uidOrName), (TID, "42"))
+            return {"ratingDynamicRecords": True, "ratingRecordsSelfUid": 42,
+                    "rdocs": [first if page == 1 else second], "ratingRecordsHasNext": page == 1,
+                    "ratingRecordsNextUrl": f"/record?tid={TID}&uidOrName=42&page=2"}
+
+        self.api.get_json = Mock(side_effect=get_json)
+        for _ in range(2):
+            self.assertEqual([row["verdict"] for row in self.api.submissions(self.contest)],
+                             ["CORRECT", "WRONG-ANSWER"])
+            self.assertTrue(self.api.submissions_complete)
+        self.assertEqual(self.api.get_json.call_count, 4)
+
     def test_projection_hides_verdict_instead_of_inventing_failure(self):
         self.api.get_json = Mock(side_effect=[{"rdocs": [{"_id": RID, "uid": 42, "pid": 10}]}, {"rdocs": []}])
         self.assertEqual(self.api.submissions(self.contest)[0]["verdict"], "HIDDEN")
@@ -205,6 +223,15 @@ class PlatformTests(unittest.TestCase):
         self.assertIn("75", output.getvalue())
         self.assertIn("CWNUOJ", output.getvalue())
         self.assertNotIn("hacks", output.getvalue())
+
+    def test_live_accepted_scoreboard_cell_has_green_background(self):
+        self.api.get_json = Mock(return_value=board())
+        snapshot = self.api.snapshot(self.contest, details=details())
+        dashboard = LiveDashboard(self.contest, 100, snapshot, [])
+        console = Console(width=140, color_system="truecolor")
+        green_text = [segment.text for segment in console.render(dashboard.fixed(140))
+                      if segment.style and segment.style.bgcolor and segment.style.bgcolor.name == "#60e760"]
+        self.assertTrue(any("+" in text for text in green_text))
 
     def test_json_login_redirect_is_refreshed_once_without_post(self):
         response = Mock(url=URL)

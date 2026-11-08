@@ -351,14 +351,18 @@ class LocalStateTests(IsolatedState):
         own={'party':{'members':[{'handle':'tester'}]},'rank':17,'points':75,'penalty':0,
              'problemResults':[{'points':75,'accepted':False,'type':'FINAL'}, {'points':0,'accepted':False}]}
         console=Console(width=160,color_system='truecolor')
-        def colors():
-            return {tuple(segment.style.color.get_truecolor()) for segment in console.render(
-                LiveDashboard(c,1800,{'own':own},[]).fixed(160))
-                if segment.style and segment.style.color and not segment.style.color.is_default}
-        self.assertNotIn((0,128,0),colors())
-        self.assertIn((184,134,11),colors())
+        def colors(layer):
+            dashboard = LiveDashboard(c, 1800, {'own': own}, [])
+            values = set()
+            for segment in console.render(dashboard.fixed(160)):
+                color = getattr(segment.style, layer) if segment.style else None
+                if color and not color.is_default:
+                    values.add(tuple(color.get_truecolor()))
+            return values
+        self.assertNotIn((96,231,96),colors('bgcolor'))
+        self.assertIn((184,134,11),colors('color'))
         own['problemResults'][0]['accepted']=True
-        self.assertIn((0,128,0),colors())
+        self.assertIn((96,231,96),colors('bgcolor'))
 
     def test_installed_submit_dispatch_selects_live_entry_and_keeps_private_config(self):
         native = self.root / "venv/bin/vp-submit"

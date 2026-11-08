@@ -609,8 +609,12 @@ class LiveDashboard:
                 value += "\n" + clock(when)
             pending = preliminary or result.get('pending') or result.get('frozen') or original_cells[label].pending
             accepted = result.get('accepted', bool(points) if scoring in ('ICPC', 'CF') else False)
-            color = ("#b8860b" if points and (preliminary or not accepted) else "#008000" if points else
-                     PENDING_STYLE if pending else "#ff0000" if rejected else "default")
+            if accepted and not preliminary:
+                color = "black on #60e760"
+            elif points:
+                color = "#b8860b"
+            else:
+                color = PENDING_STYLE if pending else "#ff0000" if rejected else "default"
             cells.append(Text(value, style=color))
         name = (own["party"].get("teamName") or ";".join(m["handle"] for m in own["party"]["members"])) if own else self.handle
         name = self.participant_label or name
