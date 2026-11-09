@@ -62,7 +62,7 @@ export function VirtualBoard({roomId}:{roomId:string}) {
       <div className={styles.title}><h2>Virtual Board</h2>{board&&<span className={styles.format}>{board.scoringSystem}</span>}
         {board?.frozen&&<span className={styles.freeze}><LockKeyhole size={12}/>Frozen</span>}</div>
       <div className={styles.filters}>
-        <label className={styles.search}><Search size={16}/><input aria-label="Search by team, school or member" type="search" placeholder="Search team, school or member" value={term} onChange={event=>setTerm(event.target.value)}/></label>
+        <div className={styles.search}><Search size={16} aria-hidden="true"/><input aria-label="Search by team, school or member" type="search" placeholder="Search team, school or member" value={term} onChange={event=>setTerm(event.target.value)}/></div>
         <label><span className="sr-only">Participation category</span><select value={category} onChange={event=>setCategory(event.target.value)}>
           <option value="all">All participants</option>
           {Object.entries(categories).map(([key,label])=><option key={key} value={key}>{label}</option>)}

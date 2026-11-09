@@ -37,7 +37,9 @@ export function loadRoomArchive(url:string):Promise<Archive|null> {
   if (pendingArchives>=2) return Promise.resolve(null);
   if (archiveCache.size>=24) archiveCache.delete(archiveCache.keys().next().value!);
   const packaged=resolve('board-runtime');
-  const root=existsSync(resolve('wheels'))?resolve('.'):resolve('..'),wheels=resolve(root,'wheels');
+  const cwd=process.cwd();
+  const root=existsSync(resolve(cwd,'wheels'))?cwd:resolve(/*turbopackIgnore: true*/ cwd,'..');
+  const wheels=resolve(root,'wheels');
   const packagedExists=existsSync(packaged);
   if (!packagedExists && !existsSync(wheels)) return Promise.resolve(null);
   const pythonPath=packagedExists?packaged:[root,...readdirSync(wheels)
