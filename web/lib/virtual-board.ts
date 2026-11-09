@@ -7,7 +7,7 @@ import {publicScore,roomTiming} from './scoreboard';
 
 type BoardCell={solved:boolean;tries:number;pending:number;solveTime?:number;points?:number};
 export type VirtualRow={
-  id:string;name:string;organization?:string;members?:string[];kind:'official'|'starred'|'vp';
+  id:string;name:string;organization?:string;members?:string[];kind:'official'|'starred'|'vp';female?:boolean;
   solved:number;penalty:number;points?:number|null;cells:Record<string,BoardCell>;
   rank?:number|null;medal?:'gold'|'silver'|'bronze';first?:string[];waiting?:boolean;
 };
@@ -16,7 +16,7 @@ export type VirtualBoard={
   scoringSystem:string;sourceUrl:string|null;originalAvailable:boolean;frozen:boolean;
 };
 type Snapshot={elapsed:number;released:boolean;revealed:string[];rows:VirtualRow[]};
-type Team={id:string;name:string;official:boolean;organization?:string;team_name?:string;members?:string[]};
+type Team={id:string;name:string;official:boolean;organization?:string;team_name?:string;members?:string[];female?:boolean};
 type Archive={
   metadata:{duration:number;problems:string[];penalty_minutes:number;penalty_rounding:string;medals?:Record<'gold'|'silver'|'bronze',number>;teams:Team[]};
   events:{team:string;id:string;problem:string;time:number;verdict:string}[];
@@ -129,7 +129,7 @@ export function buildVirtualBoard(room:Row,histories:Row[],myId:string|undefined
     for (const team of archive.metadata.teams) {
       const score=publicScore({started_at:room.starts_at,problems_json:JSON.stringify(problems),rules_json:JSON.stringify(penaltyRules),
         submissions_json:JSON.stringify(eventsByTeam.get(team.id)??[])},contest,at,timing.frozen,true);
-      official.push({id:'original:'+team.id,name:team.team_name||team.name,organization:team.organization,members:team.members,
+      official.push({id:'original:'+team.id,name:team.team_name||team.name,organization:team.organization,members:team.members,female:team.female,
         kind:team.official?'official':'starred',solved:score.solved,penalty:score.penalty,cells:score.cells});
     }
   }
@@ -152,7 +152,8 @@ export function buildVirtualBoard(room:Row,histories:Row[],myId:string|undefined
     const waiting=!row.id || ['scheduled','cancelled','failed'].includes(row.status);
     const result=waiting?null:publicScore({...row,...(penaltyRules?{rules_json:JSON.stringify({...JSON.parse(row.rules_json||'{}'),...penaltyRules})}:{})},
       contest,participantLimit,timing.frozen,true);
-    return {id:row.participant_key,name:row.participant_name,members:JSON.parse(row.participant_members_json).map((member:Row)=>member.realname||member.username),
+    return {id:row.participant_key,name:row.participant_name,organization:'Virtual Programming',
+      members:JSON.parse(row.participant_members_json).map((member:Row)=>member.realname||member.username||member.useraccount).filter(Boolean),
       kind:'vp',solved:result?.solved??0,penalty:result?.penalty??0,points:result?.points??null,cells:result?.cells??{},waiting};
   });
   const compare=(a:VirtualRow,b:VirtualRow)=>graded?(b.points??-1)-(a.points??-1):b.solved-a.solved||a.penalty-b.penalty;

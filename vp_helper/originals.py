@@ -116,7 +116,8 @@ def board_metadata(config: dict, teams: list | dict, contest: Contest, source: s
         projected = []
         items = teams.items() if isinstance(teams, dict) else enumerate(teams)
         for key, team in items:
-            group = set(team.get("group", [])) & {"official", "unofficial"}
+            groups = set(team.get("group", []))
+            group = groups & {"official", "unofficial"}
             if isinstance(team.get("official"), bool):
                 official = team["official"]
             elif isinstance(team.get("unofficial"), bool):
@@ -133,7 +134,8 @@ def board_metadata(config: dict, teams: list | dict, contest: Contest, source: s
             members = [name(member) for member in team["members"]]
             projected.append({"id": str(team.get("team_id", team.get("id", key))),
                               "name": f"{organization} - {team_name} - {', '.join(members)}", "official": official,
-                              "organization": organization, "team_name": team_name, "members": members})
+                              "organization": organization, "team_name": team_name, "members": members,
+                              **({"female": True} if "girl" in groups or team.get("girl") in (True, 1) else {})})
         return {"version": 1, "contest_name": contest.name, "duration": duration,
                 "penalty_minutes": penalty // 60, "problems": labels,
                 "problem_ids": {str(p.get("id", i)): p["label"] for i, p in enumerate(config["problems"])} if config.get("problems") else {str(i): label for i, label in enumerate(labels)},

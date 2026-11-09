@@ -52,12 +52,14 @@ class XCPCIOImportTests(unittest.TestCase):
         return parse(*(data or self.data), contest or self.contest, PAGE)
 
     def test_current_schema_replays_real_time_preserves_starred_and_ignores_ce_penalty(self):
+        self.data[1][0]['group'].append('girl')
         metadata, events, final = self.parse()
         self.assertEqual(metadata['duration'], 18000)
         self.assertEqual(metadata['penalty_minutes'], 20)
         self.assertFalse(metadata['compile_penalty'])
         self.assertEqual(metadata['medals'], {'gold': 1, 'silver': 0, 'bronze': 0})
         self.assertEqual(metadata['teams'][0]['name'], '示例大学 - 正式队 - 选手')
+        self.assertIs(metadata['teams'][0]['female'], True)
         self.assertFalse(metadata['teams'][1]['official'])
         self.assertEqual(events[2].time, 180.999)
         self.assertEqual(events[0].verdict, 'COMPILER-ERROR')

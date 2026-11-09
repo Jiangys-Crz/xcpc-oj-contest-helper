@@ -760,7 +760,8 @@ export class CloudService {
         const room=this.visibleRoom(rid,user),source=roomBoardSource(room);
         const archive=source?await loadRoomArchive(source):null;
         const current=this.visibleRoom(rid,user);
-        const histories=this.store.all('SELECT h.*,p.id participant_key,p.label participant_name,p.members_json participant_members_json FROM participants p LEFT JOIN histories h ON h.participant_id=p.id AND h.mode=\'vp\' AND h.room_id=p.room_id WHERE p.room_id=? AND NOT EXISTS(SELECT 1 FROM participant_departures d WHERE d.participant_id=p.id) ORDER BY p.created_at,p.id',rid);
+        const histories=this.store.all('SELECT h.*,p.id participant_key,p.label participant_name,p.type participant_type,p.members_json participant_members_json FROM participants p LEFT JOIN histories h ON h.participant_id=p.id AND h.mode=\'vp\' AND h.room_id=p.room_id WHERE p.room_id=? AND NOT EXISTS(SELECT 1 FROM participant_departures d WHERE d.participant_id=p.id) ORDER BY p.created_at,p.id',rid);
+        for(const row of histories)row.participant_name=this.participantIdentity({label:row.participant_name,type:row.participant_type,members_json:row.participant_members_json}).participantTitle;
         const snapshot=source?null:this.store.one('SELECT snapshot_json FROM room_board_snapshots WHERE room_id=?',rid);
         return {data:buildVirtualBoard(current,histories,this.participant(rid,user.id)?.id,
           roomBoardSource(current)===source?archive:null,snapshot?JSON.parse(snapshot.snapshot_json):null)};

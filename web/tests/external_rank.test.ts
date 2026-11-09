@@ -174,9 +174,11 @@ test('virtual board pins the viewer and only ranks verified originals and same-r
     ]}});
   const board=await api('GET',path,owner.token);
   assert.equal(board.originalAvailable,true);
-  assert.deepEqual(board.rows.map((row:Data)=>[row.name,row.rank]),[['Starred',null],['Original',1],[participant.label,2],['Second original',3]]);
+  assert.deepEqual(board.rows.map((row:Data)=>[row.name,row.rank]),[['Starred',null],['Original',1],[participant.participantTitle,2],['Second original',3]]);
   assert.equal(board.mine.id,participant.id);
   assert.equal(board.mine.rank,2);
+  assert.equal(board.mine.organization,'Virtual Programming');
+  assert.deepEqual(board.mine.members,['owner']);
   assert.equal(board.mine.cells.A.tries,1);
   assert.equal(board.problems[0].accepted,2);
 });
