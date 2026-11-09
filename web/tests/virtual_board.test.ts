@@ -12,6 +12,7 @@ const archive={
   events:[
     ...Array.from({length:50},(_,i)=>({team:i===49?'s':String(i),id:String(i),problem:'A',time:i===0?58.75:59,verdict:'CORRECT'})),
     {team:'0',id:'51',problem:'B',time:119,verdict:'CORRECT'},
+    {team:'0',id:'53',problem:'C',time:130,verdict:'WRONG-ANSWER'},
     {team:'1',id:'52',problem:'C',time:500,verdict:'CORRECT'}
   ]
 };
@@ -29,6 +30,7 @@ test('external original timeline respects room ICPC and CCPC display rules',()=>
     [null,true],[null,false],['A',true],
   ]);
   assert.equal(regional.rows[0].problemSlots?.[0].first,true);
+  assert.deepEqual(regional.rows[0].problemSlots?.[1].cell?.tries,1);
   assert.deepEqual(regional.rows[0].first,['A']);
   assert.deepEqual(regional.rows[1].first,[]);
   const frozenAt=start+510e3;
@@ -42,16 +44,21 @@ test('external original timeline respects room ICPC and CCPC display rules',()=>
   assert.equal(final.rows.find(row=>row.id==='original:1')?.cells.C.solved,true);
 });
 
-test('CCPC packs a team’s anonymous solves by acceptance time until the freeze starts',()=>{
+test('CCPC packs anonymous solves and submissions on the left until the freeze starts',()=>{
   const ccpc={...room,scoring_system:'CCPC'};
   const history={id:'history',participant_key:'vp',participant_name:'Room VP',participant_members_json:'[]',
     started_at:starts_at,problems_json:'["A","B","C"]',submissions_json:JSON.stringify([
       {id:'0',problem:'B',submittedAt:new Date(start+25e3).toISOString(),verdict:'WRONG-ANSWER'},
       {id:'1',problem:'C',submittedAt:new Date(start+31e3).toISOString(),verdict:'CORRECT'},
-      {id:'2',problem:'B',submittedAt:new Date(start+42e3).toISOString(),verdict:'CORRECT'},
+      {id:'2',problem:'B',submittedAt:new Date(start+100e3).toISOString(),verdict:'PENDING'},
+      {id:'5',problem:'B',submittedAt:new Date(start+200e3).toISOString(),verdict:'CORRECT'},
       {id:'3',problem:'A',submittedAt:new Date(start+47e3).toISOString(),verdict:'CORRECT'},
       {id:'4',problem:'C',submittedAt:new Date(start+60e3).toISOString(),verdict:'CORRECT'},
     ])};
+  const slotsAt=(time:number)=>buildVirtualBoard(ccpc,[history],'vp',archive,null,start+time*1000)
+    .mine?.problemSlots?.map(({label,cell})=>[label,cell?.solved,cell?.tries,cell?.pending]);
+  assert.deepEqual(slotsAt(90),[[null,true,1,0],[null,false,1,0],['A',true,1,0]]);
+  assert.deepEqual(slotsAt(150),[[null,true,1,0],[null,false,1,1],['A',true,1,0]]);
   const before=buildVirtualBoard(ccpc,[history],'vp',archive,null,start+479999);
   assert.equal(before.rowProblemOrder,true);
   assert.deepEqual(before.mine?.problemSlots?.map(({label,cell})=>[label,cell?.solved,cell?.tries]),[

@@ -198,10 +198,14 @@ export function buildVirtualBoard(room:Row,histories:Row[],myId:string|undefined
     if (rowProblemOrder) {
       const solved=hidden.filter(label=>row.cells[label]?.solved).sort((a,b)=>solveAt(row,a)-solveAt(row,b));
       const slots:ProblemSlot[]=solved.map(label=>({label:null,cell:row.cells[label],first:firstRows.get(label)===row.id}));
+      const attempted=hidden.map(label=>row.cells[label])
+        .filter(cell=>cell && !cell.solved && (cell.tries>0 || cell.pending>0))
+        .sort((a,b)=>b.tries+b.pending-a.tries-a.pending||b.pending-a.pending);
       // Older terminal snapshots omit the hidden cells but retain the total.
       const knownSolved=[...visible].filter(label=>row.cells[label]?.solved).length;
-      const anonymous=Math.min(row.solved-knownSolved-solved.length,hidden.length-solved.length);
+      const anonymous=Math.min(row.solved-knownSolved-solved.length,hidden.length-solved.length-attempted.length);
       for (let i=0;i<anonymous;i++) slots.push({label:null,cell:{solved:true,tries:0,pending:0}});
+      for (const cell of attempted) slots.push({label:null,cell});
       while (slots.length<hidden.length) slots.push({label:null});
       for (const label of visible) slots.push({label,cell:row.cells[label]});
       row.problemSlots=slots;
