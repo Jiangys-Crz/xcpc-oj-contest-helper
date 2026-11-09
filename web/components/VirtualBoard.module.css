@@ -49,9 +49,12 @@
 .metrics>strong{height:28px;border-radius:4px;display:grid;place-items:center;font-size:16px}
 .metrics .rank{background:#e6edf7;color:#1e3a66;font:700 18px Menlo,Consolas,monospace}
 .rank[data-starred="true"]{border:1px dashed #97a4b7;background:transparent;color:#6b788d}
-.rank[data-medal="gold"]{background:#dba90a;color:#352900}
-.rank[data-medal="silver"]{background:#b6c1d1;color:#1a2637}
-.rank[data-medal="bronze"]{background:#b9783c;color:#fff}
+.rank[data-medal="gold"],.medalKey[data-medal="gold"]{background:#dba90a;color:#352900}
+.rank[data-medal="silver"],.medalKey[data-medal="silver"]{background:#b6c1d1;color:#1a2637}
+.rank[data-medal="bronze"],.medalKey[data-medal="bronze"]{background:#b9783c;color:#fff}
+.legend{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:0 0 10px;color:#53647c;font-size:12px}
+.legend .medalKey,.legend .firstKey{padding:1px 6px;border-radius:4px;font-weight:600}
+.legend .firstKey{background:#1b5e20;color:#fff;margin-right:6px}
 .metrics .penalty{color:#4b5568;font-size:17px}
 .metrics .score{font-size:20px}
 .identity{display:flex;align-items:center;gap:8px;min-width:0;min-height:34px}

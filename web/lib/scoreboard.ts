@@ -63,10 +63,10 @@ export function publicScore(history: Row, room: Row, at: number, freeze: boolean
         cell.unknownPoints=true;
         if(latest)delete cell.points;
       }
-    } else if(accepted.has(verdict)) {cell.solved=true;cell.solveTime=Math.max(0,Math.floor((time-start)/60000));acceptedSeconds[submission.problem]=Math.max(0,Math.floor((time-start)/1000));}
+    } else if(accepted.has(verdict)) {cell.solved=true;cell.solveTime=Math.max(0,Math.floor((time-start)/60000));acceptedSeconds[submission.problem]=Math.max(0,(time-start)/1000);}
   }
   const penalty=graded || practiceOnly?0:rules.penalty_rounding==='total_seconds'
-    ?Math.floor(Object.entries(cells).reduce((total,[problem,c])=>total+(c.solved?(acceptedSeconds[problem]??0)+Math.max(0,c.tries-1)*(rules.penalty_minutes??20)*60:0),0)/60)
+    ?Math.floor(Object.entries(cells).reduce((total,[problem,c])=>total+(c.solved?Math.floor(acceptedSeconds[problem]??0)+Math.max(0,c.tries-1)*(rules.penalty_minutes??20)*60:0),0)/60)
     :Object.values(cells).reduce((total,c)=>total+(c.solved?c.solveTime+Math.max(0,c.tries-1)*(rules.penalty_minutes??20):0),0);
   const unknownPoints=Object.values(cells).some(c=>c.unknownPoints);
   let points=graded && !practiceOnly && !subtasks && !unknownPoints?Object.values(cells).reduce((total,c)=>total+(c.points??0),0):undefined;

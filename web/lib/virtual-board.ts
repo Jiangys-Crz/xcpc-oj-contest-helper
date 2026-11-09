@@ -6,7 +6,7 @@ import type {Row} from './db';
 import {publicScore,roomTiming} from './scoreboard';
 
 type BoardCell={solved:boolean;tries:number;pending:number;solveTime?:number;points?:number};
-type ProblemSlot={label:string|null;cell?:BoardCell};
+type ProblemSlot={label:string|null;cell?:BoardCell;first?:boolean};
 export type VirtualRow={
   id:string;name:string;organization?:string;members?:string[];kind:'official'|'starred'|'vp';female?:boolean;
   solved:number;penalty:number;points?:number|null;cells:Record<string,BoardCell>;
@@ -15,6 +15,7 @@ export type VirtualRow={
 export type VirtualBoard={
   rows:VirtualRow[];mine:VirtualRow|null;problems:{label:string|null;submitted:number|null;attempted:number|null;accepted:number|null;first:number|null;last:number|null}[];
   scoringSystem:string;sourceUrl:string|null;originalAvailable:boolean;frozen:boolean;rowProblemOrder:boolean;
+  medalState?:'provisional'|'final';
 };
 type Snapshot={elapsed:number;released:boolean;revealed:string[];rows:VirtualRow[]};
 type Team={id:string;name:string;official:boolean;organization?:string;team_name?:string;members?:string[];female?:boolean};
@@ -135,22 +136,26 @@ export function buildVirtualBoard(room:Row,histories:Row[],myId:string|undefined
       const row:VirtualRow={id:'original:'+team.id,name:team.team_name||team.name,organization:team.organization,members:team.members,female:team.female,
         kind:team.official?'official':'starred',solved:score.solved,penalty:score.penalty,cells:score.cells};
       official.push(row);
-      if (rowProblemOrder) solveTimes.set(row,score.acceptedSeconds);
+      solveTimes.set(row,score.acceptedSeconds);
     }
   }
   const visible=new Set(problems.filter(label=>!rowProblemOrder ||
     (archive?official.filter(row=>row.cells[label]?.solved).length>=50:snapshot?.revealed.includes(label))));
+  const hidden=problems.filter(label=>!visible.has(label));
+  const solveAt=(row:VirtualRow,label:string)=>solveTimes.get(row)?.[label]??(row.cells[label]?.solveTime??Infinity)*60;
   const firstRows=new Map<string,string>();
   const stats=problems.map((label,index)=>{
-    if (!visible.has(label)) return {label:null,submitted:null,attempted:null,accepted:null,first:null,last:null};
-    const solved=official.filter(row=>row.cells[label]?.solved).map(row=>row.cells[label].solveTime).filter((t):t is number=>t!=null);
-    const first=solved.length?Math.min(...solved):null;
-    const earliest=first===null?[]:official.filter(row=>row.cells[label]?.solved && row.cells[label].solveTime===first);
+    const solvedRows=official.filter(row=>row.cells[label]?.solved);
+    const earliestTime=Math.min(...solvedRows.map(row=>solveAt(row,label)));
+    const earliest=Number.isFinite(earliestTime)?solvedRows.filter(row=>solveAt(row,label)===earliestTime):[];
     if (earliest.length===1) firstRows.set(label,earliest[0].id);
+    if (!visible.has(label)) return {label:null,submitted:null,attempted:null,accepted:null,first:null,last:null};
+    const solved=solvedRows.map(row=>row.cells[label].solveTime).filter((t):t is number=>t!=null);
+    const first=solved.length?Math.min(...solved):null;
     const attempts=official.map(row=>(row.cells[label]?.tries??0)+(row.cells[label]?.pending??0));
     return {label,submitted:archive?counts[index].submitted:snapshot?attempts.reduce((sum,count)=>sum+count,0):null,
       attempted:archive?counts[index].attempted.size:snapshot?attempts.filter(Boolean).length:null,
-      accepted:archive||snapshot?solved.length:null,first,last:solved.length?Math.max(...solved):null};
+      accepted:archive||snapshot?solvedRows.length:null,first,last:solved.length?Math.max(...solved):null};
   });
   const roomRows=histories.map(row=>{
     const waiting=!row.id || ['scheduled','cancelled','failed'].includes(row.status);
@@ -168,16 +173,20 @@ export function buildVirtualBoard(room:Row,histories:Row[],myId:string|undefined
   let place=0,rankedSeen=0,previous:VirtualRow|undefined;
   let officialPlace=0,previousOfficial:VirtualRow|undefined,officialSeen=0;
   const medals=archive?.metadata.medals;
+  const medalState=medals&&Object.values(medals).some(Boolean)
+    ? at>=Date.parse(timing.endsAt)?'final':'provisional'
+    : undefined;
   for (const row of rows) {
+    const referencePlace=previousOfficial && compare(row,previousOfficial)===0?officialPlace:officialSeen+1;
     if (row.kind==='official') {
       officialSeen++;
-      if (!previousOfficial || compare(row,previousOfficial)!==0) officialPlace=officialSeen;
+      officialPlace=referencePlace;
       previousOfficial=row;
-      if (medals && at>=Date.parse(timing.endsAt)) {
-        if (officialPlace<=medals.gold) row.medal='gold';
-        else if (officialPlace<=medals.gold+medals.silver) row.medal='silver';
-        else if (officialPlace<=medals.gold+medals.silver+medals.bronze) row.medal='bronze';
-      }
+    }
+    if (medals && medalState && row.kind!=='starred' && !row.waiting && row.solved>0) {
+      if (referencePlace<=medals.gold) row.medal='gold';
+      else if (referencePlace<=medals.gold+medals.silver) row.medal='silver';
+      else if (referencePlace<=medals.gold+medals.silver+medals.bronze) row.medal='bronze';
     }
     if (!started || !originalAvailable || row.kind==='starred' || row.waiting || (graded && row.points==null)) row.rank=null;
     else {
@@ -187,21 +196,20 @@ export function buildVirtualBoard(room:Row,histories:Row[],myId:string|undefined
       previous=row;
     }
     if (rowProblemOrder) {
-      const accepted=solveTimes.get(row);
-      const solved=problems.filter(label=>row.cells[label]?.solved).sort((a,b)=>
-        (accepted?.[a]??(row.cells[a].solveTime??Infinity)*60)-(accepted?.[b]??(row.cells[b].solveTime??Infinity)*60));
-      const slots:ProblemSlot[]=solved.map(label=>({label:visible.has(label)?label:null,cell:row.cells[label]}));
+      const solved=hidden.filter(label=>row.cells[label]?.solved).sort((a,b)=>solveAt(row,a)-solveAt(row,b));
+      const slots:ProblemSlot[]=solved.map(label=>({label:null,cell:row.cells[label],first:firstRows.get(label)===row.id}));
       // Older terminal snapshots omit the hidden cells but retain the total.
-      const anonymous=Math.min(row.solved-solved.length,problems.length-visible.size-solved.filter(label=>!visible.has(label)).length);
+      const knownSolved=[...visible].filter(label=>row.cells[label]?.solved).length;
+      const anonymous=Math.min(row.solved-knownSolved-solved.length,hidden.length-solved.length);
       for (let i=0;i<anonymous;i++) slots.push({label:null,cell:{solved:true,tries:0,pending:0}});
-      for (const label of problems) if (visible.has(label) && !row.cells[label]?.solved) slots.push({label,cell:row.cells[label]});
-      while (slots.length<problems.length) slots.push({label:null});
+      while (slots.length<hidden.length) slots.push({label:null});
+      for (const label of visible) slots.push({label,cell:row.cells[label]});
       row.problemSlots=slots;
     }
     row.cells=Object.fromEntries(Object.entries(row.cells).filter(([label])=>visible.has(label)));
-    row.first=problems.filter(label=>firstRows.get(label)===row.id);
+    row.first=[...visible].filter(label=>firstRows.get(label)===row.id);
   }
   return {rows,mine:rows.find(row=>row.kind==='vp' && row.id===myId)??null,
-    problems:rowProblemOrder?[...stats.filter(problem=>problem.label!==null),...stats.filter(problem=>problem.label===null)]:stats,
-    scoringSystem:system,sourceUrl,originalAvailable,frozen:timing.frozen,rowProblemOrder};
+    problems:rowProblemOrder?[...stats.filter(problem=>problem.label===null),...stats.filter(problem=>problem.label!==null)]:stats,
+    scoringSystem:system,sourceUrl,originalAvailable,frozen:timing.frozen,rowProblemOrder,medalState};
 }

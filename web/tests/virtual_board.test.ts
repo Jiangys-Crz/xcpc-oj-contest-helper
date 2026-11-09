@@ -10,7 +10,7 @@ const archive={
     ...Array.from({length:49},(_,i)=>({id:String(i),name:'Team '+i,official:true})),{id:'s',name:'Starred team',official:false}
   ]},
   events:[
-    ...Array.from({length:50},(_,i)=>({team:i===49?'s':String(i),id:String(i),problem:'A',time:59,verdict:'CORRECT'})),
+    ...Array.from({length:50},(_,i)=>({team:i===49?'s':String(i),id:String(i),problem:'A',time:i===0?58.75:59,verdict:'CORRECT'})),
     {team:'0',id:'51',problem:'B',time:119,verdict:'CORRECT'},
     {team:'1',id:'52',problem:'C',time:500,verdict:'CORRECT'}
   ]
@@ -21,18 +21,23 @@ test('external original timeline respects room ICPC and CCPC display rules',()=>
   const standard=buildVirtualBoard(room,[],undefined,archive,null,now);
   const regional=buildVirtualBoard(ccpc,[],undefined,archive,null,now);
   assert.deepEqual(standard.problems.map(problem=>problem.label),['A','B','C']);
-  assert.deepEqual(regional.problems.map(problem=>problem.label),['A',null,null]);
-  assert.equal(regional.problems[0].accepted,50);
+  assert.deepEqual(regional.problems.map(problem=>problem.label),[null,null,'A']);
+  assert.equal(regional.problems[2].accepted,50);
   assert.equal(regional.rows[0].penalty,2);
   assert.equal(regional.rows[0].cells.B,undefined);
   assert.deepEqual(regional.rows[0].problemSlots?.map(({label,cell})=>[label,cell?.solved??false]),[
-    ['A',true],[null,true],[null,false],
+    [null,true],[null,false],['A',true],
   ]);
+  assert.equal(regional.rows[0].problemSlots?.[0].first,true);
+  assert.deepEqual(regional.rows[0].first,['A']);
+  assert.deepEqual(regional.rows[1].first,[]);
   const frozenAt=start+510e3;
   const frozen=buildVirtualBoard(room,[],undefined,archive,null,frozenAt);
   assert.equal(frozen.rows.find(row=>row.id==='original:1')?.cells.C.pending,1);
   assert.equal(frozen.rows.find(row=>row.id==='original:1')?.cells.C.solved,false);
-  assert.deepEqual(buildVirtualBoard(ccpc,[],undefined,archive,null,frozenAt).problems.map(problem=>problem.label),['A','B','C']);
+  const regionalFrozen=buildVirtualBoard(ccpc,[],undefined,archive,null,frozenAt);
+  assert.deepEqual(regionalFrozen.problems.map(problem=>problem.label),['A','B','C']);
+  assert.deepEqual(regionalFrozen.rows[0].first,['A','B']);
   const final=buildVirtualBoard(room,[],undefined,archive,null,start+600e3);
   assert.equal(final.rows.find(row=>row.id==='original:1')?.cells.C.solved,true);
 });
@@ -67,10 +72,30 @@ test('legacy native CCPC totals fill anonymous solved slots without inventing so
   const history={participant_key:'waiting',participant_name:'Waiting',participant_members_json:'[]',problems_json:'["A","B","C"]'};
   const row={id:'native',name:'Original',kind:'official' as const,solved:2,penalty:50,cells:{B:{solved:true,tries:1,pending:0,solveTime:1}}};
   const board=buildVirtualBoard(ccpc,[history],undefined,null,{elapsed:120,released:true,revealed:['B'],rows:[row]},start+120000);
-  assert.deepEqual(board.problems.map(problem=>problem.label),['B',null,null]);
+  assert.deepEqual(board.problems.map(problem=>problem.label),[null,null,'B']);
   assert.deepEqual(board.rows[0].problemSlots?.map(({label,cell})=>[label,cell?.solved??false,cell?.solveTime]),[
-    ['B',true,1],[null,true,undefined],[null,false,undefined],
+    [null,true,undefined],[null,false,undefined],['B',true,1],
   ]);
+});
+
+test('medal bands use official ranks during the contest and exclude starred and scoreless teams',()=>{
+  const awards={
+    metadata:{...archive.metadata,medals:{gold:1,silver:1,bronze:1},
+      teams:['g','s','b','zero','star'].map(id=>({id,name:id,official:id!=='star'}))},
+    events:[['g',15],['s',70],['b',130],['star',5]].map(([team,time],i)=>
+      ({id:String(i),team:String(team),time:Number(time),problem:'A',verdict:'CORRECT'})),
+  };
+  const history={id:'history',participant_key:'vp',participant_name:'VP',participant_members_json:'[]',
+    started_at:starts_at,problems_json:'["A","B","C"]',submissions_json:JSON.stringify([
+      {id:'1',problem:'B',submittedAt:new Date(start+20e3).toISOString(),verdict:'CORRECT'},
+    ])};
+  const live=buildVirtualBoard(room,[history],'vp',awards,null,start+200000);
+  assert.equal(live.medalState,'provisional');
+  assert.equal(live.mine?.medal,'gold');
+  assert.deepEqual(Object.fromEntries(live.rows.map(row=>[row.name,row.medal])),{
+    g:'gold',s:'silver',b:'bronze',star:undefined,zero:undefined,VP:'gold',
+  });
+  assert.equal(buildVirtualBoard(room,[],undefined,awards,null,start+600000).medalState,'final');
 });
 
 test('Qinhuangdao mirror resolves the published original archive unless the room selects another',()=>{
