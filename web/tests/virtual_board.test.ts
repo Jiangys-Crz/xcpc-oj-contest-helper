@@ -25,6 +25,9 @@ test('external original timeline respects room ICPC and CCPC display rules',()=>
   assert.equal(regional.problems[0].accepted,50);
   assert.equal(regional.rows[0].penalty,2);
   assert.equal(regional.rows[0].cells.B,undefined);
+  assert.deepEqual(regional.rows[0].problemSlots?.map(({label,cell})=>[label,cell?.solved??false]),[
+    ['A',true],[null,true],[null,false],
+  ]);
   const frozenAt=start+510e3;
   const frozen=buildVirtualBoard(room,[],undefined,archive,null,frozenAt);
   assert.equal(frozen.rows.find(row=>row.id==='original:1')?.cells.C.pending,1);
@@ -32,6 +35,42 @@ test('external original timeline respects room ICPC and CCPC display rules',()=>
   assert.deepEqual(buildVirtualBoard(ccpc,[],undefined,archive,null,frozenAt).problems.map(problem=>problem.label),['A','B','C']);
   const final=buildVirtualBoard(room,[],undefined,archive,null,start+600e3);
   assert.equal(final.rows.find(row=>row.id==='original:1')?.cells.C.solved,true);
+});
+
+test('CCPC packs a team’s anonymous solves by acceptance time until the freeze starts',()=>{
+  const ccpc={...room,scoring_system:'CCPC'};
+  const history={id:'history',participant_key:'vp',participant_name:'Room VP',participant_members_json:'[]',
+    started_at:starts_at,problems_json:'["A","B","C"]',submissions_json:JSON.stringify([
+      {id:'0',problem:'B',submittedAt:new Date(start+25e3).toISOString(),verdict:'WRONG-ANSWER'},
+      {id:'1',problem:'C',submittedAt:new Date(start+31e3).toISOString(),verdict:'CORRECT'},
+      {id:'2',problem:'B',submittedAt:new Date(start+42e3).toISOString(),verdict:'CORRECT'},
+      {id:'3',problem:'A',submittedAt:new Date(start+47e3).toISOString(),verdict:'CORRECT'},
+      {id:'4',problem:'C',submittedAt:new Date(start+60e3).toISOString(),verdict:'CORRECT'},
+    ])};
+  const before=buildVirtualBoard(ccpc,[history],'vp',archive,null,start+479999);
+  assert.equal(before.rowProblemOrder,true);
+  assert.deepEqual(before.mine?.problemSlots?.map(({label,cell})=>[label,cell?.solved,cell?.tries]),[
+    [null,true,1],[null,true,2],['A',true,1],
+  ]);
+  assert.deepEqual(Object.keys(before.mine!.cells),['A']);
+  const frozen=buildVirtualBoard(ccpc,[history],'vp',archive,null,start+480000);
+  assert.equal(frozen.rowProblemOrder,false);
+  assert.equal(frozen.mine?.problemSlots,undefined);
+  assert.deepEqual(frozen.problems.map(problem=>problem.label),['A','B','C']);
+  const ended=buildVirtualBoard({...ccpc,freeze_minutes:0},[history],'vp',archive,null,start+600000);
+  assert.equal(ended.rowProblemOrder,false);
+  assert.deepEqual(ended.problems.map(problem=>problem.label),['A','B','C']);
+});
+
+test('legacy native CCPC totals fill anonymous solved slots without inventing solve times',()=>{
+  const ccpc={...room,contest_url:'https://codeforces.com/gym/12345',scoring_system:'CCPC'};
+  const history={participant_key:'waiting',participant_name:'Waiting',participant_members_json:'[]',problems_json:'["A","B","C"]'};
+  const row={id:'native',name:'Original',kind:'official' as const,solved:2,penalty:50,cells:{B:{solved:true,tries:1,pending:0,solveTime:1}}};
+  const board=buildVirtualBoard(ccpc,[history],undefined,null,{elapsed:120,released:true,revealed:['B'],rows:[row]},start+120000);
+  assert.deepEqual(board.problems.map(problem=>problem.label),['B',null,null]);
+  assert.deepEqual(board.rows[0].problemSlots?.map(({label,cell})=>[label,cell?.solved??false,cell?.solveTime]),[
+    ['B',true,1],[null,true,undefined],[null,false,undefined],
+  ]);
 });
 
 test('Qinhuangdao mirror resolves the published original archive unless the room selects another',()=>{

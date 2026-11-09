@@ -78,7 +78,7 @@ export function publicScore(history: Row, room: Row, at: number, freeze: boolean
   const solved=Object.values(cells).filter(c=>c.solved).length;
   for(const cell of Object.values(cells))if(cell.unknownPoints) {delete cell.points;delete cell.unknownPoints;}
   for(const problem of problems) {cells[problem].practiceSolved=practiceCells[problem].solved;cells[problem].tries+=practiceCells[problem].tries;cells[problem].pending+=practiceCells[problem].pending;}
-  return {cells,solved,penalty,points,submissions:visible};
+  return {cells,solved,penalty,points,submissions:visible,acceptedSeconds};
 }
 
 export function frozenRank(history:Row,room:Row) {

@@ -15,6 +15,7 @@ function BoardRow({row,board,pin}:{row:VirtualRow;board:Board;pin?:'mine'|'searc
   const points=['OI','IOI'].includes(board.scoringSystem);
   const rank=row.kind==='starred'?'*':text(row.rank);
   const category=row.female&&row.kind==='official'?'Female Team':categories[row.kind];
+  const slots=row.problemSlots??board.problems.map(({label})=>({label,cell:label?row.cells[label]:undefined}));
   return <article className={styles.row} data-pinned={pin??'false'} aria-label={`${pin==='mine'?'My rank · ':''}${row.name} · ${rank}`}>
     <div className={styles.sidebar}>
       <div className={styles.people}>
@@ -36,15 +37,16 @@ function BoardRow({row,board,pin}:{row:VirtualRow;board:Board;pin?:'mine'|'searc
         {row.organization&&<strong className={styles.organization} title={row.organization}>{row.organization}</strong>}
         <div className={styles.team} title={row.name}><strong>{row.name}</strong></div>
       </div>
-      <div className={styles.problems}>{board.problems.map(({label},index)=>{
-        const cell=label?row.cells[label]:undefined,first=label&&row.first?.includes(label);
+      <div className={styles.problems}>{slots.map(({label,cell},index)=>{
+        const first=label&&row.first?.includes(label);
         const kind=cell?.solved?(first?'first':'accepted'):cell?.pending?'pending':cell?.tries?'wrong':'empty';
         const attempts=(cell?.tries??0)+(cell?.pending??0);
         const result={first:'First solve',accepted:'Accepted',pending:'Pending',wrong:'Incorrect',empty:label?'Untried':'Hidden'}[kind];
         const description=[label||'Hidden problem',result,attempts?`${attempts} submissions`:'',cell?.solveTime!=null?`${cell.solveTime} min`:''].filter(Boolean).join(' · ');
         return <span key={index} className={styles.cell} data-result={kind} title={description} aria-label={description}>
           {points&&cell?.points!=null?cell.points:kind==='empty'?label||'?':<>
-            <span className={styles.attempts}>{attempts}</span><span>{cell?.solveTime!=null?`${cell.solveTime}′`:kind==='pending'?'?':'−'}</span>
+            {board.rowProblemOrder&&label?<span className={styles.attempts}>{label}</span>:attempts>0&&<span className={styles.attempts}>{attempts}</span>}
+            <span>{cell?.solveTime!=null?`${cell.solveTime}′`:cell?.solved?'✓':kind==='pending'?'?':'−'}</span>
             {first&&<span className={styles.star} aria-hidden="true">★</span>}
           </>}
         </span>;
@@ -135,8 +137,8 @@ function Standings({board,rows,pins,filtered}:{board:Board;rows:VirtualRow[];pin
     <div className={styles.sticky}>
       <div className={styles.header}>
         <div className={styles.metrics}><span>排名<small>Rank</small></span>{points?<span>总分<small>Score</small></span>:<><span>题数<small>Solved</small></span><span>罚时<small>Penalty</small></span></>}</div>
-        <div className={styles.problems}>{board.problems.map((problem,index)=><span key={index}><strong>{problem.label||'?'}</strong>
-          <small>{text(problem.accepted)}/{text(problem.submitted)}</small></span>)}</div>
+        <div className={styles.problems}>{board.problems.map((problem,index)=><span key={index}><strong>{board.rowProblemOrder?'?':problem.label||'?'}</strong>
+          {!board.rowProblemOrder&&<small>{text(problem.accepted)}/{text(problem.submitted)}</small>}</span>)}</div>
       </div>
     </div>
     <div className={styles.board}>
@@ -152,6 +154,9 @@ function Standings({board,rows,pins,filtered}:{board:Board;rows:VirtualRow[];pin
         {!rows.length&&<Empty title="No matching participants"/>}
       </section>
       {board.originalAvailable&&<footer className={styles.summary} aria-label="Original problem statistics">
+        {board.rowProblemOrder&&<div className={styles.summaryRow}><span>已公开题号<small>Revealed problems</small></span>
+          <div className={styles.problems}>{board.problems.map((problem,index)=><strong key={index}>{problem.label||'?'}</strong>)}</div>
+        </div>}
         {summaries.map(([key,label,en])=><div key={key} className={styles.summaryRow}>
           <span>{label}<small>{en}</small></span><div className={styles.problems}>{board.problems.map((problem,index)=><span key={index}>
             {problem[key]===null?'—':key==='first'||key==='last'?`${problem[key]}′`:problem[key]}

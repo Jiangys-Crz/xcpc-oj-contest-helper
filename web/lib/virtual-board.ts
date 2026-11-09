@@ -6,14 +6,15 @@ import type {Row} from './db';
 import {publicScore,roomTiming} from './scoreboard';
 
 type BoardCell={solved:boolean;tries:number;pending:number;solveTime?:number;points?:number};
+type ProblemSlot={label:string|null;cell?:BoardCell};
 export type VirtualRow={
   id:string;name:string;organization?:string;members?:string[];kind:'official'|'starred'|'vp';female?:boolean;
   solved:number;penalty:number;points?:number|null;cells:Record<string,BoardCell>;
-  rank?:number|null;medal?:'gold'|'silver'|'bronze';first?:string[];waiting?:boolean;
+  rank?:number|null;medal?:'gold'|'silver'|'bronze';first?:string[];waiting?:boolean;problemSlots?:ProblemSlot[];
 };
 export type VirtualBoard={
   rows:VirtualRow[];mine:VirtualRow|null;problems:{label:string|null;submitted:number|null;attempted:number|null;accepted:number|null;first:number|null;last:number|null}[];
-  scoringSystem:string;sourceUrl:string|null;originalAvailable:boolean;frozen:boolean;
+  scoringSystem:string;sourceUrl:string|null;originalAvailable:boolean;frozen:boolean;rowProblemOrder:boolean;
 };
 type Snapshot={elapsed:number;released:boolean;revealed:string[];rows:VirtualRow[]};
 type Team={id:string;name:string;official:boolean;organization?:string;team_name?:string;members?:string[];female?:boolean};
@@ -107,6 +108,8 @@ export function buildVirtualBoard(room:Row,histories:Row[],myId:string|undefined
   const timing=roomTiming(contest,at),started=at>=Date.parse(room.starts_at);
   const problems=archive?.metadata.problems??nativeProblems;
   const system=room.scoring_system||'ICPC', graded=['OI','IOI'].includes(system);
+  const rowProblemOrder=system==='CCPC' && !timing.frozen && at<Date.parse(timing.endsAt);
+  const solveTimes=new WeakMap<VirtualRow,Record<string,number>>();
   const penaltyRules=archive?{...nativeRules,penalty_minutes:archive.metadata.penalty_minutes,penalty_rounding:archive.metadata.penalty_rounding}:null;
   const official=snapshot?.rows.map(row=>({...row,id:'original:'+row.id}))??[];
   const eventsByTeam=new Map<string,Row[]>();
@@ -129,12 +132,13 @@ export function buildVirtualBoard(room:Row,histories:Row[],myId:string|undefined
     for (const team of archive.metadata.teams) {
       const score=publicScore({started_at:room.starts_at,problems_json:JSON.stringify(problems),rules_json:JSON.stringify(penaltyRules),
         submissions_json:JSON.stringify(eventsByTeam.get(team.id)??[])},contest,at,timing.frozen,true);
-      official.push({id:'original:'+team.id,name:team.team_name||team.name,organization:team.organization,members:team.members,female:team.female,
-        kind:team.official?'official':'starred',solved:score.solved,penalty:score.penalty,cells:score.cells});
+      const row:VirtualRow={id:'original:'+team.id,name:team.team_name||team.name,organization:team.organization,members:team.members,female:team.female,
+        kind:team.official?'official':'starred',solved:score.solved,penalty:score.penalty,cells:score.cells};
+      official.push(row);
+      if (rowProblemOrder) solveTimes.set(row,score.acceptedSeconds);
     }
   }
-  const formatHidden=system==='CCPC' && !timing.frozen && at<Date.parse(timing.endsAt);
-  const visible=new Set(problems.filter(label=>!formatHidden ||
+  const visible=new Set(problems.filter(label=>!rowProblemOrder ||
     (archive?official.filter(row=>row.cells[label]?.solved).length>=50:snapshot?.revealed.includes(label))));
   const firstRows=new Map<string,string>();
   const stats=problems.map((label,index)=>{
@@ -148,13 +152,15 @@ export function buildVirtualBoard(room:Row,histories:Row[],myId:string|undefined
       attempted:archive?counts[index].attempted.size:snapshot?attempts.filter(Boolean).length:null,
       accepted:archive||snapshot?solved.length:null,first,last:solved.length?Math.max(...solved):null};
   });
-  const roomRows:VirtualRow[]=histories.map(row=>{
+  const roomRows=histories.map(row=>{
     const waiting=!row.id || ['scheduled','cancelled','failed'].includes(row.status);
     const result=waiting?null:publicScore({...row,...(penaltyRules?{rules_json:JSON.stringify({...JSON.parse(row.rules_json||'{}'),...penaltyRules})}:{})},
       contest,participantLimit,timing.frozen,true);
-    return {id:row.participant_key,name:row.participant_name,organization:'Virtual Programming',
+    const participant:VirtualRow={id:row.participant_key,name:row.participant_name,organization:'Virtual Programming',
       members:JSON.parse(row.participant_members_json).map((member:Row)=>member.realname||member.username||member.useraccount).filter(Boolean),
       kind:'vp',solved:result?.solved??0,penalty:result?.penalty??0,points:result?.points??null,cells:result?.cells??{},waiting};
+    if (rowProblemOrder && result) solveTimes.set(participant,result.acceptedSeconds);
+    return participant;
   });
   const compare=(a:VirtualRow,b:VirtualRow)=>graded?(b.points??-1)-(a.points??-1):b.solved-a.solved||a.penalty-b.penalty;
   const originalAvailable=Boolean(archive||snapshot);
@@ -180,9 +186,22 @@ export function buildVirtualBoard(room:Row,histories:Row[],myId:string|undefined
       row.rank=place;
       previous=row;
     }
+    if (rowProblemOrder) {
+      const accepted=solveTimes.get(row);
+      const solved=problems.filter(label=>row.cells[label]?.solved).sort((a,b)=>
+        (accepted?.[a]??(row.cells[a].solveTime??Infinity)*60)-(accepted?.[b]??(row.cells[b].solveTime??Infinity)*60));
+      const slots:ProblemSlot[]=solved.map(label=>({label:visible.has(label)?label:null,cell:row.cells[label]}));
+      // Older terminal snapshots omit the hidden cells but retain the total.
+      const anonymous=Math.min(row.solved-solved.length,problems.length-visible.size-solved.filter(label=>!visible.has(label)).length);
+      for (let i=0;i<anonymous;i++) slots.push({label:null,cell:{solved:true,tries:0,pending:0}});
+      for (const label of problems) if (visible.has(label) && !row.cells[label]?.solved) slots.push({label,cell:row.cells[label]});
+      while (slots.length<problems.length) slots.push({label:null});
+      row.problemSlots=slots;
+    }
     row.cells=Object.fromEntries(Object.entries(row.cells).filter(([label])=>visible.has(label)));
     row.first=problems.filter(label=>firstRows.get(label)===row.id);
   }
-  return {rows,mine:rows.find(row=>row.kind==='vp' && row.id===myId)??null,problems:stats,
-    scoringSystem:system,sourceUrl,originalAvailable,frozen:timing.frozen};
+  return {rows,mine:rows.find(row=>row.kind==='vp' && row.id===myId)??null,
+    problems:rowProblemOrder?[...stats.filter(problem=>problem.label!==null),...stats.filter(problem=>problem.label===null)]:stats,
+    scoringSystem:system,sourceUrl,originalAvailable,frozen:timing.frozen,rowProblemOrder};
 }
