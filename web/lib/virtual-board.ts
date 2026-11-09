@@ -207,13 +207,12 @@ export function buildVirtualBoard(room:Row,histories:Row[],myId:string|undefined
       for (let i=0;i<anonymous;i++) slots.push({label:null,cell:{solved:true,tries:0,pending:0}});
       for (const cell of attempted) slots.push({label:null,cell});
       while (slots.length<hidden.length) slots.push({label:null});
-      for (const label of visible) slots.push({label,cell:row.cells[label]});
-      row.problemSlots=slots;
+      row.problemSlots=[...Array.from(visible,label=>({label,cell:row.cells[label]})),...slots];
     }
     row.cells=Object.fromEntries(Object.entries(row.cells).filter(([label])=>visible.has(label)));
     row.first=[...visible].filter(label=>firstRows.get(label)===row.id);
   }
   return {rows,mine:rows.find(row=>row.kind==='vp' && row.id===myId)??null,
-    problems:rowProblemOrder?[...stats.filter(problem=>problem.label===null),...stats.filter(problem=>problem.label!==null)]:stats,
+    problems:rowProblemOrder?[...stats.filter(problem=>problem.label!==null),...stats.filter(problem=>problem.label===null)]:stats,
     scoringSystem:system,sourceUrl,originalAvailable,frozen:timing.frozen,rowProblemOrder,medalState};
 }

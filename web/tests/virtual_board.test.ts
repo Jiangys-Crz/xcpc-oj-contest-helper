@@ -22,15 +22,15 @@ test('external original timeline respects room ICPC and CCPC display rules',()=>
   const standard=buildVirtualBoard(room,[],undefined,archive,null,now);
   const regional=buildVirtualBoard(ccpc,[],undefined,archive,null,now);
   assert.deepEqual(standard.problems.map(problem=>problem.label),['A','B','C']);
-  assert.deepEqual(regional.problems.map(problem=>problem.label),[null,null,'A']);
-  assert.equal(regional.problems[2].accepted,50);
+  assert.deepEqual(regional.problems.map(problem=>problem.label),['A',null,null]);
+  assert.equal(regional.problems[0].accepted,50);
   assert.equal(regional.rows[0].penalty,2);
   assert.equal(regional.rows[0].cells.B,undefined);
   assert.deepEqual(regional.rows[0].problemSlots?.map(({label,cell})=>[label,cell?.solved??false]),[
-    [null,true],[null,false],['A',true],
+    ['A',true],[null,true],[null,false],
   ]);
-  assert.equal(regional.rows[0].problemSlots?.[0].first,true);
-  assert.deepEqual(regional.rows[0].problemSlots?.[1].cell?.tries,1);
+  assert.equal(regional.rows[0].problemSlots?.[1].first,true);
+  assert.equal(regional.rows[0].problemSlots?.[2].cell?.tries,1);
   assert.deepEqual(regional.rows[0].first,['A']);
   assert.deepEqual(regional.rows[1].first,[]);
   const frozenAt=start+510e3;
@@ -57,12 +57,12 @@ test('CCPC packs anonymous solves and submissions on the left until the freeze s
     ])};
   const slotsAt=(time:number)=>buildVirtualBoard(ccpc,[history],'vp',archive,null,start+time*1000)
     .mine?.problemSlots?.map(({label,cell})=>[label,cell?.solved,cell?.tries,cell?.pending]);
-  assert.deepEqual(slotsAt(90),[[null,true,1,0],[null,false,1,0],['A',true,1,0]]);
-  assert.deepEqual(slotsAt(150),[[null,true,1,0],[null,false,1,1],['A',true,1,0]]);
+  assert.deepEqual(slotsAt(90),[['A',true,1,0],[null,true,1,0],[null,false,1,0]]);
+  assert.deepEqual(slotsAt(150),[['A',true,1,0],[null,true,1,0],[null,false,1,1]]);
   const before=buildVirtualBoard(ccpc,[history],'vp',archive,null,start+479999);
   assert.equal(before.rowProblemOrder,true);
   assert.deepEqual(before.mine?.problemSlots?.map(({label,cell})=>[label,cell?.solved,cell?.tries]),[
-    [null,true,1],[null,true,2],['A',true,1],
+    ['A',true,1],[null,true,1],[null,true,2],
   ]);
   assert.deepEqual(Object.keys(before.mine!.cells),['A']);
   const frozen=buildVirtualBoard(ccpc,[history],'vp',archive,null,start+480000);
@@ -79,9 +79,9 @@ test('legacy native CCPC totals fill anonymous solved slots without inventing so
   const history={participant_key:'waiting',participant_name:'Waiting',participant_members_json:'[]',problems_json:'["A","B","C"]'};
   const row={id:'native',name:'Original',kind:'official' as const,solved:2,penalty:50,cells:{B:{solved:true,tries:1,pending:0,solveTime:1}}};
   const board=buildVirtualBoard(ccpc,[history],undefined,null,{elapsed:120,released:true,revealed:['B'],rows:[row]},start+120000);
-  assert.deepEqual(board.problems.map(problem=>problem.label),[null,null,'B']);
+  assert.deepEqual(board.problems.map(problem=>problem.label),['B',null,null]);
   assert.deepEqual(board.rows[0].problemSlots?.map(({label,cell})=>[label,cell?.solved??false,cell?.solveTime]),[
-    [null,true,undefined],[null,false,undefined],['B',true,1],
+    ['B',true,1],[null,true,undefined],[null,false,undefined],
   ]);
 });
 
