@@ -37,13 +37,15 @@ export function loadRoomArchive(url:string):Promise<Archive|null> {
   if (pendingArchives>=2) return Promise.resolve(null);
   if (archiveCache.size>=24) archiveCache.delete(archiveCache.keys().next().value!);
   const packaged=resolve('board-runtime');
-  const root=resolve('..'),wheels=resolve(root,'wheels');
-  const pythonPath=existsSync(packaged)?packaged:[root,...readdirSync(wheels)
+  const root=existsSync(resolve('wheels'))?resolve('.'):resolve('..'),wheels=resolve(root,'wheels');
+  const packagedExists=existsSync(packaged);
+  if (!packagedExists && !existsSync(wheels)) return Promise.resolve(null);
+  const pythonPath=packagedExists?packaged:[root,...readdirSync(wheels)
     .filter(file=>/^(beautifulsoup4|certifi|charset_normalizer|idna|requests|soupsieve|urllib3|typing_extensions)-.*-none-any\.whl$/.test(file))
     .sort().reverse().map(file=>resolve(wheels,file))].join(':');
   pendingArchives++;
   const value=promisify(execFile)('python3',['-m','vp_helper.board_export',url],{
-    cwd:existsSync(packaged)?packaged:root,env:{...process.env,PYTHONPATH:pythonPath,PYTHONDONTWRITEBYTECODE:'1'},
+    cwd:packagedExists?packaged:root,env:{...process.env,PYTHONPATH:pythonPath,PYTHONDONTWRITEBYTECODE:'1'},
     timeout:25000,maxBuffer:12*1024*1024
   }).then(({stdout})=>JSON.parse(stdout) as Archive).catch(()=>{
     const failed=archiveCache.get(url);

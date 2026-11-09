@@ -11,7 +11,9 @@ trap 'rm -rf -- "$board_runtime"' EXIT
 chmod 755 "$board_runtime"
 git -C "$root" archive HEAD vp_helper | tar -xf - -C "$board_runtime"
 for dependency in beautifulsoup4 certifi charset_normalizer idna requests soupsieve typing_extensions urllib3; do
-  wheel="$(find "$root/wheels" -maxdepth 1 -name "${dependency}-*-none-any.whl" | sort -Vr | head -n1)"
+  version='*'
+  if [[ "$dependency" == soupsieve ]]; then version=2.10; fi # Ubuntu 22.04 uses Python 3.10.
+  wheel="$(find "$root/wheels" -maxdepth 1 -name "${dependency}-${version}-py*-none-any.whl" | sort -Vr | head -n1)"
   [[ -n "$wheel" ]]
   python3 -m zipfile -e "$wheel" "$board_runtime"
 done
