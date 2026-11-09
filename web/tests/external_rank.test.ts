@@ -77,6 +77,14 @@ test('only supported public pages and ICPC/CCPC formats accept an external board
   assert.equal((await api('PATCH',`rooms/${configured.id}`,owner.token,{scoringSystem:'OI',externalRankUrl:''})).externalRankUrl,null);
 });
 
+test('room authorization shares the default archive without changing the room configuration',async t=>{
+  const {api,login,body,register}=fixture(t),owner=await login('owner');
+  const room=await api('POST','rooms',owner.token,body({contestUrl:'https://codeforces.com/gym/104787',scoringSystem:'CCPC'}));
+  const authorization=await register(room,owner);
+  assert.equal(authorization.room.externalRankUrl,null);
+  assert.equal(authorization.room.referenceRankUrl,QINHUANGDAO);
+});
+
 test('standalone VP external board survives history, legacy sync and restore, and supports explicit clearing',async t=>{
   const {api,login}=fixture(t),owner=await login('owner');
   const snapshot={localId:'standalone-board',mode:'vp',status:'running',startedAt:new Date(EPOCH-600e3).toISOString(),

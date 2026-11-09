@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 
 from .models import Cell, Contest, Medals, Reference, Submission, TeamScore, VPError
 from .originals import OriginalReplay
-from .storage import read_json, write_json
+from .storage import file_lock, read_json, write_json
 
 
 def source_url(value: str) -> str:
@@ -125,8 +125,31 @@ def import_rank(path: Path, state: dict, value: str) -> dict:
     contest = Contest.from_dict(state['contest'])
     payload = prepare_import(value, contest)
     # Only a completely validated download replaces the previous attachment.
-    write_json(attachment_path(path), payload)
+    with file_lock(path.with_suffix('.external-rank.lock')):
+        write_json(attachment_path(path), payload)
     return payload
+
+
+def attach_room_reference(path: Path, contest: Contest, context: dict) -> bool:
+    """Resolve the room's effective archive in the dashboard worker."""
+    attachment = attachment_path(path)
+    if not context.get('roomId') or attachment.exists():
+        return False
+    if 'referenceRankUrl' not in context and not context.get('externalRankUrl'):
+        from .cloud import authorize
+        response, _ = authorize(context['roomId'])
+        room = response['room']
+        if room.get('contestUrl') != contest.url:
+            return False
+        context['referenceRankUrl'] = room.get('referenceRankUrl') or room.get('externalRankUrl')
+    page = context.get('externalRankUrl') or context.get('referenceRankUrl')
+    if not page:
+        return False
+    payload = prepare_import(page, contest)
+    with file_lock(path.with_suffix('.external-rank.lock')):
+        if not attachment.exists():
+            write_json(attachment, payload)
+    return True
 
 
 def prepare_room_rank(path: Path, state: dict, value: str | None) -> dict | None:

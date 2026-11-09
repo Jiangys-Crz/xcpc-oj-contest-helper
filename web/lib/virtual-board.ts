@@ -31,33 +31,37 @@ export function roomBoardSource(room:Row):string|null {
   return null;
 }
 
-const archiveCache=new Map<string,{value:Promise<Archive|null>;expires:number}>();
+const archiveCache=new Map<string,{value:Promise<Archive|null>;expires:number;last?:Archive}>();
 let pendingArchives=0;
 export function loadRoomArchive(url:string):Promise<Archive|null> {
   const now=Date.now(),existing=archiveCache.get(url);
-  if (existing && existing.expires>now) return existing.value;
-  if (pendingArchives>=2) return Promise.resolve(null);
-  if (archiveCache.size>=24) archiveCache.delete(archiveCache.keys().next().value!);
+  if (existing && existing.expires>now) return existing.last?Promise.resolve(existing.last):existing.value;
+  if (pendingArchives>=2) return Promise.resolve(existing?.last??null);
+  if (!existing && archiveCache.size>=24) archiveCache.delete(archiveCache.keys().next().value!);
   const packaged=resolve('board-runtime');
   const cwd=process.cwd();
   const root=existsSync(resolve(cwd,'wheels'))?cwd:resolve(/*turbopackIgnore: true*/ cwd,'..');
   const wheels=resolve(root,'wheels');
   const packagedExists=existsSync(packaged);
-  if (!packagedExists && !existsSync(wheels)) return Promise.resolve(null);
+  if (!packagedExists && !existsSync(wheels)) return Promise.resolve(existing?.last??null);
   const pythonPath=packagedExists?packaged:[root,...readdirSync(wheels)
     .filter(file=>/^(beautifulsoup4|certifi|charset_normalizer|idna|requests|soupsieve|urllib3|typing_extensions)-.*-none-any\.whl$/.test(file))
     .sort().reverse().map(file=>resolve(wheels,file))].join(':');
   pendingArchives++;
-  const value=promisify(execFile)('python3',['-m','vp_helper.board_export',url],{
+  const value:Promise<Archive|null>=promisify(execFile)('python3',['-m','vp_helper.board_export',url],{
     cwd:packagedExists?packaged:root,env:{...process.env,PYTHONPATH:pythonPath,PYTHONDONTWRITEBYTECODE:'1'},
     timeout:25000,maxBuffer:12*1024*1024
-  }).then(({stdout})=>JSON.parse(stdout) as Archive).catch(()=>{
-    const failed=archiveCache.get(url);
-    if (failed) failed.expires=Date.now()+30000;
-    return null;
+  }).then(({stdout})=>{
+    const archive=JSON.parse(stdout) as Archive;
+    entry.last=archive;
+    return archive;
+  }).catch(()=>{
+    entry.expires=Date.now()+30000;
+    return entry.last??null;
   }).finally(()=>{pendingArchives--;});
-  archiveCache.set(url,{value,expires:now+30*60000});
-  return value;
+  const entry={value,expires:now+30*60000,last:existing?.last};
+  archiveCache.set(url,entry);
+  return entry.last?Promise.resolve(entry.last):value;
 }
 
 const finite=(value:unknown):value is number=>typeof value==='number' && Number.isFinite(value) && value>=0;

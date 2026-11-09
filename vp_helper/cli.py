@@ -488,6 +488,16 @@ def poll(api, contest: Contest, elapsed: float, refresh_reference: bool = False)
         return None, str(exc)
 
 
+def poll_reference(api, contest: Contest, elapsed: float, path: Path, context: dict):
+    from .external_rank import attach_room_reference
+    try:
+        if attach_room_reference(path, contest, context):
+            return None, ""
+    except (VPError, OSError):
+        pass  # The optional archive can be retried without interrupting the VP.
+    return poll(api, contest, elapsed, True)
+
+
 def monitor(path: Path) -> None:
     from .accounts import same_handle
     from .identity import dashboard_identity, persist_display_identity
@@ -592,6 +602,7 @@ def monitor(path: Path) -> None:
         reference = Reference()
         from .external_rank import ManualRank
         manual_rank = ManualRank(path, contest)
+        reference_context = dict(state.get('cloud') or {})
         last_poll = 0.0
         next_poll = next_reference = 0.0
         backoff = 5.0
@@ -665,7 +676,7 @@ def monitor(path: Path) -> None:
                     seed_pending(api, contest.platform, list(submissions.values()))
                     future = network.submit(poll, api, contest, elapsed)
                 if manual_reference is None and reference_future is None and now >= next_reference:
-                    reference_future = network.submit(poll, reference_api, contest, scoring_elapsed, True)
+                    reference_future = network.submit(poll_reference, reference_api, contest, scoring_elapsed, path, reference_context)
                 if manual_reference is not None:
                     reference_error = ''
                     current_reference = manual_reference

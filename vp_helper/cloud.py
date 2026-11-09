@@ -259,6 +259,8 @@ def start_room(value):
                'freezeMinutes':room.get('freezeMinutes', 0), 'scoringSystem':room.get('scoringSystem', 'ICPC'),
                'externalRankUrl':room.get('externalRankUrl'),
                'captainId':str(participant['captainId']), 'type':participant['type']}
+    if 'referenceRankUrl' in room:
+        context['referenceRankUrl'] = room['referenceRankUrl']
     from .identity import participant_identity
     title, subtitle = participant_identity(participant)
     context.update(participantTitle=title, participantSubtitle=subtitle)

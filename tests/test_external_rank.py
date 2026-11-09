@@ -60,6 +60,19 @@ class ExternalRankTests(unittest.TestCase):
         self.assertEqual(len(payload['events']), 5)
         self.assertEqual(read_json(external_rank.attachment_path(self.path)), payload)
 
+    def test_legacy_room_resolves_effective_archive_without_overwriting_an_attachment(self):
+        context = {'roomId': 'room', 'externalRankUrl': None}
+        response = {'room': {'contestUrl': self.contest.url, 'referenceRankUrl': PAGE}}
+        before = self.path.read_bytes()
+        with patch('vp_helper.cloud.authorize', return_value=(response, {})) as authorize, \
+                patch.object(external_rank, 'prepare_import', return_value={'source': PAGE}) as prepare:
+            self.assertTrue(external_rank.attach_room_reference(self.path, self.contest, context))
+            self.assertFalse(external_rank.attach_room_reference(self.path, self.contest, context))
+        authorize.assert_called_once_with('room')
+        prepare.assert_called_once_with(PAGE, self.contest)
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(read_json(external_rank.attachment_path(self.path)), {'source': PAGE})
+
     def test_failed_download_or_validation_preserves_old_attachment_and_state(self):
         self.import_board()
         before = external_rank.attachment_path(self.path).read_bytes(), self.path.read_bytes()
