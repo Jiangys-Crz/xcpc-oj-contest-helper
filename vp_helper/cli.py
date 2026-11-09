@@ -4,7 +4,6 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import datetime, timezone
 import getpass
-import math
 import os
 from pathlib import Path
 import shlex
@@ -690,10 +689,6 @@ def monitor(path: Path) -> None:
                 records = submission_history(list(submissions.values()), list(contest.problems), contest.rules, elapsed)
                 private = score_submissions(list(submissions.values()), list(contest.problems), contest.rules,
                                             scoring_elapsed, name=api.handle, **score_options)
-                public_elapsed = (math.nextafter(float(contest.rules.freeze_at), -math.inf)
-                                  if contest.rules.problem_reveal_count and frozen else scoring_elapsed)
-                public = score_submissions(list(submissions.values()), list(contest.problems), contest.rules,
-                                           public_elapsed, public=True, released=current_reference.released, name=api.handle, **score_options)
                 all_final = all(s.verdict not in ("PENDING", "UNAVAILABLE") for s in submissions.values() if not s.practice and 0 <= s.time < contest.rules.duration)
                 finished = (not interrupted and elapsed >= contest.rules.duration
                             or manual_final and manual_reference is not None and current_reference.released)
@@ -776,9 +771,13 @@ def monitor(path: Path) -> None:
                     if not state['practice_view'] and shown_rank not in ('', '?', '—') and state.get('last_rank') != shown_rank:
                         state['last_rank'] = shown_rank
                         save_state(path, state)
-                    private.name = state.get('cloud', {}).get('label', private.name)
+                    shown_score = private
+                    if frozen and contest.rules.problem_reveal_count and not state['practice_view']:
+                        shown_score = score_submissions(list(submissions.values()), list(contest.problems), contest.rules,
+                                                        scoring_elapsed, public=True, name=api.handle, **score_options)
+                    shown_score.name = state.get('cloud', {}).get('label', shown_score.name)
                     dashboard = display(contest, max(0, scoring_elapsed) if interrupted else elapsed,
-                                        private, shown_rank, prize, stats, records, shown_message)
+                                        shown_score, shown_rank, prize, stats, records, shown_message)
                     dashboard.practice = state["practice_view"]
                     dashboard.participant_title, dashboard.participant_subtitle = dashboard_identity(state, path)
                     dashboard.start_time = state['start_time']

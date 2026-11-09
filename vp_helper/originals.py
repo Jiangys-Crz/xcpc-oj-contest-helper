@@ -383,10 +383,7 @@ class OriginalReplay:
         # with the complete original, including any onsite extension.
         at = self.duration if released and elapsed >= contest.rules.duration else min(elapsed, contest.rules.duration)
         frozen = contest.rules.frozen(elapsed, released)
-        if contest.rules.problem_reveal_count and frozen:
-            # Reveal every label at the freeze, but never reveal later attempts.
-            at = math.nextafter(float(contest.rules.freeze_at), -math.inf)
-        key = (at if contest.rules.problem_reveal_count and frozen else int(at)), frozen, released
+        key = int(at), frozen, released
         if key != self._cache_key:
             self._cache = Reference(self._rows(contest, key[0], released=released),
                                     complete=True, statistics_complete=True, released=released,
@@ -400,6 +397,8 @@ class OriginalReplay:
         result = statistics(reference.rows, self.problems, include_unofficial=include_unofficial)
         visible_teams = {row.id for row in reference.rows if include_unofficial or row.eligible}
         cutoff = self._cache_key[0]
+        if contest.rules.problem_reveal_count and self._cache_key[1]:
+            cutoff = math.nextafter(float(contest.rules.freeze_at), -math.inf)
         # Scoring tries intentionally omit compilation errors. Public submitted
         # and attempted counts describe every submission, including CE-only teams.
         submitted = dict.fromkeys(self.problems, 0)

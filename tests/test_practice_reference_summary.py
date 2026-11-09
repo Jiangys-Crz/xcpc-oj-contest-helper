@@ -2,10 +2,13 @@ from contextlib import ExitStack
 from copy import deepcopy
 from dataclasses import asdict
 from itertools import count
+from io import StringIO
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
+
+from rich.console import Console
 
 from isolation import isolate_local_state
 from test_cf_start_sync import ImmediatePool
@@ -89,6 +92,23 @@ class PracticeReferenceSummaryTests(unittest.TestCase):
                 dashboard, state = self.monitor()
                 self.assert_final_reference(dashboard, state)
                 self.assertEqual(state['revealed_problems'], ['A', 'B'])
+
+    def test_active_ccpc_freeze_shows_pending_blue_while_preserving_actual_submission(self):
+        self.import_board()
+        write_json(self.path, {**self.state, 'practice_view': False, 'status': 'running'})
+        post_freeze = Submission('mine-b', 'me', 'B', 14400, 'CORRECT')
+        dashboard, state = self.monitor(now=15600, incoming=[self.vp_submission, post_freeze])
+        self.assertEqual(dashboard.me.solved, 1)
+        self.assertEqual(dashboard.me.cells['B'].pending, 1)
+        self.assertFalse(dashboard.me.cells['B'].solved)
+        self.assertEqual(dashboard.stats['submitted']['B'], 0)
+        self.assertEqual(dashboard.stats['attempted']['B'], 0)
+        self.assertEqual(dashboard.stats['accepted']['B'], 0)
+        self.assertEqual(state['summary']['solved'], 2)
+        self.assertEqual(next(row['verdict'] for row in state['submissions'] if row['id']=='mine-b'), 'CORRECT')
+        output = StringIO()
+        Console(file=output, force_terminal=True, color_system='truecolor', no_color=False, width=100).print(dashboard)
+        self.assertIn('48;2;37;99;235', output.getvalue())
 
     def test_late_import_repairs_previously_unavailable_bt_rank(self):
         dashboard, state = self.monitor()

@@ -40,8 +40,30 @@ test('external original timeline respects room ICPC and CCPC display rules',()=>
   const regionalFrozen=buildVirtualBoard(ccpc,[],undefined,archive,null,frozenAt);
   assert.deepEqual(regionalFrozen.problems.map(problem=>problem.label),['A','B','C']);
   assert.deepEqual(regionalFrozen.rows[0].first,['A','B']);
+  const frozenOriginal=regionalFrozen.rows.find(row=>row.id==='original:1')!;
+  assert.deepEqual([frozenOriginal.cells.C.pending,frozenOriginal.cells.C.solved],[1,false]);
+  assert.deepEqual(regionalFrozen.problems[2],{label:'C',submitted:1,attempted:1,accepted:0,first:null,last:null});
   const final=buildVirtualBoard(room,[],undefined,archive,null,start+600e3);
   assert.equal(final.rows.find(row=>row.id==='original:1')?.cells.C.solved,true);
+});
+
+test('CCPC freezes VP results at the boundary while showing blue attempts until release',()=>{
+  const ccpc={...room,scoring_system:'CCPC'};
+  const history={id:'history',participant_key:'vp',participant_name:'Room VP',participant_members_json:'[]',
+    started_at:starts_at,problems_json:'["A","B","C"]',submissions_json:JSON.stringify([
+      {id:'1',problem:'A',submittedAt:new Date(start+60e3).toISOString(),verdict:'CORRECT'},
+      {id:'2',problem:'B',submittedAt:new Date(start+480e3).toISOString(),verdict:'CORRECT'},
+      {id:'3',problem:'C',submittedAt:new Date(start+500e3).toISOString(),verdict:'WRONG-ANSWER'},
+    ])};
+  const frozen=buildVirtualBoard(ccpc,[history],'vp',archive,null,start+501e3).mine!;
+  assert.equal(frozen.solved,1);
+  assert.equal(frozen.cells.A.solved,true);
+  assert.deepEqual([frozen.cells.B.pending,frozen.cells.B.solved],[1,false]);
+  assert.deepEqual([frozen.cells.C.pending,frozen.cells.C.tries],[1,0]);
+  const ended=buildVirtualBoard(ccpc,[history],'vp',archive,null,start+600e3).mine!;
+  assert.equal(ended.solved,2);
+  assert.deepEqual([ended.cells.B.pending,ended.cells.B.solved],[0,true]);
+  assert.deepEqual([ended.cells.C.pending,ended.cells.C.tries],[0,1]);
 });
 
 test('CCPC packs anonymous solves and submissions on the left until the freeze starts',()=>{

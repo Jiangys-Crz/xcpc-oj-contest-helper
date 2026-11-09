@@ -121,15 +121,18 @@ export function buildVirtualBoard(room:Row,histories:Row[],myId:string|undefined
   const counts=problems.map(()=>({submitted:0,attempted:new Set<string>()}));
   const problemIndex=new Map(problems.map((label,index)=>[label,index]));
   const start=Date.parse(room.starts_at);
-  const eventLimit=system==='CCPC' && timing.frozen?Date.parse(timing.freezeAt!)-1:at;
-  const participantLimit=snapshot?Math.min(eventLimit,start+snapshot.elapsed*1000):eventLimit;
+  const ccpcFrozen=system==='CCPC' && timing.frozen;
+  const statisticsCutoff=ccpcFrozen?Date.parse(timing.freezeAt!):Infinity;
+  const participantLimit=snapshot && !ccpcFrozen?Math.min(at,start+snapshot.elapsed*1000):at;
   if (archive) {
     for (const event of archive.events) {
       const when=start+event.time*1000;
-      if (when>eventLimit) continue;
-      const index=problemIndex.get(event.problem)!;
-      counts[index].submitted++;
-      counts[index].attempted.add(event.team);
+      if (when>at) continue;
+      if (when<statisticsCutoff) {
+        const count=counts[problemIndex.get(event.problem)!];
+        count.submitted++;
+        count.attempted.add(event.team);
+      }
       const submission={id:event.id,problem:event.problem,submittedAt:new Date(when).toISOString(),verdict:event.verdict};
       const entries=eventsByTeam.get(event.team);
       if (entries) entries.push(submission); else eventsByTeam.set(event.team,[submission]);
@@ -156,7 +159,7 @@ export function buildVirtualBoard(room:Row,histories:Row[],myId:string|undefined
     if (!visible.has(label)) return {label:null,submitted:null,attempted:null,accepted:null,first:null,last:null};
     const solved=solvedRows.map(row=>row.cells[label].solveTime).filter((t):t is number=>t!=null);
     const first=solved.length?Math.min(...solved):null;
-    const attempts=official.map(row=>(row.cells[label]?.tries??0)+(row.cells[label]?.pending??0));
+    const attempts=official.map(row=>(row.cells[label]?.tries??0)+(ccpcFrozen?0:row.cells[label]?.pending??0));
     return {label,submitted:archive?counts[index].submitted:snapshot?attempts.reduce((sum,count)=>sum+count,0):null,
       attempted:archive?counts[index].attempted.size:snapshot?attempts.filter(Boolean).length:null,
       accepted:archive||snapshot?solvedRows.length:null,first,last:solved.length?Math.max(...solved):null};

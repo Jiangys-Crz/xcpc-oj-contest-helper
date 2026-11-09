@@ -71,9 +71,11 @@ class XCPCIOImportTests(unittest.TestCase):
         replay = OriginalReplay(self.contest, metadata['teams'], events, final)
         before = replay.at(self.contest, 180).rows[0]
         self.assertFalse(before.cells['A'].solved)
+        self.contest.rules.problem_reveal_count = 50
         frozen = replay.at(self.contest, 15000).rows[0]
         self.assertFalse(frozen.cells['B'].solved)
         self.assertEqual(frozen.cells['B'].pending, 1)
+        self.assertEqual(replay.statistics_at(self.contest, 15000)['submitted']['B'], 0)
         self.assertTrue(replay.at(self.contest, 18000, released=True).rows[0].cells['B'].solved)
 
     def test_load_uses_all_four_public_files_and_a_separate_session(self):
