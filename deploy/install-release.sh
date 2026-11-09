@@ -79,6 +79,7 @@ with tarfile.open(sys.argv[1]) as t:
 PY
 tar --extract --gzip --file "$artifact" --directory "$stage" --no-same-owner
 [[ -f "$stage/release/server.js" && -x "$stage/runtime/node" ]] || { echo 'Incomplete artifact.' >&2; exit 1; }
+PYTHONPATH="$stage/release/board-runtime" PYTHONDONTWRITEBYTECODE=1 python3 -c 'import vp_helper.board_export, vp_helper.rank_xcpcio, vp_helper.rank_ccpc'
 "$stage/runtime/node" -e 'require("node:sqlite"); if (+process.versions.node.split(".")[0]<24) process.exit(1)'
 version="$(tr -d '\r\n' < "$stage/runtime/NODE_VERSION")"
 [[ "$version" =~ ^v24\.[0-9]+\.[0-9]+$ ]] || { echo 'Unexpected Node runtime.' >&2; exit 1; }

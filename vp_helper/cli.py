@@ -703,6 +703,18 @@ def monitor(path: Path) -> None:
                 reference_elapsed = contest.rules.duration if manual_final and manual_reference is not None else scoring_elapsed
                 revealed = revealed_problems(contest, reference_elapsed, current_reference)
                 reference_changed = False
+                if (state.get('cloud') and not state['cloud'].get('externalRankUrl')
+                        and manual_reference is None and current_reference.complete
+                        and 0 <= scoring_elapsed and len(current_reference.rows) <= 2000):
+                    from .board_export import snapshot
+                    board_elapsed = min(contest.rules.duration, scoring_elapsed)
+                    previous_board = state.get('room_board') or {}
+                    if (board_elapsed >= previous_board.get('elapsed', -10) + 10
+                            or current_reference.released != previous_board.get('released')):
+                        room_board = snapshot(current_reference, board_elapsed, revealed)
+                        if room_board is not None:
+                            state['room_board'] = room_board
+                            reference_changed = True
                 # BT keeps the VP score (practice submissions are excluded above),
                 # but an old placeholder or mid-VP rank is not its final rank.
                 practice_rank = rank if state['practice_view'] and finished and proof is not None else None

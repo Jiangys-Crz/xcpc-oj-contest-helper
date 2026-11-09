@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS teams(id TEXT PRIMARY KEY, name_zh TEXT NOT NULL, nam
 CREATE TABLE IF NOT EXISTS team_members(team_id TEXT NOT NULL REFERENCES teams(id), user_id TEXT NOT NULL REFERENCES users(id), PRIMARY KEY(team_id,user_id));
 CREATE TABLE IF NOT EXISTS rooms(id TEXT PRIMARY KEY, name TEXT NOT NULL, contest_url TEXT NOT NULL, starts_at TEXT NOT NULL, creator_id TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS room_rules(room_id TEXT PRIMARY KEY REFERENCES rooms(id), duration_seconds INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS room_board_snapshots(room_id TEXT PRIMARY KEY REFERENCES rooms(id), elapsed INTEGER NOT NULL, snapshot_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS notifications(id TEXT PRIMARY KEY, recipient_id TEXT NOT NULL REFERENCES users(id), sender_id TEXT NOT NULL REFERENCES users(id), kind TEXT NOT NULL, title TEXT NOT NULL, message TEXT NOT NULL, status TEXT NOT NULL, team_id TEXT REFERENCES teams(id), room_id TEXT REFERENCES rooms(id), payload TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, responded_at TEXT);
 CREATE INDEX IF NOT EXISTS notifications_recipient ON notifications(recipient_id,created_at);
 CREATE TABLE IF NOT EXISTS participants(id TEXT PRIMARY KEY, room_id TEXT NOT NULL REFERENCES rooms(id), type TEXT NOT NULL, user_id TEXT REFERENCES users(id), team_id TEXT REFERENCES teams(id), captain_id TEXT NOT NULL REFERENCES users(id), label TEXT NOT NULL, members_json TEXT NOT NULL, created_at TEXT NOT NULL);

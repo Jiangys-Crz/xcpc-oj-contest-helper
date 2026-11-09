@@ -23,11 +23,11 @@ def source_url(value: str) -> str:
     path = parts.path.rstrip('/')
     host = parts.netloc.lower()
     valid = (host == 'board.xcpcio.com'
-             and re.fullmatch(r'/icpc/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+', path)) or (
+             and re.fullmatch(r'/(?:icpc|ccpc)/(?:[A-Za-z0-9_-]+/)+[A-Za-z0-9_-]+', path)) or (
         host == 'rank.iccpc.cn' and re.fullmatch(
             r'/r/[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', path))
     if parts.scheme != 'https' or parts.query or parts.fragment or not valid:
-        raise VPError('外榜链接应为 https://board.xcpcio.com/icpc/... 或 https://rank.iccpc.cn/r/赛事ID。')
+        raise VPError('外榜链接应为 board.xcpcio.com 的 ICPC / CCPC 页面或 rank.iccpc.cn/r/赛事ID。')
     return 'https://' + host + (path.lower() if host == 'rank.iccpc.cn' else path)
 
 

@@ -11,6 +11,7 @@ import {publicScore} from '../lib/scoreboard';
 type Data=Record<string,any>;
 const EPOCH=Date.parse('2030-06-01T00:00:00Z');
 const ICPC='https://board.xcpcio.com/icpc/51st/wuhan';
+const QINHUANGDAO='https://board.xcpcio.com/ccpc/9th/qinhuangdao';
 const CCPC='https://rank.iccpc.cn/r/e5697b3a-8326-4818-84ca-e2ce1688af23';
 function fixture(t:any) {
   t.mock.timers.enable({apis:['Date'],now:EPOCH});
@@ -69,6 +70,8 @@ test('only supported public pages and ICPC/CCPC formats accept an external board
   for(const externalRankUrl of invalid)await api('POST','rooms',owner.token,body({externalRankUrl}),400);
   for(const scoringSystem of ['OI','IOI'])await api('POST','rooms',owner.token,body({externalRankUrl:ICPC,scoringSystem}),400);
   const plain=await api('POST','rooms',owner.token,body());assert.equal(plain.externalRankUrl,null);
+  const qinhuangdao=await api('POST','rooms',owner.token,body({externalRankUrl:QINHUANGDAO+'/',scoringSystem:'CCPC'}));
+  assert.equal(qinhuangdao.externalRankUrl,QINHUANGDAO);
   const configured=await api('POST','rooms',owner.token,body({externalRankUrl:ICPC}));
   await api('PATCH',`rooms/${configured.id}`,owner.token,{scoringSystem:'OI'},400);
   assert.equal((await api('PATCH',`rooms/${configured.id}`,owner.token,{scoringSystem:'OI',externalRankUrl:''})).externalRankUrl,null);
@@ -149,4 +152,31 @@ test('public and frozen CCPC penalties floor each acceptance to seconds before f
   assert.equal(frozen.cells.A.solveTime,1);assert.equal(frozen.cells.B.solveTime,1);assert.equal(frozen.cells.C.solveTime,0);
   const final=publicScore(history,room,start+8000e3,false);assert.equal(final.penalty,90);
   history.rules_json='{}';assert.equal(publicScore(history,room,start+5000e3,true).penalty,22);
+});
+
+test('virtual board pins the viewer and only ranks verified originals and same-room VP',async t=>{
+  const {api,login,body,register}=fixture(t),owner=await login('owner'),outsider=await login('outsider');
+  const room=await api('POST','rooms',owner.token,body());
+  const {participant}=await register(room,owner);
+  const path=`rooms/${room.id}/virtual-board`,start=Date.parse(room.startsAt);
+  await api('GET',path,outsider.token,undefined,403);
+  t.mock.timers.setTime(start+180e3);
+  const contest={url:room.contestUrl,name:'Training',problems:['A'],rules:{duration:7200,penalty_minutes:20}};
+  const submission=(id:string,offset:number,practice=false)=>({id,problem:'A',submittedAt:new Date(start+offset*1000).toISOString(),verdict:'CORRECT',practice});
+  await api('POST','client/sync',outsider.token,{localId:'foreign',mode:'vp',contest,startedAt:room.startsAt,solved:1,penalty:0,submissions:[submission('foreign',10)],revision:1});
+  await api('POST','client/sync',owner.token,{localId:'room',mode:'vp',status:'running',contest,startedAt:room.startsAt,
+    roomId:room.id,participantId:participant.id,roomStartsAt:room.startsAt,solved:1,penalty:2,
+    submissions:[submission('room',120),submission('practice',10,true)],revision:1,
+    roomBoard:{elapsed:180,released:true,revealed:['A'],rows:[
+      {id:'1',name:'Original',kind:'official',solved:1,penalty:1,cells:{A:{solved:true,tries:1,pending:0,solveTime:1}}},
+      {id:'2',name:'Starred',kind:'starred',solved:1,penalty:0,cells:{A:{solved:true,tries:1,pending:0,solveTime:0}}},
+      {id:'3',name:'Second original',kind:'official',solved:0,penalty:0,cells:{}}
+    ]}});
+  const board=await api('GET',path,owner.token);
+  assert.equal(board.originalAvailable,true);
+  assert.deepEqual(board.rows.map((row:Data)=>[row.name,row.rank]),[['Starred',null],['Original',1],[participant.label,2],['Second original',3]]);
+  assert.equal(board.mine.id,participant.id);
+  assert.equal(board.mine.rank,2);
+  assert.equal(board.mine.cells.A.tries,1);
+  assert.equal(board.problems[0].accepted,2);
 });

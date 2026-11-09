@@ -499,6 +499,8 @@ def sync_payload(path, state):
         payload['roomStartsAt'] = state['cloud']['startsAt']
         if 'externalRankUrl' in state['cloud']:
             payload['roomExternalRankUrl'] = state['cloud']['externalRankUrl']
+        if mode == 'vp' and not external_source and state.get('room_board'):
+            payload['roomBoard'] = state['room_board']
     if mode in ('vp', 'live') and (external_reference is None or external_source):
         payload['externalRankUrl'] = external_source
     return payload

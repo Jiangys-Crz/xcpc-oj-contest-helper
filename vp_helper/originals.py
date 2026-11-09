@@ -132,7 +132,8 @@ def board_metadata(config: dict, teams: list | dict, contest: Contest, source: s
                 raise ValueError("unsupported team identity fields")
             members = [name(member) for member in team["members"]]
             projected.append({"id": str(team.get("team_id", team.get("id", key))),
-                              "name": f"{organization} - {team_name} - {', '.join(members)}", "official": official})
+                              "name": f"{organization} - {team_name} - {', '.join(members)}", "official": official,
+                              "organization": organization, "team_name": team_name, "members": members})
         return {"version": 1, "contest_name": contest.name, "duration": duration,
                 "penalty_minutes": penalty // 60, "problems": labels,
                 "problem_ids": {str(p.get("id", i)): p["label"] for i, p in enumerate(config["problems"])} if config.get("problems") else {str(i): label for i, label in enumerate(labels)},

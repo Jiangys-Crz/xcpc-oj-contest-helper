@@ -9,6 +9,7 @@ from vp_helper.rank_xcpcio import load, parse
 
 
 PAGE = 'https://board.xcpcio.com/icpc/51st/wuhan'
+CCPC_PAGE = 'https://board.xcpcio.com/ccpc/9th/qinhuangdao'
 
 
 def fixture():
@@ -89,6 +90,8 @@ class XCPCIOImportTests(unittest.TestCase):
         config.pop('problems')
         config.pop('options')
         config['problem_id'] = ['A', 'B']
+        for run in runs:
+            run['timestamp'] /= 1000
         teams = {ident: {'name': name, 'organization': 'School', 'members': ['member'],
                          'official': official}
                  for ident, name, official in [('E70', 'One', True), ('E71', 'Two', False)]}
@@ -96,6 +99,27 @@ class XCPCIOImportTests(unittest.TestCase):
         self.assertEqual(metadata['problem_ids'], {'0': 'A', '1': 'B'})
         self.assertEqual(len(final), 2)
         self.assertEqual(events[2].time, 180.999)
+
+    def test_qinhuangdao_archive_seconds_eligibility_and_total_penalty(self):
+        config, _, _, runs = deepcopy(self.data)
+        config['options'] = {'calculation_of_penalty': 'accumulate_in_seconds_and_finally_to_the_minute'}
+        teams = [
+            {'team_id': 'E70', 'name': 'One', 'organization': 'School', 'members': ['Member'],
+             'official': 1, 'unofficial': False},
+            {'team_id': 'E71', 'name': 'Two', 'organization': 'School', 'members': ['Member'],
+             'official': False, 'unofficial': 1},
+        ]
+        for run, at in zip(runs, (4, 9, 179, 120, 14519)):
+            run['timestamp'] = at
+        with patch('vp_helper.rank_xcpcio.read_public_json', side_effect=[config, teams, runs]) as read:
+            metadata, events, final = load(CCPC_PAGE + '/', self.contest, web=Mock())
+        self.assertEqual(read.call_args_list[0].args[1],
+                         'https://board.xcpcio.com/data/ccpc/9th/qinhuangdao/config.json')
+        self.assertEqual(metadata['penalty_rounding'], 'total_seconds')
+        self.assertEqual(events[2].time, 179)
+        self.assertEqual(final[0].penalty, (179 + 1200 + 14519) // 60)
+        self.assertFalse(final[1].eligible)
+        self.assertEqual(self.contest.rules.penalty_rounding, 'per_problem')
 
     def test_declared_second_timestamps_are_converted_without_rounding(self):
         config, teams, organizations, runs = deepcopy(self.data)

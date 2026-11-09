@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import requests
 
 from .external_rank_http import read_public_json
-from .models import Contest, Submission, TeamScore, VPError
+from .models import Contest, Rules, Submission, TeamScore, VPError
 from .scoring import score_submissions
 
 
@@ -99,7 +99,7 @@ def _medals(raw: dict, data: dict, teams: list[dict], events: list[Submission], 
         return None
 
 
-def parse(data: dict, contest: Contest, page: str, source: str):
+def parse(data: dict, contest: Contest | None, page: str, source: str):
     try:
         raw = data['contest']
         contest_id = _ident(raw['contest_id'])
@@ -114,8 +114,7 @@ def parse(data: dict, contest: Contest, page: str, source: str):
 
         start, end = at(raw['start_time']), at(raw['end_time'])
         duration = end - start
-        if (duration != contest.rules.duration or contest.rules.penalty_minutes != 20
-                or contest.rules.compile_penalty):
+        if duration <= 0 or int(duration) != duration:
             raise ValueError('contest rules do not match')
         if not all(isinstance(data.get(key), list) for key in ('team', 'problem', 'solution')):
             raise ValueError('missing roster, problems or timeline')
@@ -123,6 +122,12 @@ def parse(data: dict, contest: Contest, page: str, source: str):
         if [_integer(p['num']) for p in problems] != list(range(len(problems))):
             raise ValueError('ambiguous problem order')
         labels = [_label(i) for i in range(len(problems))]
+        if contest is None:
+            title = raw.get('title', '')
+            contest = Contest('', '', page, title, title, dict.fromkeys(labels, ''), Rules(int(duration)))
+        if (duration != contest.rules.duration or contest.rules.penalty_minutes != 20
+                or contest.rules.compile_penalty):
+            raise ValueError('contest rules do not match')
         if not labels or labels != list(contest.problems):
             raise ValueError('problem labels do not match')
         mapping = {_ident(p['problem_id']): label for p, label in zip(problems, labels)}
@@ -140,7 +145,8 @@ def parse(data: dict, contest: Contest, page: str, source: str):
             if not isinstance(name, str) or not name.strip() or not isinstance(school, str):
                 raise ValueError('missing team name')
             known.add(ident)
-            teams.append({'id': ident, 'name': f'{school} - {name} ({ident})', 'official': kind != 2})
+            teams.append({'id': ident, 'name': f'{school} - {name} ({ident})', 'official': kind != 2,
+                          'organization': school, 'team_name': name})
         events, seen = [], set()
         submitted, accepted = Counter(), Counter()
         for row in data['solution']:
@@ -182,7 +188,7 @@ def parse(data: dict, contest: Contest, page: str, source: str):
         raise VPError('CCPC 外榜的题目、赛制、队伍或提交时间轴不完整，或与当前比赛不匹配。') from None
 
 
-def load(page: str, contest: Contest, *, web=None) -> tuple[dict, list[Submission], list[TeamScore]]:
+def load(page: str, contest: Contest | None, *, web=None) -> tuple[dict, list[Submission], list[TeamScore]]:
     parts = urlsplit(page)
     match = re.fullmatch(r'/r/([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})/?', parts.path)
     if (parts.scheme != 'https' or parts.netloc != 'rank.iccpc.cn'

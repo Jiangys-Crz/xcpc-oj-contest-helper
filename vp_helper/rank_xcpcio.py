@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 import requests
 
 from .external_rank_http import read_public_json
-from .models import Contest, Submission, TeamScore, VPError
+from .models import Contest, Rules, Submission, TeamScore, VPError
 from .originals import OriginalReplay, archive_submissions, board_metadata, identity
 from .parsing import timestamp
 from .scoring import UNRESOLVED_VERDICTS, score_submissions
@@ -21,9 +21,9 @@ def _source(page: str) -> tuple[str, str]:
     path = parts.path.rstrip('/')
     segments = path.split('/')[1:]
     if (parts.scheme != 'https' or parts.netloc != 'board.xcpcio.com'
-            or parts.query or parts.fragment or len(segments) < 3 or segments[0] != 'icpc'
+            or parts.query or parts.fragment or len(segments) < 3 or segments[0] not in ('icpc', 'ccpc')
             or any(not re.fullmatch(r'[A-Za-z0-9_-]+', segment) for segment in segments)):
-        raise VPError('请输入 https://board.xcpcio.com/icpc/... 的赛事页面链接。')
+        raise VPError('请输入 board.xcpcio.com 的 ICPC 或 CCPC 赛事页面链接。')
     return 'https://board.xcpcio.com' + path, 'https://board.xcpcio.com/data' + path
 
 
@@ -35,11 +35,10 @@ def _time(value) -> float:
     return value / 1000 if abs(value) >= 100_000_000_000 else value
 
 
-def parse(config, teams, organizations, runs, contest: Contest, page: str) -> tuple[dict, list[Submission], list[TeamScore]]:
+def parse(config, teams, organizations, runs, contest: Contest | None, page: str) -> tuple[dict, list[Submission], list[TeamScore]]:
     """The public run list is the authoritative timeline, not a final-rank estimate."""
     page, source = _source(page)
     contest = deepcopy(contest)
-    contest.rules.penalty_rounding = 'per_problem'
     try:
         if not isinstance(config, dict) or not isinstance(teams, (list, dict)) or not teams:
             raise ValueError('missing configuration or roster')
@@ -61,28 +60,39 @@ def parse(config, teams, organizations, runs, contest: Contest, page: str) -> tu
                 or len(set(labels)) != len(labels) or len(set(ids)) != len(ids)
                 or any(not ident or ident == 'None' for ident in ids)):
             raise ValueError('invalid problem identities')
+        if contest is None:
+            title = config.get('contest_name', '')
+            contest = Contest('', '', page, title, title, dict.fromkeys(labels, ''),
+                              Rules(int(duration), penalty_minutes=int(penalty / 60)))
         if (labels != list(contest.problems) or duration != contest.rules.duration
                 or penalty / 60 != contest.rules.penalty_minutes or contest.rules.compile_penalty):
             raise VPError('外榜题目列表、时长或罚时规则与当前 VP 不一致。')
         options = config.get('options', {})
-        unit = options.get('submission_timestamp_unit', 'millisecond')
+        unit = options.get('submission_timestamp_unit', 'second')
         if unit not in ('millisecond', 'second'):
             raise ValueError('unsupported timestamp unit')
-        for team in teams.values() if isinstance(teams, dict) else teams:
+        contest.rules.penalty_rounding = {
+            'in_minutes': 'per_problem',
+            'accumulate_in_seconds_and_finally_to_the_minute': 'total_seconds',
+        }[options.get('calculation_of_penalty', 'in_minutes')]
+        roster_data = {}
+        for team_key, team in teams.items() if isinstance(teams, dict) else enumerate(teams):
             if not isinstance(team, dict) or not isinstance(team.get('group', []), list):
                 raise ValueError('invalid team')
             flags = []
             for key in ('official', 'unofficial'):
                 if key in team:
-                    if type(team[key]) is not bool:
+                    if type(team[key]) not in (bool, int) or team[key] not in (0, 1):
                         raise ValueError('invalid team eligibility')
-                    flags.append(team[key] if key == 'official' else not team[key])
+                    flags.append(bool(team[key]) if key == 'official' else not team[key])
             flags.extend(group == 'official' for group in team.get('group', [])
                          if group in ('official', 'unofficial'))
             if not flags or len(set(flags)) != 1:
                 raise ValueError('ambiguous team eligibility')
-        metadata = board_metadata(config, teams, contest, source, organizations)
-        metadata.update(source_format='xcpcio', page=page, compile_penalty=False, penalty_rounding='per_problem')
+            roster_data[team_key] = {**team, 'official': flags[0]}
+        metadata = board_metadata(config, roster_data, contest, source, organizations)
+        metadata.update(source_format='xcpcio', page=page, compile_penalty=False,
+                        penalty_rounding=contest.rules.penalty_rounding)
         roster = metadata['teams']
         team_ids = [team['id'] for team in roster]
         team_id_set = set(team_ids)
@@ -128,7 +138,7 @@ def parse(config, teams, organizations, runs, contest: Contest, page: str) -> tu
         raise VPError('XCPCIO 外榜缺少有效的队伍、赛制或完整提交记录。') from None
 
 
-def load(page: str, contest: Contest, *, web=None) -> tuple[dict, list[Submission], list[TeamScore]]:
+def load(page: str, contest: Contest | None, *, web=None) -> tuple[dict, list[Submission], list[TeamScore]]:
     page, source = _source(page)
     # Public reads use their own session; never send the judge account's credentials.
     with (nullcontext(web) if web is not None else requests.Session()) as public:

@@ -45,7 +45,7 @@ HELP = """XCPC 比赛终端助手
   xcpc dashboard    在比赛目录或子目录运行；已结束的比赛进入补题界面
 
 手动导入外榜（在 VP 比赛目录或子目录运行）
-  xcpc rank 外榜链接     支持 board.xcpcio.com 的 ICPC 和 rank.iccpc.cn 的 CCPC
+  xcpc rank 外榜链接     支持 board.xcpcio.com 的 ICPC / CCPC 和 rank.iccpc.cn
   xcpc rank             交互输入外榜链接，按 VP 已用时间回放
   xcpc rank --clear     恢复自动加载原榜（房间指定外榜除外）
 

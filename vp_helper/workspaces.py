@@ -132,7 +132,7 @@ def promote(path: Path, state: dict) -> None:
             combined = {str(record['id']): record for record in state.get('submissions', [])}
             combined.update({str(record['id']): record for record in current.get('submissions', [])})
             state['submissions'] = list(combined.values())
-            for key in ('summary', 'medal_lines', 'recent', 'submission_history', 'snapshot', 'last_sync_time', 'ended_at', 'last_rank', 'practice_rank'):
+            for key in ('summary', 'medal_lines', 'recent', 'submission_history', 'snapshot', 'last_sync_time', 'ended_at', 'last_rank', 'practice_rank', 'room_board'):
                 if key in current:
                     state[key] = current[key]
             if current.get('practice_view'):

@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { Store, type Row } from './db';
 import { roomTiming, publicScore, historyRank, pointScoring } from './scoreboard';
+import {buildVirtualBoard,loadRoomArchive,normalizeRoomSnapshot,roomBoardSource} from './virtual-board';
 import { submissionLanguage } from './submission-language';
 
 export class ApiError extends Error { constructor(public status: number, message: string) { super(message); } }
@@ -44,9 +45,9 @@ function externalRankUrl(raw:unknown,system:string):string|null {
   let url:URL;
   try {url=new URL(value);} catch {return fail(400,'外榜链接无效');}
   if(url.protocol!=='https:' || url.username || url.password || url.port || url.search || url.hash || /[\\\s%]/.test(value))return fail(400,'请使用 HTTPS 外榜页面链接');
-  const board=url.hostname==='board.xcpcio.com' && /^\/icpc\/[A-Za-z0-9][A-Za-z0-9_-]*(?:\/[A-Za-z0-9][A-Za-z0-9_-]*)+\/?$/.test(url.pathname);
+  const board=url.hostname==='board.xcpcio.com' && /^\/(?:icpc|ccpc)\/[A-Za-z0-9][A-Za-z0-9_-]*(?:\/[A-Za-z0-9][A-Za-z0-9_-]*)+\/?$/.test(url.pathname);
   const ccpc=url.hostname==='rank.iccpc.cn' && /^\/r\/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\/?$/i.test(url.pathname);
-  if(!board && !ccpc)return fail(400,'外榜支持 board.xcpcio.com/icpc/… 或 rank.iccpc.cn/r/… 页面链接');
+  if(!board && !ccpc)return fail(400,'外榜支持 board.xcpcio.com 的 ICPC / CCPC 或 rank.iccpc.cn/r/… 页面链接');
   return `https://${url.hostname}${(ccpc?url.pathname.toLowerCase():url.pathname).replace(/\/$/,'')}`;
 }
 export function contestUrl(raw: unknown, roomsOnly = false): string {
@@ -636,6 +637,10 @@ export class CloudService {
       const rules=effectiveRules;
       this.store.run('UPDATE histories SET rules_json=?,points=? WHERE id=?',JSON.stringify(rules),practiceContinuation?old!.points:data.points??old?.points??null,hid);
       const latest=this.store.one('SELECT * FROM histories WHERE id=?',hid)!;
+      if(room && mode==='vp' && !roomBoardSource(room) && body.roomBoard) {
+        const board=normalizeRoomSnapshot(body.roomBoard,data.problems,room,Date.now());
+        if(board)this.store.run('INSERT INTO room_board_snapshots VALUES(?,?,?) ON CONFLICT(room_id) DO UPDATE SET elapsed=excluded.elapsed,snapshot_json=excluded.snapshot_json WHERE excluded.elapsed>=room_board_snapshots.elapsed',room.id,board.elapsed,JSON.stringify(board));
+      }
       const ended=['complete','archived'].includes(latest.status) && this.restoreEnded(latest);
       const keepPrize=Boolean(old && sameRankBoard && (data.prize===undefined || preserveRank && old.prize_source==='original'));
       const validPrize=ended && externalSource && rankSource==='original' && data.prizeSource==='original'
@@ -750,6 +755,15 @@ export class CloudService {
           return {participantId:r.participant_key,label:r.participant_name,...identity,rank:view?.rank||'—',rankSource:view?.rankSource||'unavailable',prize:view?.prize??null,prizeSource:view?.prizeSource||'unavailable',solved:view?.solved??0,penalty:view?.penalty??0,points:view?.points??null,scoring:view?.scoring||(['OI','IOI'].includes(room.scoring_system)?room.scoring_system:'ICPC'),cells:view?.cells||{},historyId:r.id,lastSyncedAt:r.updated_at,status:r.status||'scheduled',frozen:view?.frozen||false,canViewHistory:Boolean(r.id && this.historyVisible(r,user,true))};
         }).sort((a,b)=>a.points!==null||b.points!==null?(b.points??0)-(a.points??0)||a.penalty-b.penalty:b.solved-a.solved||a.penalty-b.penalty);
         return {data:{room:this.roomView(room,user),...timing,rows,problems,...statistics,serverNow:now()}};
+      }
+      if(segments.length===3 && segments[2]==='virtual-board' && method==='GET') {
+        const room=this.visibleRoom(rid,user),source=roomBoardSource(room);
+        const archive=source?await loadRoomArchive(source):null;
+        const current=this.visibleRoom(rid,user);
+        const histories=this.store.all('SELECT h.*,p.id participant_key,p.label participant_name,p.members_json participant_members_json FROM participants p LEFT JOIN histories h ON h.participant_id=p.id AND h.mode=\'vp\' AND h.room_id=p.room_id WHERE p.room_id=? AND NOT EXISTS(SELECT 1 FROM participant_departures d WHERE d.participant_id=p.id) ORDER BY p.created_at,p.id',rid);
+        const snapshot=source?null:this.store.one('SELECT snapshot_json FROM room_board_snapshots WHERE room_id=?',rid);
+        return {data:buildVirtualBoard(current,histories,this.participant(rid,user.id)?.id,
+          roomBoardSource(current)===source?archive:null,snapshot?JSON.parse(snapshot.snapshot_json):null)};
       }
       if(segments.length===3 && segments[2]==='prints' && method==='GET') {
         this.visibleRoom(rid,user);const part=this.participant(rid,user.id);return {data:part?this.store.all('SELECT j.*,p.label FROM prints j JOIN participants p ON p.id=j.participant_id WHERE j.participant_id=? ORDER BY j.created_at DESC LIMIT 1000',part.id).map(j=>this.printView(j)):[]};
