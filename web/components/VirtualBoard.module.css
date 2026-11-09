@@ -3,11 +3,11 @@
 .toolbar{flex-wrap:wrap;gap:12px;padding:10px 12px;border:1px solid #dce4ee;border-radius:8px;background:#f6f8fc;margin-bottom:12px}
 .title h2{font:700 16px Arial,sans-serif;margin:0}
 .filters{flex:1;flex-wrap:wrap;min-width:0}
-.search{height:34px;min-width:0;padding:0 9px;background:#fff;border:1px solid #dce4ee;border-radius:5px;color:#65758f}
+.search{height:34px;min-width:0;max-width:254px;flex:1 1 150px;padding:0 9px;background:#fff;border:1px solid #dce4ee;border-radius:5px;color:#65758f}
 .search svg{flex:none}
 .search:focus-within{outline:2px solid #719dec}
-.search input{height:100%;min-width:0;border:0;background:transparent;color:#152033;padding:0;width:min(210px,55vw);outline:0;font:inherit;font-size:13px}
-.filters select{height:34px;padding:0 8px;border:1px solid #dce4ee;border-radius:5px;color:#24344c;background:#fff;font:inherit;font-size:13px}
+.search input{height:100%;min-height:0;min-width:0;border:0;background:transparent;color:#152033;padding:0;width:100%;outline:0;font:inherit;font-size:13px}
+.filters select{height:34px;min-height:0;width:auto;padding:0 8px;border:1px solid #dce4ee;border-radius:5px;color:#24344c;background:#fff;font:inherit;font-size:13px}
 .count,.source,.freeze,.format{font-size:12px;white-space:nowrap}
 .count,.freeze{color:#53647c}
 .format{border-radius:4px;padding:3px 6px;background:#e6edf7;color:#1e3a66;font-weight:700}

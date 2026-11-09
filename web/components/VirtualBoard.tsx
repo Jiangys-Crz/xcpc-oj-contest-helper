@@ -63,10 +63,10 @@ export function VirtualBoard({roomId}:{roomId:string}) {
         {board?.frozen&&<span className={styles.freeze}><LockKeyhole size={12}/>Frozen</span>}</div>
       <div className={styles.filters}>
         <div className={styles.search}><Search size={16} aria-hidden="true"/><input aria-label="Search by team, school or member" type="search" placeholder="Search team, school or member" value={term} onChange={event=>setTerm(event.target.value)}/></div>
-        <label><span className="sr-only">Participation category</span><select value={category} onChange={event=>setCategory(event.target.value)}>
+        <select aria-label="Participation category" value={category} onChange={event=>setCategory(event.target.value)}>
           <option value="all">All participants</option>
           {Object.entries(categories).map(([key,label])=><option key={key} value={key}>{label}</option>)}
-        </select></label>
+        </select>
         {board&&<span className={styles.count}>{rows.length} / {board.rows.length}</span>}
       </div>
       {board?.sourceUrl&&<a className={styles.source} href={board.sourceUrl} target="_blank" rel="noreferrer">Original scoreboard <ExternalLink size={13}/></a>}
